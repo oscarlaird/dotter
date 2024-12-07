@@ -299,7 +299,8 @@ onMount(async () => {
 
     // socket = new WebSocket('ws://localhost:8000/ws');
     // socket = new WebSocket('ws://localhost:8001/ws');
-    socket = new WebSocket('ws://8.34.124.122:20425/ws');
+    // socket = new WebSocket('ws://8.34.124.122:20425/ws');
+    socket = new WebSocket('wss://dasher.domainnamefortesting.com:20426/ws');
     
     socket.addEventListener('open', (event) => {
         console.log('WebSocket connection established');
