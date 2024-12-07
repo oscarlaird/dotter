@@ -10,6 +10,7 @@ for (const token of cleanTokensStr) {
         PS.add(token.slice(0, i));
     }
 }
+const max_ps_len = 16;
 
 function f(LM, s, t) {
     let t_idx = cleanTokensStrToIdx[t];
@@ -51,11 +52,23 @@ function can_have_required_ancestor(node, a) {
     // m's tokenization contains a's tokenization
     // and s is a valid partial suffix?
     const n = node.val;
-    for (let i = n.length; i >= 0; i--) {
+    for (let i = n.length; i >= 0 && i >= n.length - max_ps_len; i--) {
         const m = n.slice(0, i);
         const m_node = node.trie.registry[m];
+        if (m_node === undefined) {
+            break;
+        }
         const s = n.slice(i);
-        if (partial_suffix_exists(s) && arrayStartsWith(m_node.tokenization, a.tokenization)) {
+        // if (partial_suffix_exists(s) && arrayStartsWith(m_node.tokenization, a.tokenization)) {
+        //     return true;
+        // }
+        // todo: audit correctness
+        // as a quick check we just see if the last two tokens of m agree with the same tokens in a
+        let start_idx = Math.max(0, m_node.tokenization.length - 2);
+        let end_idx = m_node.tokenization.length;
+        const m_two = m_node.tokenization.slice(start_idx, end_idx);
+        const a_two = a.tokenization.slice(start_idx, end_idx);
+        if (partial_suffix_exists(s) && arrayEquals(m_two, a_two)) {
             return true;
         }
     }
@@ -63,7 +76,7 @@ function can_have_required_ancestor(node, a) {
 }
 
 function partial_suffix_exists(s) {
-    if (s.length > 16) {
+    if (s.length > max_ps_len) {
         // considerably faster than the hash lookup
         return false;
     }
@@ -100,13 +113,15 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
             node.prior_ill = ill_ancestor_node.prior_ill + f(LM, node.ill_ancestor, node.ill_suffix);
             // partial suffixes
             let prior = -Infinity;
-            for (let i = 0; i < n.length; i++) {
+            for (let i = Math.max(0, n.length - max_ps_len); i < n.length; i++) {
                 // n=m+s
-                const m = n.slice(0, i); // properly shorter than n
                 const s = n.slice(i);
-                let m_node = node.trie.registry[m];
-                if (partial_suffix_exists(s) && m_node.in_character_model) {
-                    prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
+                if (partial_suffix_exists(s)) {
+                    const m = n.slice(0, i); // properly shorter than n
+                    let m_node = node.trie.registry[m];
+                    if (m_node.in_character_model) {
+                        prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
+                    }
                 }
             }
             node.prior = prior;
@@ -139,14 +154,15 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
             const before_space = lastSpaceIndex === -1 ? "" : child_val.slice(0, lastSpaceIndex);
             const after_space = lastSpaceIndex === -1 ? child_val : child_val.slice(lastSpaceIndex+1);
             // try to use the previously computed tokenization up to the space
-            const before_space_in_registry = before_space.length > 0 && node.trie.registry[before_space] !== undefined;
+            const before_space_node = node.trie.registry[before_space];
+            const before_space_in_registry = before_space.length > 0 && before_space_node !== undefined;
             if (before_space_in_registry) {
                 if (after_space.length > 0 && after_space[0] === " ") {
                     throw new Error(`val has two consecutive spaces! ${child_val}`);
                 }
-                let before_space_tokenization = node.trie.registry[before_space].tokenization;
-                let after_space_tokenization = get_tokenization(after_space);
-                child_tokenization = [...before_space_tokenization, ...after_space_tokenization.slice(1)]
+                let before_space_tokenization = before_space_node.tokenization;
+                let after_space_tokenization = get_tokenization(after_space).slice(1); // remove <start> special token
+                child_tokenization = [...before_space_tokenization, ...after_space_tokenization]
             } else {
                 child_tokenization = get_tokenization(child_val);
             }
@@ -167,6 +183,7 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
                 // dummy period, offset
                 period: node.period,
                 offset: Math.random() * node.period,
+                timer_fracs: [...node.timer_fracs],
             };
             const a_tokenization = child.tokenization.slice(0, -1);
             for (let i = 1; i <= child.val.length; i++) {
@@ -241,11 +258,12 @@ function clear_visibility(node) {
     }
 }
 
-function push_likelihood(node, likelihood) {
+function push_likelihood(node, likelihood, timerFrac) {
     node.likelihood += likelihood;
+    node.timer_fracs.push(timerFrac);
     for (const child of node.children) {
         if (!child.is_visible) {
-            push_likelihood(child, likelihood);
+            push_likelihood(child, likelihood, timerFrac);
         }
     }
 }

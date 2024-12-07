@@ -14,8 +14,8 @@
 
     let blinking = false;
     let cooldown = false;
-    let blink_threshold = 30;
-    $: if (blink_left_perc > blink_threshold || blink_right_perc > blink_threshold) {
+    let blink_threshold = 25;
+    $: if (blink_right_perc > blink_threshold || blink_right_perc > blink_threshold) {
         if (!blinking) {
             // we just crossed the threshold
             if (!cooldown) {
@@ -51,7 +51,8 @@
         const filesetResolver = await vision.FilesetResolver.forVisionTasks();
         faceLandmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, {
             baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            // modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            modelAssetPath: '/face_landmarker.task',
             delegate: 'GPU',
             },
             outputFaceBlendshapes: true,
@@ -74,22 +75,23 @@
     })
 </script>
 
-{message}
+<!-- {message}
 <div class="flex flex-row">
     {#each Array.from({ length: 26 }) as _, i}
         <div class="text-4xl text-center w-16 h-16 border border-black flex items-center justify-center bg-red-100"
             class:font-bold={i === letter_idx}
         >{String.fromCharCode(65 + i)}</div>
     {/each}
-</div>
-<div class="progress_container relative w-64 h-32 border-2 border-black">
-    <div class="top-0 absolute progress_bar bg-blue-200 h-full" style="width: 30%"></div>
+</div> -->
+
+<!-- <div class="progress_container relative w-64 h-32 border-2 border-black">
+    <div class="top-0 absolute progress_bar bg-blue-200 h-full" style="width: {blink_threshold}%"></div>
     <div class="top-0 absolute progress_bar bg-blue-500 h-full" style="width: {blink_left_perc}%"></div>
 </div>
 <div class="progress_container relative w-64 h-32 border-2 border-black">
-    <div class="top-0 absolute progress_bar bg-blue-200 h-full" style="width: 30%"></div>
+    <div class="top-0 absolute progress_bar bg-blue-200 h-full" style="width: {blink_threshold}%"></div>
     <div class="top-0 absolute progress_bar bg-blue-500 h-full" style="width: {blink_right_perc}%"></div>
-</div>
+</div> -->
 
 <video id="webcam" autoplay bind:this={videoElement}
   class="hidden w-full h-full bg-black"
