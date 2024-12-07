@@ -299,7 +299,7 @@ onMount(async () => {
 
     // socket = new WebSocket('ws://localhost:8000/ws');
     // socket = new WebSocket('ws://localhost:8001/ws');
-    socket = new WebSocket('ws://38.224.253.4:20801/ws');
+    socket = new WebSocket('ws://8.34.124.122:20425/ws');
     
     socket.addEventListener('open', (event) => {
         console.log('WebSocket connection established');
