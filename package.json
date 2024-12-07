@@ -24,8 +24,6 @@
 	"dependencies": {
 		"@huggingface/transformers": "^3.0.1",
 		"@mediapipe/tasks-vision": "^0.10.17",
-		"@mlc-ai/web-llm": "/home/oscar/dasher/web-llm",
-		"@mlc-ai/web-runtime": "^0.18.0-dev2",
 		"ws": "^8.18.0"
 	}
 }

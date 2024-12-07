@@ -36,8 +36,6 @@ mobile phones [2], or Qwerty vs. Opti in an experiment comparing soft keyboard l
 Allowing`;
 true_root.val = ".";
 true_root.force_space = true;
-true_root.tokenization = problogic.get_tokenization(true_root.val);
-console.log("Tokenization for root:", true_root.tokenization);
 true_root.letter = true_root.val[true_root.val.length - 1];
 true_root.period = TIMER_PERIOD;
 true_root.offset = Math.random() * true_root.period;
@@ -278,6 +276,9 @@ function click() {
 onMount(async () => {
     // load the tokenizer
     tokenizer = await AutoTokenizer.from_pretrained("llama/llama", {local_files_only: true});
+    console.log("Tokenizer loaded");
+    true_root.tokenization = problogic.get_tokenization(true_root.val, tokenizer);
+    console.log("Tokenization for root:", true_root.tokenization);
 
     canvas = document.getElementById('canvas');
     ctx = canvas.getContext('2d');

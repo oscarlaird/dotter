@@ -201,11 +201,11 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
         for (const child of node.children) {
             // since this is an expansion and we are evaluating these nodes for the first time,
             // we need to recompute priors (since they have not yet been computed)
-            update_trie(child, true, call_level + 1, queue_reference, pDATA_LB, LM, visibility_threshold);
+            update_trie(child, true, call_level + 1, queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer);
         }
     } else {
         for (const child of node.children) {
-            update_trie(child, recompute_priors, call_level + 1, queue_reference, pDATA_LB, LM, visibility_threshold);
+            update_trie(child, recompute_priors, call_level + 1, queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer);
         }
     }
 }
