@@ -4,7 +4,9 @@ import { tweened } from 'svelte/motion';
 import { linear, cubicOut, quadInOut, sineInOut } from 'svelte/easing';
 import { get } from 'svelte/store';
 import Eye from './eye.svelte';
-import * as problogic from '$lib/tokenizer';
+import * as problogic from '$lib/tokenizer.js';
+import { env, AutoTokenizer } from "@huggingface/transformers";
+env.allowLocalModels = true;
 let LM = {};
 let FIRST_BOX_HEIGHT = 800;
 let BOX_WIDTH = 60;
@@ -19,6 +21,8 @@ const FPS_SMOOTHING = 0.99;
 let canvas;
 let ctx;
 let animationFrameId;
+
+let tokenizer;
 
 // $: bar_height = (time/BAR_PERIOD % 1) * FIRST_BOX_HEIGHT;
 
@@ -256,7 +260,7 @@ function click() {
 
     let queue = [];
     console.log("updating trie after updating likelihoods");
-    problogic.run_func_w_timing(problogic.update_trie, [true_root, false, 0, queue, pDATA, LM, visibility_threshold]);
+    problogic.run_func_w_timing(problogic.update_trie, [true_root, false, 0, queue, pDATA, LM, visibility_threshold, tokenizer]);
     problogic.run_func_w_timing(problogic.calc_posteriors, [true_root]);
     pDATA = true_root.post_Z;
     
@@ -270,7 +274,11 @@ function click() {
     setLocations(true_root);
 }
 
+
 onMount(async () => {
+    // load the tokenizer
+    tokenizer = await AutoTokenizer.from_pretrained("llama/llama", {local_files_only: true});
+
     canvas = document.getElementById('canvas');
     ctx = canvas.getContext('2d');
     
@@ -311,7 +319,7 @@ onMount(async () => {
             true_root.registry[response.ftp].in_character_model = true;
             let queue = [];
 
-            problogic.run_func_w_timing(problogic.update_trie, [true_root.registry[response.ftp], true, 0, queue, pDATA, LM, visibility_threshold]);
+            problogic.run_func_w_timing(problogic.update_trie, [true_root.registry[response.ftp], true, 0, queue, pDATA, LM, visibility_threshold, tokenizer]);
             // TODO
             // problogic.run_func_w_timing(problogic.calc_posteriors, [true_root]);
             pDATA = true_root.post_Z;

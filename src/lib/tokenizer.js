@@ -1,4 +1,3 @@
-import { env, AutoTokenizer } from "@huggingface/transformers";
 import { lmF } from "./lm.js";
 import cleanTokensStr from "./clean_tokens_str.json";
 // construct a function s->idx from cleanTokensStr
@@ -30,10 +29,8 @@ function F(LM, m, s) {
     }
 }
 
-env.allowLocalModels = true;
-export const tokenizer = await AutoTokenizer.from_pretrained("llama/llama", {local_files_only: true});
 
-function get_tokenization(s) {
+function get_tokenization(s, tokenizer) {
     return tokenizer.encode(s);
 }
 
@@ -101,7 +98,7 @@ function node_to_string(node) {
     return `Node(${node.val})`;
 }
 
-function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_LB, LM, visibility_threshold) {
+function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer) {
     const n = node.val;
     if (recompute_priors) {
         // we have just received f(n, *) from the language model
@@ -161,10 +158,10 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
                     throw new Error(`val has two consecutive spaces! ${child_val}`);
                 }
                 let before_space_tokenization = before_space_node.tokenization;
-                let after_space_tokenization = get_tokenization(after_space).slice(1); // remove <start> special token
+                let after_space_tokenization = get_tokenization(after_space, tokenizer).slice(1); // remove <start> special token
                 child_tokenization = [...before_space_tokenization, ...after_space_tokenization]
             } else {
-                child_tokenization = get_tokenization(child_val);
+                child_tokenization = get_tokenization(child_val, tokenizer);
             }
 
             // console.log("child_tokenization for " + child_val + " is " + child_tokenization);
