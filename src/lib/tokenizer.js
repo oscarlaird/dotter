@@ -248,13 +248,6 @@ function calc_posteriors(trie) {
     }
 }
 
-function clear_visibility(node) {
-    node.is_visible = false;
-    for (const child of node.children) {
-        clear_visibility(child);
-    }
-}
-
 function push_likelihood(node, likelihood, timerFrac) {
     node.likelihood += likelihood;
     node.timer_fracs.push(timerFrac);
@@ -284,4 +277,4 @@ function evidence_lower_bound(node) {
     return logsumexp(node.children.map(child => evidence_lower_bound(child)));
 }
 
-export { update_trie, node_to_string, get_tokenization, calc_posteriors, clear_visibility, push_likelihood, run_func_w_timing };
+export { update_trie, node_to_string, get_tokenization, calc_posteriors, push_likelihood, run_func_w_timing };

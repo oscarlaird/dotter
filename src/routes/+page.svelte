@@ -8,10 +8,10 @@ import * as problogic from '$lib/tokenizer.js';
 import { env, AutoTokenizer } from "@huggingface/transformers";
 env.allowLocalModels = true;
 let LM = {};
-let FIRST_BOX_HEIGHT = 800;
+let FIRST_BOX_HEIGHT = 1000;
 let BOX_WIDTH = 60;
 let TIMER_CIRCLE_RADIUS = 14;
-let TIMER_PERIOD = 1.4;
+let TIMER_PERIOD = 1.0;
 // let TIMER_PERIOD = 0.7;
 let BAR_PERIOD = 1.0; // 2 seconds
 let fps = 60;
@@ -74,7 +74,8 @@ function handleBlink(event) {
     click();
 }
 
-let visibility_threshold = Math.log(0.03);
+let visibility_threshold = Math.log(0.02);
+// let visibility_threshold = Math.log(0.07);
 let pDATA = 0;
 const TWEEN_DURATION = 300;
 const TWEEN_EASING = linear;
@@ -101,7 +102,8 @@ function setLocations(node, loc = null, size_height = FIRST_BOX_HEIGHT, size_wid
     if (visible_children.length > 0) {
         node.ever_visible_parent = true;
         const numChildren = visible_children.length;
-        const box_width_multiplier = 0.5 + Math.log(numChildren);
+        // const box_width_multiplier = 0.5 + Math.log(numChildren);
+        const box_width_multiplier = 0.5;
         visible_children.forEach((child, index) => {
             setLocations(child, {
                 x: node.location.x + node.size_width,
@@ -121,6 +123,7 @@ function get_time() {
     return Date.now() / 1000.0;
 }
 let get_timer_frac = (node, time) => {
+
     return (time - node.offset + node.period) % node.period / node.period;
 }
 
@@ -204,7 +207,7 @@ function draw() {
         // Draw letter
         ctx.beginPath();
         ctx.fillStyle = 'black';
-        ctx.font = '20px sans-serif';
+        ctx.font = '28px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(node.letter, centerX, centerY);
@@ -216,6 +219,8 @@ function draw() {
 }
 
 let socket;
+let bin_probs_chart_data = [];
+let offsets_chart_data = [];
 function click() {
     let time = get_time();
     if (!socket) {
@@ -243,9 +248,14 @@ function click() {
             // t = 0.700s
             // mu = 0.619; sigma = 0.075;
             // outliers = 6.0 / 152.0
-            const mu = 0.570;
-            const sigma = 0.044;
-            const outliers = 3.0 / 100.0;
+
+            // SPACING; first five phrases from mackenzie
+            // mu = 0.58; timer_period = 1.4; sigma = 0.025; outliers = 1 / 106
+            // SPACING; first five phrases from mackenzie
+            // mu = 0.58; timer_period = 1.0; sigma = 0.038; outliers = 2 / 93
+            const mu = 0.58;
+            const sigma = 0.038;
+            const outliers = 2.0 / 93.0;
             let dx = timerFrac - mu;
             let gaussian_log_likelihood = - Math.log(Math.sqrt(2 * Math.PI)*sigma) - dx * dx / (2 * sigma * sigma)
             // we had 2 outliers in 100 samples, so
@@ -259,19 +269,62 @@ function click() {
     let queue = [];
     console.log("updating trie after updating likelihoods");
     problogic.run_func_w_timing(problogic.update_trie, [true_root, false, 0, queue, pDATA, LM, visibility_threshold, tokenizer]);
-    problogic.run_func_w_timing(problogic.calc_posteriors, [true_root]);
+    problogic.run_func_w_timing(problogic.calc_posteriors, [true_root]); // determine the normalizing constant
     pDATA = true_root.post_Z;
     
     queue.sort((a, b) => b[1] - a[1]);
     console.log("Queue:", queue);
     socket.send(JSON.stringify({type: 'set_queue', content: queue.map(q => q[0])}));
     
+    let offsets = [];
+    // first pass to determine visibility
     for (let node of Object.values(true_root.registry)) {
-        node.is_visible = node.post_Z - pDATA > visibility_threshold;
+        let normalized_posterior = node.post_Z - pDATA;
+        node.is_visible = normalized_posterior > visibility_threshold;
     }
+    // second pass to get selection probabilities
+    for (let node of Object.values(true_root.registry)) {
+        if (node.is_visible) {
+            let selection_prob = Math.exp(node.post_Z - pDATA);
+            for (let child of node.children) {
+                if (child.is_visible) {
+                    selection_prob -= Math.exp(child.post_Z - pDATA);
+                }
+            }
+            offsets.push([node, node.val, selection_prob, node.offset]);
+        }
+    }
+    // create histogram data, of selection probabilities
+    let bin_resolution = 1000;
+    let bin_width = TIMER_PERIOD / bin_resolution;
+    let bins = Array.from({length: bin_resolution + 1}, (_, i) => i * bin_width);
+    let bin_probs = Array.from({length: bins.length}, () => 0);
+    for (let i = 0; i < bins.length; i++) {
+        let bin = bins[i];
+        bin_probs[i] = 0;
+        // convert to timer_frac
+        for (let offset_tuple of offsets) {
+            let node = offset_tuple[0];
+            let timer_frac = get_timer_frac(node, bin);
+            timer_frac = (timer_frac + 0.5) % 1.0;
+            // probability of selecting the bin (getting the data)
+            const mu = 0.58;
+            const sigma = 0.038;
+            const outliers = 2.0 / 93.0;
+            let dx = timer_frac - mu;
+            let gaussian_log_likelihood = - Math.log(Math.sqrt(2 * Math.PI)*sigma) - dx * dx / (2 * sigma * sigma)
+            // we had 2 outliers in 100 samples, so
+            const uniform_likelihood = Math.log( outliers );
+            let timer_likelihood = Math.max(gaussian_log_likelihood, uniform_likelihood)
+            bin_probs[i] += offset_tuple[2] * Math.exp(timer_likelihood);
+        }
+    }
+    console.log("Bin probs:", bin_probs);
+    bin_probs_chart_data = bin_probs.map((prob, i) => ({x: bins[i] / TIMER_PERIOD, y: prob / Math.max(...bin_probs)}));
+    offsets_chart_data = offsets.filter(offset => offset[2] > Math.exp(visibility_threshold)).map((offset, i) => ({x: offset[3] / TIMER_PERIOD, text: offset[1]}));
     setLocations(true_root);
+    console.log("Offsets:", offsets);
 }
-
 
 onMount(async () => {
     // load the tokenizer
@@ -285,7 +338,7 @@ onMount(async () => {
     
     // Set canvas size
     canvas.width = 6000;
-    canvas.height = 6000;
+    canvas.height = 1000;
     
     // Start animation loop
     draw();
@@ -353,6 +406,8 @@ onMount(async () => {
 });
 </script>
 
+
+
 <Eye on:blink={handleBlink} />
 
 <div class="flex flex-col">
@@ -367,4 +422,25 @@ onMount(async () => {
     </div>
 </div>
 
-<canvas id="canvas" class="w-[6000px] h-[6000px]"></canvas>
+<canvas id="canvas" class="w-[6000px] h-[1000px]"></canvas>
+
+<div class="w-[1000px] h-[500px] relative border-2 border-black padding-4">
+    {#if bin_probs_chart_data && bin_probs_chart_data.length > 0}
+        {#each bin_probs_chart_data as point}
+            <div 
+                class="absolute w-1 h-1 bg-blue-500" 
+                style="left: {point.x * 1000}px; bottom: {point.y * 500}px;"
+            />
+        {/each}
+    {/if}
+    {#if offsets_chart_data && offsets_chart_data.length > 0}
+        {#each offsets_chart_data as point}
+            <div 
+                class="absolute transform rotate-90 whitespace-nowrap origin-left"
+                style="left: {point.x * 1000}px; top: 500px;"
+            >
+                {point.text}
+            </div>
+        {/each}
+    {/if}
+</div>
