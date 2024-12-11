@@ -295,35 +295,35 @@ function click() {
         }
     }
     // create histogram data, of selection probabilities
-    let bin_resolution = 1000;
-    let bin_width = TIMER_PERIOD / bin_resolution;
-    let bins = Array.from({length: bin_resolution + 1}, (_, i) => i * bin_width);
-    let bin_probs = Array.from({length: bins.length}, () => 0);
-    for (let i = 0; i < bins.length; i++) {
-        let bin = bins[i];
-        bin_probs[i] = 0;
-        // convert to timer_frac
-        for (let offset_tuple of offsets) {
-            let node = offset_tuple[0];
-            let timer_frac = get_timer_frac(node, bin);
-            timer_frac = (timer_frac + 0.5) % 1.0;
-            // probability of selecting the bin (getting the data)
-            const mu = 0.58;
-            const sigma = 0.038;
-            const outliers = 2.0 / 93.0;
-            let dx = timer_frac - mu;
-            let gaussian_log_likelihood = - Math.log(Math.sqrt(2 * Math.PI)*sigma) - dx * dx / (2 * sigma * sigma)
-            // we had 2 outliers in 100 samples, so
-            const uniform_likelihood = Math.log( outliers );
-            let timer_likelihood = Math.max(gaussian_log_likelihood, uniform_likelihood)
-            bin_probs[i] += offset_tuple[2] * Math.exp(timer_likelihood);
-        }
-    }
-    console.log("Bin probs:", bin_probs);
-    bin_probs_chart_data = bin_probs.map((prob, i) => ({x: bins[i] / TIMER_PERIOD, y: prob / Math.max(...bin_probs)}));
-    offsets_chart_data = offsets.filter(offset => offset[2] > Math.exp(visibility_threshold)).map((offset, i) => ({x: offset[3] / TIMER_PERIOD, text: offset[1]}));
+    // let bin_resolution = 1000;
+    // let bin_width = TIMER_PERIOD / bin_resolution;
+    // let bins = Array.from({length: bin_resolution + 1}, (_, i) => i * bin_width);
+    // let bin_probs = Array.from({length: bins.length}, () => 0);
+    // for (let i = 0; i < bins.length; i++) {
+    //     let bin = bins[i];
+    //     bin_probs[i] = 0;
+    //     // convert to timer_frac
+    //     for (let offset_tuple of offsets) {
+    //         let node = offset_tuple[0];
+    //         let timer_frac = get_timer_frac(node, bin);
+    //         timer_frac = (timer_frac + 0.5) % 1.0;
+    //         // probability of selecting the bin (getting the data)
+    //         const mu = 0.58;
+    //         const sigma = 0.038;
+    //         const outliers = 2.0 / 93.0;
+    //         let dx = timer_frac - mu;
+    //         let gaussian_log_likelihood = - Math.log(Math.sqrt(2 * Math.PI)*sigma) - dx * dx / (2 * sigma * sigma)
+    //         // we had 2 outliers in 100 samples, so
+    //         const uniform_likelihood = Math.log( outliers );
+    //         let timer_likelihood = Math.max(gaussian_log_likelihood, uniform_likelihood)
+    //         bin_probs[i] += offset_tuple[2] * Math.exp(timer_likelihood);
+    //     }
+    // }
+    // console.log("Bin probs:", bin_probs);
+    // bin_probs_chart_data = bin_probs.map((prob, i) => ({x: bins[i] / TIMER_PERIOD, y: prob / Math.max(...bin_probs)}));
+    // offsets_chart_data = offsets.filter(offset => offset[2] > Math.exp(visibility_threshold)).map((offset, i) => ({x: offset[3] / TIMER_PERIOD, text: offset[1]}));
     setLocations(true_root);
-    console.log("Offsets:", offsets);
+    // console.log("Offsets:", offsets);
 }
 
 onMount(async () => {
@@ -353,7 +353,7 @@ onMount(async () => {
     // socket = new WebSocket('ws://localhost:8000/ws');
     // socket = new WebSocket('ws://localhost:8001/ws');
     // socket = new WebSocket('ws://8.34.124.122:20425/ws');
-    socket = new WebSocket('wss://dasher.domainnamefortesting.com:20426/ws');
+    socket = new WebSocket('wss://dasher.domainnamefortesting.com:20002/ws');
     
     socket.addEventListener('open', (event) => {
         console.log('WebSocket connection established');
@@ -423,7 +423,7 @@ onMount(async () => {
 </div>
 
 <canvas id="canvas" class="w-[6000px] h-[1000px]"></canvas>
-
+<!-- 
 <div class="w-[1000px] h-[500px] relative border-2 border-black padding-4">
     {#if bin_probs_chart_data && bin_probs_chart_data.length > 0}
         {#each bin_probs_chart_data as point}
@@ -443,4 +443,4 @@ onMount(async () => {
             </div>
         {/each}
     {/if}
-</div>
+</div> -->
