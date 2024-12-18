@@ -2,6 +2,7 @@ import { lmF } from "./lm.js";
 import cleanTokensStr from "./clean_tokens_str.json";
 // construct a function s->idx from cleanTokensStr
 const cleanTokensStrToIdx = Object.fromEntries(cleanTokensStr.map((s, idx) => [s, idx]));
+const lm_request_queue_max_size = 40;
 // construct PS from cleanTokensStr
 const PS = new Set();
 for (const token of cleanTokensStr) {
@@ -14,8 +15,11 @@ const max_ps_len = 16;
 function f(LM, s, t) {
     let t_idx = cleanTokensStrToIdx[t];
     if (LM[s] === undefined) {
+        console.log(`[f] LM[s] is undefined for s: ${s}`);
         return -Infinity; // TODO: this could use a lower grade model
+        // then on update we would need to subtract this probability
     } else if (LM[s].probs[t_idx] === undefined) {
+        console.log(`[f] LM[s].probs[t_idx] is undefined for s: ${s}, t: ${t}`);
         return -Infinity; // TODO: this could use a lower grade model
     } else {
         return LM[s].probs[t_idx];
@@ -23,6 +27,7 @@ function f(LM, s, t) {
 }
 function F(LM, m, s) {
     if (LM[m] === undefined) {
+        console.log(`[F] LM[m] is undefined for m: ${m}`);
         return -Infinity; // TODO: this could use a lower grade model
     } else {
         return Math.log(lmF(s, cleanTokensStr, LM[m].cum));
@@ -98,37 +103,68 @@ function node_to_string(node) {
     return `Node(${node.val})`;
 }
 
-function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer) {
+function update_trie(node, update_priors, call_level, lm_request_queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer, update_root = null) {
+    if (update_root === null) {
+        update_root = node;
+    }
     const n = node.val;
-    if (recompute_priors) {
+    if (update_priors) {
+        if (!update_root.in_character_model) {
+            throw new Error(`trying to update priors, but update_root is not in character model: ${update_root.val}`);
+        }
         // we have just received f(n, *) from the language model
         if (call_level > 0) {
             // we are not the root of the update call
             // evaluate priors from ancestors
-            // ILL
-            let ill_ancestor_node = node.trie.registry[node.ill_ancestor];
-            node.prior_ill = ill_ancestor_node.prior_ill + f(LM, node.ill_ancestor, node.ill_suffix);
-            // partial suffixes
-            let prior = -Infinity;
-            for (let i = Math.max(0, n.length - max_ps_len); i < n.length; i++) {
-                // n=m+s
-                const s = n.slice(i);
-                if (partial_suffix_exists(s)) {
-                    const m = n.slice(0, i); // properly shorter than n
-                    let m_node = node.trie.registry[m];
-                    if (m_node.in_character_model) {
-                        prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
-                    }
-                }
+            // partial update of prior after we receive f(update_root, *) from the language model
+
+            // // PRIOR
+            // let prior = -Infinity;
+            // for (let i = Math.max(0, n.length - max_ps_len); i < n.length; i++) {
+            //     // n=m+s
+            //     const s = n.slice(i);
+            //     if (partial_suffix_exists(s)) {
+            //         const m = n.slice(0, i); // properly shorter than n
+            //         let m_node = node.trie.registry[m];
+            //         if (m_node.in_character_model) {
+            //             prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
+            //         }
+            //     }
+            // }
+            // node.prior = prior;
+            // // PRIOR ILL
+            // let ill_ancestor_node = node.trie.registry[node.ill_ancestor];
+            // node.prior_ill = ill_ancestor_node.prior_ill + f(LM, node.ill_ancestor, node.ill_suffix);
+
+
+            // PRIOR 
+            let suffix_since_update_root = n.slice(update_root.val.length);
+            if (!partial_suffix_exists(suffix_since_update_root)) {
+                // stop recursing once (descendant-update_root) cannot be a partial suffix
+                // TODO: is this correct? 
+                return;
             }
-            node.prior = prior;
+            node.prior = logaddexp(node.prior, update_root.prior_ill + F(LM, update_root.val, suffix_since_update_root));
+            // PRIOR ILL
+            if (node.ill_ancestor === update_root.val) {
+                node.prior_ill = update_root.prior_ill + f(LM, update_root.val, suffix_since_update_root);
+            }
         }
     }
     // post_ill_Z means unnormalized posterior probability of the node being the end of a token in <X>
     if (!node.in_character_model && node.trie.registry[node.ill_ancestor].in_character_model) {
         node.post_ill_Z = max_descendant_likelihood(node, node) + node.prior_ill;
-        // request node with priority given by node.post_ill_Z
-        queue_reference.push([node.val, node.post_ill_Z]);
+        // if already in queue, update priority
+        if (lm_request_queue_reference.has(node.val)) {
+            lm_request_queue_reference.update(node.val, node.post_ill_Z);
+        // if not in queue, and queue is not full, insert
+        } else if (lm_request_queue_reference.get_length() < lm_request_queue_max_size) {
+            lm_request_queue_reference.insert(node.val, node.post_ill_Z);
+        // if not in queue, and queue is full, and we have higher priority than the least priority, remove the least priority and insert
+        } else if (lm_request_queue_reference.least_priority_value < node.post_ill_Z) {
+            lm_request_queue_reference.remove_lowest_priority();
+            lm_request_queue_reference.insert(node.val, node.post_ill_Z);
+        }
     }
     // post_Z means unnormalized posterior
     node.post_Z = node.prior + node.likelihood;  // may not be valid if ever_visible_parent
@@ -163,7 +199,6 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
             } else {
                 child_tokenization = get_tokenization(child_val, tokenizer);
             }
-
             // console.log("child_tokenization for " + child_val + " is " + child_tokenization);
             const child = {
                 val: child_val,
@@ -179,7 +214,7 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
                 height: node.height + 1,
                 // dummy period, offset
                 period: node.period,
-                offset: Math.random() * node.period,
+                // offset: 0,
                 timer_fracs: [...node.timer_fracs],
             };
             const a_tokenization = child.tokenization.slice(0, -1);
@@ -195,17 +230,38 @@ function update_trie(node, recompute_priors, call_level, queue_reference, pDATA_
             if (child.ill_ancestor === undefined) {
                 throw new Error("Could not find ill_ancestor for: " + child.val);
             }
+            // PRIOR
+            let prior = -Infinity;
+            for (let i = Math.max(0, child.val.length - max_ps_len); i < child.val.length; i++) {
+                // n=m+s
+                const s = child.val.slice(i);
+                if (partial_suffix_exists(s)) {
+                    const m = child.val.slice(0, i); // properly shorter than n
+                    let m_node = node.trie.registry[m];
+                    if (m_node.in_character_model) {
+                        prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
+                    }
+                }
+            }
+            child.prior = prior;
+            // PRIOR ILL
+            let ill_ancestor_node = node.trie.registry[child.ill_ancestor];
+            if (ill_ancestor_node.in_character_model) {
+                child.prior_ill = ill_ancestor_node.prior_ill + f(LM, child.ill_ancestor, child.ill_suffix);
+            } else {
+                child.prior_ill = -Infinity;
+            }
+            //
             node.children.push(child);
             node.trie.registry[child.val] = child;
         }
         for (const child of node.children) {
-            // since this is an expansion and we are evaluating these nodes for the first time,
-            // we need to recompute priors (since they have not yet been computed)
-            update_trie(child, true, call_level + 1, queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer);
+            // we do not need to update priors since we just calculated them
+            update_trie(child, false, call_level + 1, lm_request_queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer, update_root);
         }
     } else {
         for (const child of node.children) {
-            update_trie(child, recompute_priors, call_level + 1, queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer);
+            update_trie(child, update_priors, call_level + 1, lm_request_queue_reference, pDATA_LB, LM, visibility_threshold, tokenizer, update_root);
         }
     }
 }
@@ -219,8 +275,20 @@ function run_func_w_timing(func, args) {
 }
 
 function calc_posteriors(trie) {
+    // we need to push up posteriors to determine the sizes of parent nodes
+    // we could take a top-down, depth-first approach
+    // we want a way to avoid visiting all nodes
+    // but on each gesture, the post_prob of every node has changed
+    // p(n|D) = \sum_l p(n + l|D) which is known for visible l,
+    // and for hidden l, they all get the same likelihood
+    // so it is possible to calc the posterior for visible nodes
+    // only by visiting visible nodes
+    // 
+
     // Process nodes in reverse topological order (bottom-up)
     let nodes = [];
+    
+    let start = performance.now();
     function collect_nodes(node) {
         nodes.push(node);
         for (const child of node.children) {
@@ -228,10 +296,14 @@ function calc_posteriors(trie) {
         }
     }
     collect_nodes(trie);
+    console.log(`[calc_posterior] Collecting nodes took ${performance.now() - start} milliseconds`);
 
+    start = performance.now();
     // Reverse topological order - process children before parents
     nodes.reverse();
+    console.log(`[calc_posterior] Reversing nodes took ${performance.now() - start} milliseconds`);
 
+    start = performance.now();
     for (const node of nodes) {
         if (node.children.length > 0) {
             // For parent nodes, post_Z is logsumexp of children's post_Z
@@ -241,11 +313,12 @@ function calc_posteriors(trie) {
             let cumsum = -Infinity;
             for (const child of node.children) {
                 child.y_relative_bottom = Math.exp(cumsum - node.post_Z);
-                cumsum = logsumexp([cumsum, child.post_Z]);
+                cumsum = logaddexp(cumsum, child.post_Z);
                 child.y_relative_top = Math.exp(cumsum - node.post_Z);
             }
         }
     }
+    console.log(`[calc_posterior] Processing nodes took ${performance.now() - start} milliseconds`);
 }
 
 function push_likelihood(node, likelihood, timerFrac) {

@@ -238,22 +238,29 @@ class ResponseModel(BaseModel):
     ftp: str
     logits: list
 
+import time
+recent_served_requests = []
+
 async def process_queue(websocket: WebSocket):
-    global queue, processing
+    global queue, processing, recent_served_requests
     processing = True
     while processing:
-        await asyncio.sleep(0.01)  # Short delay to yield control
         if queue:
+            await asyncio.sleep(0.001)  # Short delay to yield control
             # Process the first item in the queue
             input_text = queue.pop(0)
-            if ask_to_continue:
-                input("Press Enter to continue. Processing " + input_text)
+            # add to recent_served_requests so that it won't be put in queue again
+            recent_served_requests.append((input_text, time.time()))
+            # prune recent_served_requests to only keep the last 10s
+            recent_served_requests = [r for r in recent_served_requests if time.time() - r[1] < 10]
             results = await process_input_texts([input_text])
             probs, cum = results[0]
             probs = probs.astype(float).tolist()  # Convert numpy array to Python list
             cum = cum.astype(float).tolist()  # Convert numpy array to Python list
             response = {'type': 'processed', 'ftp': input_text, 'probs': probs, 'cum': cum}
             await websocket.send_text(json.dumps(response))
+        else:
+            await asyncio.sleep(0.01)  # poll for new requests
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -275,7 +282,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps(response))
             elif message['type'] == 'set_queue':
                 # Set the global queue with the provided list of strings
-                queue = message['content']
+                priority_dict = message['content']
+                queue = [k for k in sorted(priority_dict, key=priority_dict.get, reverse=True) if k not in [s for s,t in recent_served_requests]]
+                print("queue:", queue)
+
+                # queue is a dictionary of key:
                 response = {'type': 'set_queue', 'status': 'success'}
                 await websocket.send_text(json.dumps(response))
     finally:
