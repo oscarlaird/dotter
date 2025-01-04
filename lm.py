@@ -61,6 +61,16 @@ with open('partial_suffixes.json', 'w') as f:
     json.dump(partial_suffixes, f)
 
 # %%
+tokens = tokenizer.encode("x sci scie scien scienc science")
+tokens
+for t in tokens:
+    print(len(tokenizer.decode(t)))
+# print(tokenizer.encode("x xx xxx xxxx xxxxx xxxxxx xxxxxxx xxxxxxxx xxxxxxxxx xxxxxxxxxx"))
+
+#%%
+tokenizer.decode(29871)
+
+# %%
 # experiments:
 #  for a prefix of 300 words,
 #    without cache it is 100ms

@@ -8,15 +8,22 @@ import * as problogic from '$lib/tokenizer.js';
 import { env, AutoTokenizer } from "@huggingface/transformers";
 env.allowLocalModels = true;
 let LM = {};
-let FIRST_BOX_HEIGHT = 1400;
+let FIRST_BOX_HEIGHT = 1350;
 let BOX_WIDTH = 60;
 let TIMER_CIRCLE_RADIUS = 14;
 let TIMER_PERIOD = 1.000;
 // likelihood parameters
-const mu_delay = 0.055;
-const sigma = 0.028;
-const outliers = 3.0 / 100.0;
-//
+let mu_delay = 0.055;
+let sigma = 0.028;
+let outliers = 3.0 / 100.0;
+// my spacing: mu=0.055, sigma=0.028, outliers=3/100
+// my blinking: mu=0.150, sigma=0.040, outliers=3/100 (confirmed xx) (and twice again closely confirmed; do not lightly change)
+// (delay down to 115ms)
+
+// mu_delay = 0.150;
+// sigma = 0.040;
+// outliers = 3.0 / 100.0;
+
 const visibility_threshold = Math.log(0.015);
 // let TIMER_PERIOD = 0.7;
 // let BAR_PERIOD = 1.0; // 2 seconds
@@ -72,6 +79,7 @@ function get_best_node(node) {
     }
     return get_best_node(best_child);
 }
+
 $: best_node = get_best_node(true_root)
 $: best_string = best_node.val
 $: best_delay_stats = best_node.timer_fracs
@@ -84,7 +92,7 @@ $: best_delay_std_no_outliers = Math.sqrt(best_delay_stats_no_outliers.reduce((a
 
 function handleBlink(event) {
     console.log("Blink event:", event);
-    click();
+    click(event);
 }
 
 let pDATA = 0;
@@ -154,7 +162,17 @@ function draw() {
 
     // Draw nodes
     visibleNodes.forEach(node => {
-        // Draw rectangle
+        // Draw rectangle with gradient
+        const gradient = ctx.createLinearGradient(
+            get(node.tweened_location).x - get(left_offset),
+            get(node.tweened_location).y,
+            get(node.tweened_location).x - get(left_offset),
+            get(node.tweened_location).y + get(node.tweened_size_height)
+        );
+        gradient.addColorStop(0, 'rgba(173, 216, 230, 0.6)'); // Light at top
+        gradient.addColorStop(0.5, 'rgba(73, 116, 230, 0.6)'); // Darker in middle
+        gradient.addColorStop(1, 'rgba(173, 216, 230, 0.6)'); // Light at bottom
+
         ctx.beginPath();
         ctx.rect(
             get(node.tweened_location).x - get(left_offset),
@@ -162,25 +180,35 @@ function draw() {
             get(node.tweened_size_width),
             get(node.tweened_size_height)
         );
-        ctx.fillStyle = 'lightblue';
-        ctx.fill();
+        ctx.fillStyle = gradient;
+        // ctx.fill();
         ctx.strokeStyle = 'black';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        ctx.lineWidth = 1;
+        // ctx.stroke();
         ctx.closePath();
     });
     
     // Draw connections 
     visibleNodes.forEach(node => {
         if (node.parent) {
+            const startX = get(node.tweened_location).x + get(node.tweened_size_width)/2 - get(left_offset);
+            const startY = get(node.tweened_location).y + get(node.tweened_size_height)/2;
+            const endX = get(node.parent.tweened_location).x + get(node.parent.tweened_size_width)/2 - get(left_offset);
+            const endY = get(node.parent.tweened_location).y + get(node.parent.tweened_size_height)/2;
+            
+            // Calculate control points for the curve
+            const midY = (startY + endY) / 2;
+            const controlPoint1X = startX;
+            const controlPoint1Y = midY;
+            const controlPoint2X = endX; 
+            const controlPoint2Y = midY;
+
             ctx.beginPath();
-            ctx.moveTo(
-                get(node.tweened_location).x + get(node.tweened_size_width)/2 - get(left_offset),
-                get(node.tweened_location).y + get(node.tweened_size_height)/2
-            );
-            ctx.lineTo(
-                get(node.parent.tweened_location).x + get(node.parent.tweened_size_width)/2 - get(left_offset),
-                get(node.parent.tweened_location).y + get(node.parent.tweened_size_height)/2
+            ctx.moveTo(startX, startY);
+            ctx.bezierCurveTo(
+                controlPoint1X, controlPoint1Y,
+                controlPoint2X, controlPoint2Y,
+                endX, endY
             );
             ctx.strokeStyle = 'black';
             ctx.lineWidth = 2;
@@ -197,7 +225,7 @@ function draw() {
         // Draw circle background
         ctx.beginPath();
         ctx.arc(centerX, centerY, TIMER_CIRCLE_RADIUS, 0, 2 * Math.PI);
-        ctx.fillStyle = 'lightblue';
+        ctx.fillStyle = 'white';
         ctx.fill();
         ctx.strokeStyle = 'black';
         ctx.lineWidth = 2;
@@ -205,9 +233,17 @@ function draw() {
         ctx.closePath();
 
         // Draw timer arc
+        const timerFrac = get_timer_frac(node, time);
+        const threshold = 0.04;
+        const is_close = timerFrac < threshold || timerFrac > 1 - threshold;
         ctx.beginPath();
-        ctx.arc(centerX, centerY, TIMER_CIRCLE_RADIUS, 0, 2 * Math.PI * get_timer_frac(node, time));
-        ctx.strokeStyle = 'red';
+        ctx.arc(centerX, centerY, TIMER_CIRCLE_RADIUS, 0, 2 * Math.PI * timerFrac);
+        // Transition from red to green using HSL, with bright flash at completion
+        const hue = 0;
+        const lightness = 40 + is_close * 20; // Start at 50% and go to 100%
+        const saturation = 80 + is_close * 20; // Start at 50% and go to 100%
+        const color = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+        ctx.strokeStyle = color;
         ctx.lineWidth = 4;
         ctx.stroke();
         ctx.closePath();
@@ -420,6 +456,10 @@ onMount(async () => {
             event.preventDefault();
         }
     });
+    window.addEventListener('click', (event) => {
+        click(event);
+        event.preventDefault(); 
+    });
 
     const urlParams = new URLSearchParams(window.location.search);
     const is_local = urlParams.get('serve_local') === 'true';
@@ -486,9 +526,22 @@ onMount(async () => {
 });
 </script>
 
+<div class="flex flex-row gap-4">
+    <div class="flex items-center gap-2">
+        <label for="delay">Delay:</label>
+        <input id="delay" type="number" bind:value={mu_delay} step="0.001" class="border rounded px-2 py-1" />
+    </div>
+    <div class="flex items-center gap-2">
+        <label for="deviation">Deviation:</label>
+        <input id="deviation" type="number" bind:value={sigma} step="0.001" class="border rounded px-2 py-1" />
+    </div>
+    <div class="flex items-center gap-2">
+        <label for="outliers">Outliers:</label>
+        <input id="outliers" type="number" bind:value={outliers} step="0.001" class="border rounded px-2 py-1" />
+    </div>
+</div>
 
-
-<!-- <Eye on:blink={handleBlink} /> -->
+<Eye on:blink={handleBlink} />
 
 <div class="flex flex-col">
     <div class="text-2xl font-bold">
