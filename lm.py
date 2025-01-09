@@ -28,7 +28,7 @@ initialize_model_and_tokenizer()
 
 # %%
 import string
-# Filter out special tokens and sort alphabetically
+# Filter out special tokens and sort alphabet
 # limit to lower case tokens
 # replace ▁ with a space
 clean_vocab = {
@@ -37,7 +37,7 @@ clean_vocab = {
     and all(c in string.ascii_lowercase or c == '▁' for c in token)
 }
 clean_vocab = {k: v for k, v in sorted(clean_vocab.items())}
-clean_vocab_to_clean_id = {k: i for i, k in enumerate(clean_vocab)}
+clean_vocab_to_clean_id = {v: k for k, v in enumerate(clean_vocab)}
 
 print(len(clean_vocab))
 print(list(clean_vocab.items())[0:])
@@ -61,21 +61,14 @@ with open('partial_suffixes.json', 'w') as f:
     json.dump(partial_suffixes, f)
 
 # %%
-tokens = tokenizer.encode("x sci scie scien scienc science")
-tokens
-for t in tokens:
-    print(len(tokenizer.decode(t)))
-# print(tokenizer.encode("x xx xxx xxxx xxxxx xxxxxx xxxxxxx xxxxxxxx xxxxxxxxx xxxxxxxxxx"))
-
-#%%
-tokenizer.decode(29871)
-
-# %%
 # experiments:
 #  for a prefix of 300 words,
 #    without cache it is 100ms
-#    with cache it is 20ms + 6ms to build the cache
-async def process_input_texts(input_texts, prefix_cache_trie=None):
+#    with cache it is 20ms + 6ms to build the previous_kv from the cache
+async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_are_siblings=False, cached_results=None, tokenizer=tokenizer, model=model):
+    # print(f"processing {len(input_texts)} texts")
+    # for text in input_texts:
+    #     print('\t', text)
     torch.cuda.synchronize()
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
@@ -90,9 +83,13 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
 
     # Encode input and get logits
     inputs = tokenizer(input_texts, return_tensors="pt")
-    assert all(len(inputs.input_ids[i]) == len(inputs.input_ids[0]) for i in range(batch_size))
-    seq_len = len(inputs.input_ids[0])
     inputs.to("cuda")
+    input_ids = inputs.input_ids
+    assert all(len(input_ids[i]) == len(input_ids[0]) for i in range(batch_size))
+    seq_len = len(input_ids[0])
+    if batch_texts_are_siblings:
+        # input texts should be the same except for the last token
+        assert all((input_ids[i][:-1] == input_ids[0][:-1]).all() for i in range(1, batch_size))
     with torch.no_grad():
         # create a trie to cache each previous token's past keys/values
         if prefix_cache_trie is not None:
@@ -105,8 +102,13 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
             node = prefix_cache_trie
             start_cache_build_time = time.time()
             for i in range(batch_size):
+                if batch_texts_are_siblings and i > 0:
+                    past_keys[:,i,:,:,:] = past_keys[:,0,:,:,:]
+                    past_values[:,i,:,:,:] = past_values[:,0,:,:,:]
+                    leaf_nodes[i] = leaf_nodes[0]
+                    continue
                 # for each token
-                for t, token in enumerate(inputs.input_ids[i][:-1]):
+                for t, token in enumerate(input_ids[i][:-1]):
                     token = int(token)
                     if token not in node["children"]:
                         failed_to_build_cache = True
@@ -119,12 +121,11 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
             end_cache_build_time = time.time()
             # run the model
             if not failed_to_build_cache:
-                print(f"successfully built cache in {end_cache_build_time - start_cache_build_time:.4f} seconds")
+                # print(f"successfully built cache in {end_cache_build_time - start_cache_build_time:.4f} seconds")
                 past_key_values = [(past_keys[l], past_values[l]) for l in range(n_layers)]
-                input_ids = inputs.input_ids[:,-1:]
                 attention_mask = torch.ones(batch_size, seq_len-1, device="cuda")
                 start_time = time.time()
-                output = model(input_ids=input_ids, attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True);
+                output = model(input_ids=input_ids[:,-1:], attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True);
                 torch.cuda.synchronize()
                 end_time = time.time()
             else:
@@ -137,7 +138,7 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
                 print("updating cache from root")
                 for i in range(batch_size):
                     node = prefix_cache_trie
-                    for t, token in enumerate(inputs.input_ids[i][:-1]):
+                    for t, token in enumerate(input_ids[i][:-1]):
                         token = int(token)
                         if token not in node["children"]:
                             node["children"][token] = {"children": {}}
@@ -147,9 +148,9 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
                     leaf_nodes[i] = node
             # update the cache
             for i in range(batch_size):
-                last_token = inputs.input_ids[i][-1]
+                last_token = input_ids[i][-1]
                 last_token = int(last_token)
-                node = leaf_nodes[i]
+                node = leaf_nodes[i] 
                 node["children"][last_token] = {"children": {}}
                 node["children"][last_token]["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,-1,:] for l in range(n_layers)]).to("cuda")
                 node["children"][last_token]["past_values"] = torch.stack([output.past_key_values[l][1][i,:,-1,:] for l in range(n_layers)]).to("cuda")
@@ -159,7 +160,7 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
             output = model(**inputs);
             torch.cuda.synchronize()
             end_time = time.time()
-        print(f"Model inference time: {time.time() - start_time:.4f} seconds")
+        # print(f"Model inference time: {time.time() - start_time:.4f} seconds")
     results = []
     for i in range(batch_size):
         logits = output.logits[i].detach().cpu().numpy()
@@ -170,16 +171,30 @@ async def process_input_texts(input_texts, prefix_cache_trie=None):
         # Get the logits for the last token
         last_token_logits = logits[-1, :]
 
+        # stop token logits
+        stop_token = 2
+        stop_token_logit = last_token_logits[stop_token]
+
         # safe normalize the logits to get probabilities
         clean_last_token_logits = last_token_logits[clean_ids]
         clean_last_token_probs = clean_last_token_logits.copy()
-        clean_last_token_probs -= clean_last_token_probs.max()
+        max_logit = max(clean_last_token_logits.max(), stop_token_logit)
+        clean_last_token_probs -= max_logit
         clean_last_token_probs = np.exp(clean_last_token_probs)
-        clean_last_token_probs /= clean_last_token_probs.sum()  # normalize
+        stop_token_prob = np.exp(stop_token_logit - max_logit)
+        Z = clean_last_token_probs.sum() + stop_token_prob
+        # normalize
+        clean_last_token_probs /= Z
+        stop_token_prob /= Z
         # cumulative sum of probabilities
         clean_last_token_probs_cumulative = np.cumsum(clean_last_token_probs)
 
-        results.append((np.log(clean_last_token_probs), clean_last_token_probs_cumulative))
+        result = (np.log(clean_last_token_probs), clean_last_token_probs_cumulative, np.log(stop_token_prob))
+        node = leaf_nodes[i]["children"][int(input_ids[i][-1])]
+        node["result"] = result
+        if cached_results is not None:
+            cached_results[input_texts[i]] = node
+        results.append(result)
     return results
 
 # Example usage:
@@ -208,10 +223,17 @@ prefix_cache_trie = {"children": {}}
 # end_time = time.time()
 # print(end_time - start_time)
 # print(catval)
-results = asyncio.run(process_input_texts([""], prefix_cache_trie))
-results = asyncio.run(process_input_texts(["man"], prefix_cache_trie))
-results = asyncio.run(process_input_texts(["man plan can"], prefix_cache_trie))
-results = asyncio.run(process_input_texts(["man plan can pan"], prefix_cache_trie))
+cached_results = {}
+results = asyncio.run(process_input_texts([""], prefix_cache_trie, cached_results=cached_results))
+results = asyncio.run(process_input_texts(["man"], prefix_cache_trie, cached_results=cached_results))
+results = asyncio.run(process_input_texts(["man plan"], prefix_cache_trie, cached_results=cached_results))
+prefix_cache_trie["children"][1].keys()
+
+#%%
+results = asyncio.run(process_input_texts(["man plan can pan","man plan can pan", "man plan can can"], prefix_cache_trie, batch_texts_are_siblings=True))
+
+#%%
+prefix_cache_trie['children']
 
 # %%
 # Simple decoding vs past_key_values caching
@@ -240,7 +262,7 @@ import asyncio
 queue = []
 processing = False
 ask_to_continue = False
-prefix_cache_trie = {}
+prefix_cache_trie = {"children": {}}
 
 app = FastAPI()
 
@@ -258,17 +280,36 @@ async def process_queue(websocket: WebSocket):
         if queue:
             await asyncio.sleep(0.001)  # Short delay to yield control
             # Process the first item in the queue
-            input_text = queue.pop(0)
+            try:
+                first_entry = queue.pop(0)
+                first_tokenization_hash = first_entry[2]
+                siblings = [first_entry]
+                remainder = []
+                for entry in queue:
+                    key, priority, tokenization_hash = entry
+                    if tokenization_hash == first_tokenization_hash and len(siblings) < 5:
+                        siblings.append(entry)
+                    else:
+                        remainder.append(entry)
+                queue = remainder
+                input_texts = [entry[0] for entry in siblings]
+            except IndexError:
+                print("queue is empty")
+                continue
             # add to recent_served_requests so that it won't be put in queue again
-            recent_served_requests.append((input_text, time.time()))
+            for text in input_texts:
+                recent_served_requests.append((text, time.time()))
             # prune recent_served_requests to only keep the last 10s
             recent_served_requests = [r for r in recent_served_requests if time.time() - r[1] < 10]
-            results = await process_input_texts([input_text])
-            probs, cum = results[0]
-            probs = probs.astype(float).tolist()  # Convert numpy array to Python list
-            cum = cum.astype(float).tolist()  # Convert numpy array to Python list
-            response = {'type': 'processed', 'ftp': input_text, 'probs': probs, 'cum': cum}
-            await websocket.send_text(json.dumps(response))
+            results = await process_input_texts(input_texts, prefix_cache_trie=prefix_cache_trie, batch_texts_are_siblings=True)
+            for i, result in enumerate(results):
+                probs, cum, stop_prob = result
+                probs = probs.astype(float).tolist()  # Convert numpy array to Python list
+                cum = cum.astype(float).tolist()  # Convert numpy array to Python list
+                stop_prob = float(stop_prob)
+                response = {'type': 'processed', 'ftp': input_texts[i], 'probs': probs, 'cum': cum, 'stop_prob': stop_prob}
+                # todo: time this
+                await websocket.send_text(json.dumps(response))
         else:
             await asyncio.sleep(0.01)  # poll for new requests
 
@@ -292,20 +333,26 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_text(json.dumps(response))
             elif message['type'] == 'set_queue':
                 # Set the global queue with the provided list of strings
-                priority_dict = message['content']
-                queue = [k for k in sorted(priority_dict, key=priority_dict.get, reverse=True) if k not in [s for s,t in recent_served_requests]]
-                print("queue:", queue)
-
-                # queue is a dictionary of key:
+                q = message['content']
+                recent_keys = [k for k,t in recent_served_requests]
+                queue = [(key, priority, hash(tuple(list(tokenization[:-1])))) for key,priority,tokenization in sorted(q, key=lambda x: x[1], reverse=True) if key not in recent_keys]
                 response = {'type': 'set_queue', 'status': 'success'}
                 await websocket.send_text(json.dumps(response))
+            elif message['type'] == 'set_trie':
+                json_trie = message['content']
+                # pretty print the trie with indent 2
+                print(json.dumps(json_trie, indent=2))
+                await websocket.send_text(json.dumps({'type': 'set_trie', 'status': 'success'}))
+            elif message['type'] == 'log':
+                # write to log.txt
+                with open('log.txt', 'a') as f:
+                    f.write(json.dumps(message['content']) + '\n')
+                await websocket.send_text(json.dumps({'type': 'log', 'status': 'success'}))
+            else:
+                print(f"unknown message type: {message['type']}")
     finally:
         processing = False  # Stop the queue processing when the WebSocket connection closes
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="localhost", port=8000)
-
-
-# %%
-1

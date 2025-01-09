@@ -2,7 +2,7 @@ import { lmF } from "./lm.js";
 import cleanTokensStr from "./clean_tokens_str.json";
 // construct a function s->idx from cleanTokensStr
 const cleanTokensStrToIdx = Object.fromEntries(cleanTokensStr.map((s, idx) => [s, idx]));
-const lm_request_queue_max_size = 40;
+const lm_request_queue_max_size = 20;
 // construct PS from cleanTokensStr
 const PS = new Set();
 for (const token of cleanTokensStr) {
@@ -25,6 +25,17 @@ function f(LM, s, t) {
         return LM[s].probs[t_idx];
     }
 }
+function f_stop(LM, s) {
+    if (LM[s] === undefined) {
+        console.log(`[f_stop] LM[s] is undefined for s: ${s}`);
+        return -Infinity; // TODO: this could use a lower grade model
+    } else if (LM[s].stop_prob === undefined) {
+        console.log(`[f_stop] LM[s].stop_prob is undefined for s: ${s}`);
+        return -Infinity;
+    } else {
+        return LM[s].stop_prob;
+    }
+}
 function F(LM, m, s) {
     if (LM[m] === undefined) {
         console.log(`[F] LM[m] is undefined for m: ${m}`);
@@ -33,6 +44,7 @@ function F(LM, m, s) {
         return Math.log(lmF(s, cleanTokensStr, LM[m].cum));
     }
 }
+
 
 
 function get_tokenization(s, tokenizer) {
@@ -113,31 +125,15 @@ function update_trie(node, update_priors, call_level, lm_request_queue_reference
             throw new Error(`trying to update priors, but update_root is not in character model: ${update_root.val}`);
         }
         // we have just received f(n, *) from the language model
-        if (call_level > 0) {
-            // we are not the root of the update call
-            // evaluate priors from ancestors
-            // partial update of prior after we receive f(update_root, *) from the language model
+        // update the stop_token
+        if (call_level == 0) {
+            let stop_descendant = node.trie.registry[node.val + "$"];
+            if (stop_descendant) {
+                stop_descendant.prior = update_root.prior_ill + f_stop(LM, update_root.val);
+            }
+        }
 
-            // // PRIOR
-            // let prior = -Infinity;
-            // for (let i = Math.max(0, n.length - max_ps_len); i < n.length; i++) {
-            //     // n=m+s
-            //     const s = n.slice(i);
-            //     if (partial_suffix_exists(s)) {
-            //         const m = n.slice(0, i); // properly shorter than n
-            //         let m_node = node.trie.registry[m];
-            //         if (m_node.in_character_model) {
-            //             prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
-            //         }
-            //     }
-            // }
-            // node.prior = prior;
-            // // PRIOR ILL
-            // let ill_ancestor_node = node.trie.registry[node.ill_ancestor];
-            // node.prior_ill = ill_ancestor_node.prior_ill + f(LM, node.ill_ancestor, node.ill_suffix);
-
-
-            // PRIOR 
+        if (call_level > 0 && node.letter !== "$") {
             let suffix_since_update_root = n.slice(update_root.val.length);
             if (!partial_suffix_exists(suffix_since_update_root)) {
                 // stop recursing once (descendant-update_root) cannot be a partial suffix
@@ -152,7 +148,8 @@ function update_trie(node, update_priors, call_level, lm_request_queue_reference
         }
     }
     // post_ill_Z means unnormalized posterior probability of the node being the end of a token in <X>
-    if (!node.in_character_model && node.trie.registry[node.ill_ancestor].in_character_model) {
+    // if this is the stop token, don't request it (since we don't want to predict more tokens after a stop token)
+    if (!node.in_character_model && node.trie.registry[node.ill_ancestor] && node.trie.registry[node.ill_ancestor].in_character_model && node.letter !== "$") {
         node.post_ill_Z = max_descendant_likelihood(node, node) + node.prior_ill;
         // if already in queue, update priority
         if (lm_request_queue_reference.has(node.val)) {
@@ -169,10 +166,14 @@ function update_trie(node, update_priors, call_level, lm_request_queue_reference
     // post_Z means unnormalized posterior
     node.post_Z = node.prior + node.likelihood;  // may not be valid if ever_visible_parent
     let post_UB = node.post_Z - pDATA_LB;
-    if (post_UB > visibility_threshold && node.children.length === 0) {
+    if (post_UB > (visibility_threshold-1) && node.children.length === 0) {
         // expand node
+        // don't expand the stop token (c="$")
+        if (node.letter === "$") {
+            return;
+        }
         // node.children = [new_node(node.val + c) for c in 'abcdefghijklmnopqrstuvwxyz ']
-        for (const c of "abcdefghijklmnopqrstuvwxyz ") {
+        for (const c of "abcdefghijklmnopqrstuvwxyz $") {
             if (node.force_space && c !== " ") {
                 continue;
             }
@@ -183,21 +184,26 @@ function update_trie(node, update_priors, call_level, lm_request_queue_reference
 
             // Split on last space to get before/after space segments
             let child_tokenization;
-            const lastSpaceIndex = child_val.slice(0, -1).lastIndexOf(" ");  // index of last space (before the last character)
-            const before_space = lastSpaceIndex === -1 ? "" : child_val.slice(0, lastSpaceIndex);
-            const after_space = lastSpaceIndex === -1 ? child_val : child_val.slice(lastSpaceIndex+1);
-            // try to use the previously computed tokenization up to the space
-            const before_space_node = node.trie.registry[before_space];
-            const before_space_in_registry = before_space.length > 0 && before_space_node !== undefined;
-            if (before_space_in_registry) {
-                if (after_space.length > 0 && after_space[0] === " ") {
-                    throw new Error(`val has two consecutive spaces! ${child_val}`);
-                }
-                let before_space_tokenization = before_space_node.tokenization;
-                let after_space_tokenization = get_tokenization(after_space, tokenizer).slice(1); // remove <start> special token
-                child_tokenization = [...before_space_tokenization, ...after_space_tokenization]
+            if (c === "$") {
+                const stop_token = 2;
+                child_tokenization = [...node.tokenization, stop_token];
             } else {
-                child_tokenization = get_tokenization(child_val, tokenizer);
+                const lastSpaceIndex = child_val.slice(0, -1).lastIndexOf(" ");  // index of last space (before the last character)
+                const before_space = lastSpaceIndex === -1 ? "" : child_val.slice(0, lastSpaceIndex);
+                const after_space = lastSpaceIndex === -1 ? child_val : child_val.slice(lastSpaceIndex+1);
+                // try to use the previously computed tokenization up to the space
+                const before_space_node = node.trie.registry[before_space];
+                const before_space_in_registry = before_space.length > 0 && before_space_node !== undefined;
+                if (before_space_in_registry) {
+                    if (after_space.length > 0 && after_space[0] === " ") {
+                        throw new Error(`val has two consecutive spaces! ${child_val}`);
+                    }
+                    let before_space_tokenization = before_space_node.tokenization;
+                    let after_space_tokenization = get_tokenization(after_space, tokenizer).slice(1); // remove <start> special token
+                    child_tokenization = [...before_space_tokenization, ...after_space_tokenization]
+                } else {
+                    child_tokenization = get_tokenization(child_val, tokenizer);
+                }
             }
             // console.log("child_tokenization for " + child_val + " is " + child_tokenization);
             const child = {
@@ -208,12 +214,12 @@ function update_trie(node, update_priors, call_level, lm_request_queue_reference
                 children: [],
                 in_character_model: false,
                 ever_visible_parent: false,
+                is_visible: false,
+                ever_visible: false,
                 trie: node.trie,
                 letter: c,
                 parent: node,
                 height: node.height + 1,
-                // dummy period, offset
-                period: node.period,
                 // offset: 0,
                 timer_fracs: [...node.timer_fracs],
             };
@@ -231,23 +237,38 @@ function update_trie(node, update_priors, call_level, lm_request_queue_reference
                 throw new Error("Could not find ill_ancestor for: " + child.val);
             }
             // PRIOR
-            let prior = -Infinity;
-            for (let i = Math.max(0, child.val.length - max_ps_len); i < child.val.length; i++) {
-                // n=m+s
-                const s = child.val.slice(i);
-                if (partial_suffix_exists(s)) {
-                    const m = child.val.slice(0, i); // properly shorter than n
-                    let m_node = node.trie.registry[m];
-                    if (m_node.in_character_model) {
-                        prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
+            if (child.letter === "$") {
+                if (node.in_character_model) {
+                    child.prior = node.prior_ill + f_stop(LM, node.val);
+                } else {
+                    child.prior = -Infinity;
+                }
+            } else {
+                let prior = -Infinity;
+                for (let i = Math.max(0, child.val.length - max_ps_len); i < child.val.length; i++) {
+                    // n=m+s
+                    const s = child.val.slice(i);
+                    if (partial_suffix_exists(s)) {
+                        const m = child.val.slice(0, i); // properly shorter than n
+                        let m_node = node.trie.registry[m];
+                        if (m_node.in_character_model) {
+                            prior = logaddexp(prior, m_node.prior_ill + F(LM, m, s));
+                        }
                     }
                 }
+                child.prior = prior;
             }
-            child.prior = prior;
+            if (child.prior === undefined) {
+                throw new Error(`child.prior is undefined for: ${child.val}`);
+            }
             // PRIOR ILL
             let ill_ancestor_node = node.trie.registry[child.ill_ancestor];
             if (ill_ancestor_node.in_character_model) {
-                child.prior_ill = ill_ancestor_node.prior_ill + f(LM, child.ill_ancestor, child.ill_suffix);
+                if (child.letter === "$") {
+                    child.prior_ill = ill_ancestor_node.prior_ill + f_stop(LM, child.ill_ancestor);
+                } else {
+                    child.prior_ill = ill_ancestor_node.prior_ill + f(LM, child.ill_ancestor, child.ill_suffix);
+                }
             } else {
                 child.prior_ill = -Infinity;
             }
