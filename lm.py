@@ -1,4 +1,4 @@
-# In[1]:
+#%%
 import nest_asyncio
 nest_asyncio.apply()
 import torch
@@ -258,10 +258,10 @@ from fastapi import FastAPI, WebSocket
 from pydantic import BaseModel
 import json
 import asyncio
+import starlette.websockets
 
-queue = []
-processing = False
-ask_to_continue = False
+queue_pool = {}
+recent_served_requests_pool = {}
 prefix_cache_trie = {"children": {}}
 
 app = FastAPI()
@@ -271,12 +271,11 @@ class ResponseModel(BaseModel):
     logits: list
 
 import time
-recent_served_requests = []
 
 async def process_queue(websocket: WebSocket):
-    global queue, processing, recent_served_requests
-    processing = True
-    while processing:
+    # todo: queue should not be global; it should be specific to the websocket
+    while True:
+        queue = queue_pool[websocket]
         if queue:
             await asyncio.sleep(0.001)  # Short delay to yield control
             # Process the first item in the queue
@@ -291,16 +290,16 @@ async def process_queue(websocket: WebSocket):
                         siblings.append(entry)
                     else:
                         remainder.append(entry)
-                queue = remainder
+                queue_pool[websocket] = remainder
                 input_texts = [entry[0] for entry in siblings]
             except IndexError:
                 print("queue is empty")
                 continue
             # add to recent_served_requests so that it won't be put in queue again
             for text in input_texts:
-                recent_served_requests.append((text, time.time()))
+                recent_served_requests_pool[websocket].append((text, time.time()))
             # prune recent_served_requests to only keep the last 10s
-            recent_served_requests = [r for r in recent_served_requests if time.time() - r[1] < 10]
+            recent_served_requests_pool[websocket] = [r for r in recent_served_requests_pool[websocket] if time.time() - r[1] < 10]
             results = await process_input_texts(input_texts, prefix_cache_trie=prefix_cache_trie, batch_texts_are_siblings=True)
             for i, result in enumerate(results):
                 probs, cum, stop_prob = result
@@ -309,50 +308,77 @@ async def process_queue(websocket: WebSocket):
                 stop_prob = float(stop_prob)
                 response = {'type': 'processed', 'ftp': input_texts[i], 'probs': probs, 'cum': cum, 'stop_prob': stop_prob}
                 # todo: time this
-                await websocket.send_text(json.dumps(response))
+                try:
+                    if websocket.client_state == starlette.websockets.WebSocketState.CONNECTED:
+                        await websocket.send_text(json.dumps(response))
+                except starlette.websockets.WebSocketDisconnect:
+                    return  # stop sending messages if we are disconnected
         else:
             await asyncio.sleep(0.01)  # poll for new requests
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    global queue, processing
     await websocket.accept()
-    
+    queue_pool[websocket] = []
+    recent_served_requests_pool[websocket] = []
+
     # Start the queue processing task
     asyncio.create_task(process_queue(websocket))
     
-    try:
-        while True:
-            # Receive message from client
+    while True:
+        # Receive message from client
+        try:
             data = await websocket.receive_text()
             message = json.loads(data)
+        except starlette.websockets.WebSocketDisconnect:
+            print("WebSocket connection closed")
+            break
 
-            if message['type'] == 'echo':
-                # Echo the received message back to the client
-                response = {'type': 'echo', 'content': message['content']}
-                await websocket.send_text(json.dumps(response))
-            elif message['type'] == 'set_queue':
-                # Set the global queue with the provided list of strings
-                q = message['content']
-                recent_keys = [k for k,t in recent_served_requests]
-                queue = [(key, priority, hash(tuple(list(tokenization[:-1])))) for key,priority,tokenization in sorted(q, key=lambda x: x[1], reverse=True) if key not in recent_keys]
-                response = {'type': 'set_queue', 'status': 'success'}
-                await websocket.send_text(json.dumps(response))
-            elif message['type'] == 'set_trie':
-                json_trie = message['content']
-                # pretty print the trie with indent 2
-                print(json.dumps(json_trie, indent=2))
-                await websocket.send_text(json.dumps({'type': 'set_trie', 'status': 'success'}))
-            elif message['type'] == 'log':
-                # write to log.txt
-                with open('log.txt', 'a') as f:
-                    f.write(json.dumps(message['content']) + '\n')
-                await websocket.send_text(json.dumps({'type': 'log', 'status': 'success'}))
-            else:
-                print(f"unknown message type: {message['type']}")
-    finally:
-        processing = False  # Stop the queue processing when the WebSocket connection closes
+        if message['type'] == 'set_queue':
+            print("setting queue")
+            # Set the global queue with the provided list of strings
+            q = message['content']
+            recent_keys = [k for k,t in recent_served_requests_pool[websocket]]
+            queue_pool[websocket] = [(key, priority, hash(tuple(list(tokenization[:-1])))) for key,priority,tokenization in sorted(q, key=lambda x: x[1], reverse=True) if key not in recent_keys]
+        elif message['type'] == 'set_trie':
+            pass
+            # json_trie = message['content']
+            # pretty print the trie with indent 2
+            # print(json.dumps(json_trie, indent=2))
+        elif message['type'] == 'log':
+            # write to log.txt
+            with open('log.txt', 'a') as f:
+                f.write(json.dumps(message['content']) + '\n')
+        elif message['type'] == 'test':
+            print("testing")
+            # await websocket.send_text(json.dumps({'type': 'test', 'content': 10}))
+            # continue
+            dummy_prefix_cache_trie = {"children": {}}
+            results = await process_input_texts([''], prefix_cache_trie=dummy_prefix_cache_trie, batch_texts_are_siblings=False)
+            result = results[0]
+            probs, cum, stop_prob = result
+            probs = probs.astype(float).tolist()  # Convert numpy array to Python list
+            cum = cum.astype(float).tolist()  # Convert numpy array to Python list
+            stop_prob = float(stop_prob)
+            response = {'type': 'test', 'content': {'probs': probs, 'cum': cum, 'stop_prob': stop_prob}}
+            await websocket.send_text(json.dumps(response))
+
+        else:
+            print(f"unknown message type: {message['type']}")
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="localhost", port=8000)
+
+#%%
+# Get the clean_id for 'the'
+len(clean_vocab)
+bs = set()
+for t in clean_vocab:
+    for i in range(len(t)):
+        bs.add(t[:i])
+len(bs)
+# 29000 token beginnings
+# 19000 proper token beginnings
+
+# %%
