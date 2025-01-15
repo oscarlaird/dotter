@@ -30,6 +30,7 @@ import * as problogic from '$lib/tokenizer.js';
 import * as colors from '$lib/colors.js';
 import { env, AutoTokenizer } from "@huggingface/transformers";
 import phrases_text from '$lib/phrases.txt?raw';
+let username = "";
 let phrases = phrases_text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 let session_active = true;
 function random_phrase() {
@@ -59,7 +60,7 @@ let TIMER_COLOR = 'color';
 let TIMER_PERIOD = 1.000;
 
 // likelihood parameters
-let mu_delay_ms = 35;
+let mu_delay_ms = 50;
 let sigma_ms = 30;
 let outliers_perc = 3.0;
 $: mu_delay = mu_delay_ms / 1000.0;
@@ -198,18 +199,13 @@ function get_best_node(node) {
                 wpm: wpm
             }
         }))
-        if (session_active) {
-            setTimeout(() => {
-                reset();
-            }, 2000);
-        }
     }
     return get_best_node(best_child);
 }
 
 function longest_common_prefix(s1, s2) {
     let i = 0;
-    while (i < s1.length && i < s2.length && s1[i] === s2[i]) {
+    while (i < s1.length && i < s2.length && s1[i].toLowerCase() === s2[i].toLowerCase()) {
         i++;
     }
     return s1.slice(0, i);
@@ -704,6 +700,10 @@ onMount(async () => {
             await new Promise(resolve => setTimeout(resolve, 5));
             LM[response.ftp] = {"probs": response.probs, "cum": response.cum, "stop_prob": response.stop_prob};
             let lm_response_node = true_root.registry[response.ftp];
+            if (!lm_response_node) {
+                console.log("lm_response_node not found:", response.ftp, "this may happen if the trie was just reset and the message is stale");
+                return;
+            }
             lm_response_node.in_character_model = true;
             // remove from lm_request_queue
             if (lm_request_queue.has(response.ftp)) {
@@ -726,7 +726,7 @@ onMount(async () => {
                 new_queue.push([key, priority, true_root.registry[key].tokenization]);
             }
             socket.send(JSON.stringify({type: 'set_queue', content: new_queue}));
-            // "click" to draw on getting the first
+            // "click" to draw on getting the first value
             if (response.ftp === true_root.val) {
                 click(null);
             }
@@ -779,7 +779,11 @@ onMount(async () => {
             <span class="text-green-700">{best_string_agrees_with_target}</span><span class="text-black">{uncompleted_suffix}</span>
         </div>
 
-        <button class="px-6 py-3 border-2 rounded-lg hover:bg-gray-100 text-xl">Start Session</button>
+        <button class="px-6 py-3 border-2 rounded-lg hover:bg-gray-100 text-xl"
+            on:click={() => {
+                reset();
+            }}
+        >Next</button>
         <button class="px-6 py-3 border-2 rounded-lg hover:bg-gray-100 text-xl">Tutorial</button>
 
         {#if !awaiting_first_gesture}
@@ -805,17 +809,21 @@ onMount(async () => {
         </div>
         {/if}
 
-        <div class="border-l-2 pl-6">
-            <span class="text-2xl">Hello, Oscar</span>
+        <div class="border-l-2 pl-6 flex items-center gap-2">
+            <input 
+                type="text" 
+                bind:value={username}
+                class="text-2xl border-b-2 border-gray-300 focus:border-black outline-none px-1"
+                placeholder="Enter username"
+            />
         </div>
     </div>
     <div class="flex flex-row p-4 gap-4 h-[calc(100%-7rem)]">
         <div class="sidebar flex flex-col w-1/4 flex-shrink-0 border-black border-2 rounded-md p-4" class:hidden={!toggle_settings}>
-            <div class="gesture-type flex flex-row w-full space-x-2">
-                {#each ['Space', 'Click', 'Blink'] as gesture}
+            <!-- <div class="gesture-type flex flex-row w-full space-x-2"> {#each ['Space', 'Click', 'Blink'] as gesture}
                     <button class="button flex flex-col border-2 border-black rounded-md flex-grow h-16 flex justify-center items-center text-center hover:bg-gray-100 active:bg-gray-200 transition-colors duration-150 shadow-sm hover:shadow-md">{gesture}</button>
                 {/each}
-            </div>
+            </div> -->
             <div class="flex flex-col p-4">
                 <label for="mu-slider" class="text-sm font-medium">
                     μ={mu_delay_ms}ms
