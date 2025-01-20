@@ -20,8 +20,6 @@ import json
 print(json.dumps(root, indent=2))
 pretty_print = lambda x: print(json.dumps(x, indent=2))
 
-#%%
-
 # %%
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
@@ -81,19 +79,84 @@ old_ids = np.array(list(clean_vocab_to_old_id.values()))
 # %%
 import bisect
 def get_prefix_range(prefix, tokens):
+    if prefix == '':
+        return 0, len(tokens)
     next_prefix = prefix[:-1] + chr(ord(prefix[-1]) + 1)
-    return bisect.bisect_left(tokens, prefix), bisect.bisect_right(tokens, next_prefix)
+    print(prefix, next_prefix)
+    return bisect.bisect_left(tokens, prefix), bisect.bisect_left(tokens, next_prefix)
 dummy_tokens = ['ochastic', 'oci', 'ocia', 'ocity', 'ock', 'ocker', 'ocket', 'ockey', 'oco', 'ocoa']
+get_prefix_range('em', clean_tokens), get_prefix_range('en', clean_tokens), clean_tokens[11423], clean_tokens[11424], clean_tokens[11425]
 
 #%%
 # token: example
 # token_beginning: ex
 # token_fragment: xamp
-clean_token_beginnings = {token[:i+1] for token in clean_tokens for i in range(len(token))}
+clean_token_beginnings = {token[:i] for token in clean_tokens for i in range(len(token)+1)}
 clean_token_fragments = {token_beginning[i:] for token_beginning in clean_token_beginnings for i in range(len(token_beginning))}
 clean_token_fragments.add('')
 prefix_range_precomp = {token_beginning: get_prefix_range(token_beginning, clean_tokens) for token_beginning in clean_token_beginnings}
 prefix_slice_precomp = {k: slice(*v) for k, v in prefix_range_precomp.items()}
+
+#%%
+len(clean_token_fragments), len(clean_token_beginnings), len(prefix_range_precomp)
+
+#%%
+# write prefix_range_precomp to a json file as {word: [start, end]}
+import json
+with open('prefix_range_precomp.json', 'w') as f:
+    json.dump(prefix_range_precomp, f)
+
+#%%
+len(clean_token_fragments), len(clean_token_beginnings)
+l = []
+queue = ['']
+import string
+def build_trie_bfs(val):
+    is_token_beginning = val in clean_token_beginnings
+    d = {
+        'val': val,
+        'letter': val[-1] if val else None,
+        'bitmap': {c: val+c in clean_token_fragments for c in string.ascii_lowercase+' '},
+        'first_child_idx': len(l)+len(queue)+1,
+        'is_token_beginning': is_token_beginning,
+        'bounds': prefix_range_precomp[val] if is_token_beginning else None,
+        'is_complete_token': val in clean_tokens,
+    }
+    l.append(d)
+    for c in string.ascii_lowercase+' ':
+        if val+c in clean_token_beginnings:
+            queue.append(val+c)
+while queue:
+    val = queue.pop(0)
+    build_trie_bfs(val)
+
+#%%
+for node in l:
+    if node['val'] == 'em':
+        print(node)
+
+#%%
+import struct
+def serialize_trie(l, filename):
+    with open(filename, "wb") as f:
+        for node in l:
+            # bounds
+            if node['bounds'] is not None:
+                f.write(struct.pack("II", *node['bounds']))
+            else:
+                f.write(struct.pack("II", 0, 0))
+            # bitmap
+            bitmap = sum(int(node['bitmap'][c]) << i for i, c in enumerate(string.ascii_lowercase + ' '))
+            f.write(struct.pack("I", bitmap))
+            # first_child_idx
+            f.write(struct.pack("i", node['first_child_idx']))
+            # flags
+            flags = (node['is_token_beginning'] << 0) | (node['is_complete_token'] << 1)
+            f.write(struct.pack("I", flags))
+            # letter
+            f.write(struct.pack("I", ord(node['letter']) if node['letter'] else 0))
+serialize_trie(l, "trie.bin")
+
 
 #%%
 # todo: to ensure a consistent state between this server and the client, we should be running the same code on both sides
@@ -167,8 +230,19 @@ class TokenRequester:
             # 2. add descendants outside of the trie
             self.heap = list(heapq.merge(self.heap, self.get_node_priority_heap(node)))
         else:
-            # todo: allow for fetching this token's successors
-            pass
+            # todo: allow for fetching this token's successors (only 1 token per gesture is too restrictive)
+            # is l_arr correct? Yes.
+            # This new node doesn't really belong in the trie, but it should have the same likelihood as its parent.
+            # parent = ???
+            # us = parent['l_arr'][our_idx] + parent['probs'][our_idx] + parent['prior_ill']
+            # post = us + probs
+            # best_args = np.argpartition(post, -MAX_REQUESTS)[-MAX_REQUESTS:]
+            # best_tokens = [clean_tokens[i] for i in best_args]
+            # print(f"Best tokens for {node['val']}: {best_tokens}")
+            # queue = [(-post[i], node['val']+token) for i,token in zip(best_args, best_tokens)]  # Negate priority for min-heap
+            # heapq.heapify(queue)
+            # self.heap = list(heapq.merge(self.heap, queue))
+            # pass
          
     def __iter__(self):
         while self.heap:

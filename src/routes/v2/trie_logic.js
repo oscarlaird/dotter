@@ -149,9 +149,11 @@ function get_possible_ancestors(val, prefix_range_precomp) {
 let root_node = {
     val: '',
     letter: '',
+    delay_pairs: [],
     is_visible: true,
     likelihood: 0,
     unpushed_likelihood: 0,
+    unpushed_delay_pairs: [],
     children: [],
     has_children: false,
     prior: 0,
@@ -162,15 +164,18 @@ let root_node = {
 
 function initialize_children(node, prefix_range_precomp) {
     node.unpushed_likelihood = 0;
+    node.unpushed_delay_pairs = [];
     let children = [];
     for (let c of 'abcdefghijklmnopqrstuvwxyz $') {
         let child_val = node.val + c;
         let child = {
             val: child_val,
             letter: c,
+            delay_pairs: [...node.delay_pairs],
             is_visible: false,
             likelihood: node.likelihood,
             unpushed_likelihood: 0,
+            unpushed_delay_pairs: [],
             children: [],
             has_children: false,
             prior: -Infinity,
@@ -188,26 +193,33 @@ function initialize_children(node, prefix_range_precomp) {
 function pushl_recalc_post_Z_new(node, new_likelihoods) {
     // post_Z = prior + likelihood should always be correct
     // if .ever_parent_of_visible is true, then likelihood may not be valid, but post_Z must be
-    let timer_likelihood = new_likelihoods[node.val];
+    let timer_likelihood = new_likelihoods[node.val]['likelihood'];
+    let delay_pair = new_likelihoods[node.val]['delay_pair'];
     let has_visible_children = node.children.some(child => child.is_visible);
     if (!has_visible_children) {
         node.likelihood += timer_likelihood;
+        node.delay_pairs.push(delay_pair);
         node.post_Z += timer_likelihood; // since all descendants' likelihoods increased by this, post_Z is correct
         node.unpushed_likelihood += timer_likelihood;
+        node.unpushed_delay_pairs.push(delay_pair);
         return;
     }
     let post_Z = -Infinity;
     for (let child of node.children) {
-        if (child.is_visible) {
+        // if (child.is_visible) {
+        if (child.val in new_likelihoods) {
             pushl_recalc_post_Z_new(child, new_likelihoods);
         } else { // push likelihood to invisible children
             child.likelihood += timer_likelihood;
+            child.delay_pairs.push(delay_pair);
             child.post_Z += timer_likelihood;
             child.unpushed_likelihood += timer_likelihood;
+            child.unpushed_delay_pairs.push(delay_pair);
         }
         post_Z = logaddexp(post_Z, child.post_Z);
     }
     node.likelihood += timer_likelihood;
+    node.delay_pairs.push(delay_pair);
     node.post_Z = post_Z;
 }
 
@@ -240,10 +252,13 @@ function set_viztrie_new(node, lm, threshold, prefix_range_precomp, pDATA) {
         if (node.has_children) {
             for (let child of node.children) {
                 child.likelihood += node.unpushed_likelihood;
+                child.delay_pairs.push(...node.unpushed_delay_pairs);
                 child.post_Z += node.unpushed_likelihood;
                 child.unpushed_likelihood += node.unpushed_likelihood;
+                child.unpushed_delay_pairs.push(...node.unpushed_delay_pairs);
             }
             node.unpushed_likelihood = 0;
+            node.unpushed_delay_pairs = [];
         } else {
             // initialize children
             initialize_children(node, prefix_range_precomp);
@@ -291,8 +306,10 @@ function update_prior_new(update_root_val, node, lm, prefix_range_precomp) {
     for (let child of node.children) {
         // push unpushed likelihoods
         child.likelihood += node.unpushed_likelihood;
+        child.delay_pairs.push(...node.unpushed_delay_pairs);
         child.post_Z += node.unpushed_likelihood;
         child.unpushed_likelihood += node.unpushed_likelihood;
+        child.unpushed_delay_pairs.push(...node.unpushed_delay_pairs);
         // update children affected by the update
         if ((suffix+child.letter in prefix_range_precomp) || (suffix+child.letter === '$')) {
             update_prior_new(update_root_val, child, lm, prefix_range_precomp);
@@ -300,6 +317,7 @@ function update_prior_new(update_root_val, node, lm, prefix_range_precomp) {
         post_Z = logaddexp(post_Z, child.post_Z);
     }
     node.unpushed_likelihood = 0;
+    node.unpushed_delay_pairs = [];
     node.post_Z = post_Z;
 }
 
@@ -355,6 +373,19 @@ function update_prior_pipeline(trie, val, lm, prefix_range_precomp) {
     }
 }
 
+function get_best_descendant(node) {
+    if (!node.has_children || node.letter === '$') {
+        return node;
+    }
+    let best_child = node.children[0];
+    for (let child of node.children) {
+        if (child.post_Z > best_child.post_Z) {
+            best_child = child;
+        }
+    }
+    return get_best_descendant(best_child);
+}
+
 // function gather_visible_nodes(node, node_list) {
 //     if (node.is_visible) {
 //         node_list.push(node);
@@ -376,5 +407,6 @@ export {
     set_viztrie_new,
     update_prior_new,
     pushl_recalc_post_Z_new,
-    update_prior_pipeline
+    update_prior_pipeline,
+    get_best_descendant,
 };

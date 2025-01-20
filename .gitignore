@@ -22,3 +22,18 @@ vite.config.ts.timestamp-*
 
 # trie_worker_rust
 static/trie_worker_rust
+
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+*.py.class
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/*.py[cod]
+**/*$py.class
