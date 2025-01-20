@@ -59,10 +59,12 @@
         canvas_element.style.height = `${rect.height}px`;
         // start animation loop
         canvas_element.tabIndex = 0; // Make canvas focusable
-        canvas_element.addEventListener('keydown', (event) => {
+        document.addEventListener('keydown', (event) => {
             if (event.code === 'Space') {
-                click(event);
-                event.preventDefault();
+                if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                    click(event);
+                    event.preventDefault();
+                }
             }
         });
         //
