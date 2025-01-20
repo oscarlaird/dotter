@@ -248,7 +248,6 @@ function setLocations(node, loc = null, size_height = FIRST_BOX_HEIGHT, size_wid
     }
     node.size_height = size_height;
     node.size_width = size_width;
-    node.is_visible = true;
     node.ever_visible = true;
     let visible_children = node.children.filter(child => child.is_visible);
 
@@ -279,7 +278,6 @@ setLocations(true_root);
 
 
 let get_timer_frac = (node, time) => {
-
     return (time - node.offset + TIMER_PERIOD) % TIMER_PERIOD / TIMER_PERIOD;
 }
 
@@ -653,8 +651,8 @@ onMount(async () => {
     true_root.tokenization = problogic.get_tokenization(true_root.val, tokenizer);
     console.log("Tokenization for root:", true_root.tokenization);
 
-    ctx = canvas_element.getContext('2d');
     // Set canvas size
+    ctx = canvas_element.getContext('2d');
     FIRST_BOX_HEIGHT = canvas_element.clientHeight;
     canvas_element.width = canvas_element.clientWidth;
     canvas_element.height = FIRST_BOX_HEIGHT;

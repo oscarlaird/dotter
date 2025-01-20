@@ -4,7 +4,6 @@ nest_asyncio.apply()
 import torch
 torch.cuda.is_available()
 
-
 # %%
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
@@ -14,6 +13,7 @@ import numpy as np
 
 # Global variables for model and tokenizer
 model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # A small Llama model from Hugging Face
+# model_name = "gpt2-xl"  # A small Llama model from Hugging Face
 tokenizer = None
 model = None
 cache = None
@@ -24,11 +24,70 @@ def initialize_model_and_tokenizer():
     model = AutoModelForCausalLM.from_pretrained(model_name)
     model.cuda()
 initialize_model_and_tokenizer()
+#%%
+# tokenizer.vocab["<|endoftext|>"]
+tokenizer.eos_token_id, tokenizer.bos_token_id
 
+#%% evaluate the model
+phrases_file = "./src/lib/phrases.txt"
+with open(phrases_file, 'r') as f:
+    phrases = f.read().splitlines()
+phrases[0] = "hello hello hello hello hello hello hello hello hello hello hello hello"
+prepend_tokens = [tokenizer.bos_token_id] if model_name == "gpt2-xl" else []
+phrase_tokens = [prepend_tokens + tokenizer.encode(phrase) for phrase in phrases]
+phrase_tokens
+import torch.nn.functional as F
+def bits_per_token(tokens):
+    input_ids = torch.tensor(tokens).unsqueeze(0).cuda()
+    with torch.no_grad():
+        outputs = model(input_ids, return_dict=True)
+    logits = outputs.logits[0]  # Take first batch item
+    shift_logits = logits[:-1, :].contiguous()  # Remove batch dimension since we took first item
+    shift_labels = input_ids[0, 1:].contiguous()  # Also take first batch item and shift
+    # F.cross_entropy takes unnormalized logits and computes the average info of each label
+    loss = F.cross_entropy(
+        shift_logits.view(-1, shift_logits.size(-1)),
+        shift_labels.view(-1)
+    )
+    return loss
+phrase_tokens[10]
+#%%
+from tqdm import tqdm
+bpts = [bits_per_token(tokens) for tokens in tqdm(phrase_tokens)]
+#%%
+total_bits = sum((bpts[i] * len(phrase_tokens[i])) for i in range(len(phrase_tokens)))
+# total_bits / sum(len(tokens) for tokens in phrase_tokens)
+# TinyLlama: 5.0 bits per token
+# gpt2-xl: 4.6 bits per token
+total_bits / (sum(len(phrase) for phrase in phrases))
+# gpt2-xl: 1.263 bits per character
+# TinyLlama: 1.3082 bits per character
+#%%
+#%%
+import math
+math.exp(5.0)
+math.exp(4.6)
 
-# %%
+#%%
+phrases[3], phrases[5], phrases[7], phrases[9]
+
+#%%
+# report vram usage
+import torch
+print(torch.cuda.memory_summary(device=None, abbreviated=False))
+
+#%%
+def get_last_token_length(s):
+    token_ids = tokenizer.encode(s)
+    if len(token_ids)==1:
+        return 0
+    if len(token_ids)==2:
+        return len(s)
+    last_token_id = token_ids[-1]
+    last_token = tokenizer.convert_ids_to_tokens(last_token_id)
+    return len(last_token)
 import string
-# Filter out special tokens and sort alphabet
+# Filter out special tokens and sort alphabetically
 # limit to lower case tokens
 # replace ▁ with a space
 clean_vocab = {
@@ -36,36 +95,41 @@ clean_vocab = {
     if token not in tokenizer.all_special_tokens 
     and all(c in string.ascii_lowercase or c == '▁' for c in token)
 }
-clean_vocab = {k: v for k, v in sorted(clean_vocab.items())}
-clean_vocab_to_clean_id = {v: k for k, v in enumerate(clean_vocab)}
-
-print(len(clean_vocab))
-print(list(clean_vocab.items())[0:])
-# numpy array of ids
-clean_ids = np.array(list(clean_vocab.values()))
-clean_ids
-
-
-# %%
-list(clean_vocab.keys())
-# dump to clean_tokens_str.json
+clean_vocab_to_old_id = {k: v for k, v in sorted(clean_vocab.items())}
+clean_ids = np.array(list(clean_vocab_to_old_id.values()))
+clean_vocab_to_clean_id = {token: i for i, token in enumerate(clean_vocab)}
+clean_tokens = list(clean_vocab_to_old_id)
+old_ids = np.array(list(clean_vocab_to_old_id.values()))
+import bisect
+def get_prefix_range(prefix, tokens):
+    if prefix == '':
+        return 0, len(tokens)
+    next_prefix = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+    return bisect.bisect_left(tokens, prefix), bisect.bisect_left(tokens, next_prefix)
+# dummy_tokens = ['ochastic', 'oci', 'ocia', 'ocity', 'ock', 'ocker', 'ocket', 'ockey', 'oco', 'ocoa']
+# get_prefix_range('em', clean_tokens), get_prefix_range('en', clean_tokens), clean_tokens[11423], clean_tokens[11424], clean_tokens[11425]
+clean_tokens_set = set(clean_tokens)
+clean_token_beginnings = {token[:i] for token in clean_tokens for i in range(len(token)+1)}
+clean_token_fragments = {token_beginning[i:] for token_beginning in clean_token_beginnings for i in range(len(token_beginning))}
+clean_token_fragments.add('')
+prefix_range_precomp = {token_beginning: get_prefix_range(token_beginning, clean_tokens) for token_beginning in clean_token_beginnings}
+prefix_slice_precomp = {k: slice(*v) for k, v in prefix_range_precomp.items()}
+# write prefix_range_precomp to a json file as {word: [start, end]}
 import json
-with open('clean_tokens_str.json', 'w') as f:
-    json.dump(list(clean_vocab.keys()), f)
-# build partial suffixes (any beginning prefix of a token) and dump to partial_suffixes.json
-partial_suffixes = {}
-for token in clean_vocab:
-    for i in range(len(token)):
-        partial_suffixes[token[:i + 1]] = True
-with open('partial_suffixes.json', 'w') as f:
-    json.dump(partial_suffixes, f)
+with open('prefix_range_precomp.json', 'w') as f:
+    json.dump(prefix_range_precomp, f)
+
+#%%
+# len(prefix_range_precomp), len(prefix_slice_precomp), len(clean_tokens), len(clean_vocab_to_old_id), len(clean_vocab_to_clean_id), len(clean_vocab)
+# okayay' in clean_token_beginnings
+# ' least' in prefix_range_precomp
 
 # %%
 # experiments:
 #  for a prefix of 300 words,
 #    without cache it is 100ms
 #    with cache it is 20ms + 6ms to build the previous_kv from the cache
-async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_are_siblings=False, cached_results=None, tokenizer=tokenizer, model=model):
+async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_are_siblings=False,  tokenizer=tokenizer, model=model):
     # print(f"processing {len(input_texts)} texts")
     # for text in input_texts:
     #     print('\t', text)
@@ -85,6 +149,17 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
     inputs = tokenizer(input_texts, return_tensors="pt")
     inputs.to("cuda")
     input_ids = inputs.input_ids
+    if "gpt" in model_name:
+        prepend_tokens = torch.full((batch_size, 1), tokenizer.bos_token_id, device="cuda", dtype=torch.long)
+        input_ids = torch.cat([prepend_tokens, input_ids], dim=1)
+        if input_ids.dtype != torch.long:
+            print("input_ids.dtype", input_ids.dtype)
+            input_ids = input_ids.long()
+        inputs.input_ids = input_ids
+        inputs['input_ids'] = input_ids
+        attention_mask = torch.ones((batch_size, input_ids.shape[1]), device="cuda", dtype=torch.long)
+        inputs.attention_mask = attention_mask
+        inputs['attention_mask'] = attention_mask
     assert all(len(input_ids[i]) == len(input_ids[0]) for i in range(batch_size))
     seq_len = len(input_ids[0])
     if batch_texts_are_siblings:
@@ -138,6 +213,7 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
                 print("updating cache from root")
                 for i in range(batch_size):
                     node = prefix_cache_trie
+                    # prev_prior_ill = None;
                     for t, token in enumerate(input_ids[i][:-1]):
                         token = int(token)
                         if token not in node["children"]:
@@ -145,6 +221,8 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
                         node = node["children"][token]
                         node["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,t,:] for l in range(n_layers)]).to("cuda")
                         node["past_values"] = torch.stack([output.past_key_values[l][1][i,:,t,:] for l in range(n_layers)]).to("cuda")
+                        # node["prior_ill"] = prev_prior_ill + float(output.logits[i, t-1].softmax(-1)[token].log()) if t > 0 else 0.0
+                        # prev_prior_ill = node["prior_ill"]
                     leaf_nodes[i] = node
             # update the cache
             for i in range(batch_size):
@@ -154,6 +232,7 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
                 node["children"][last_token] = {"children": {}}
                 node["children"][last_token]["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,-1,:] for l in range(n_layers)]).to("cuda")
                 node["children"][last_token]["past_values"] = torch.stack([output.past_key_values[l][1][i,:,-1,:] for l in range(n_layers)]).to("cuda")
+                # node["children"][last_token]["prior_ill"] = node["prior_ill"] + float(output.logits[i, -2].softmax(-1)[last_token].log())
         # run the model without cache
         else:
             start_time = time.time()
@@ -167,6 +246,8 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
         # logits -= logits.max(axis=-1, keepdims=True)
         # logits = np.exp(logits)
         # logits /= logits.sum(axis=-1, keepdims=True)
+        
+        # 
 
         # Get the logits for the last token
         last_token_logits = logits[-1, :]
@@ -174,66 +255,37 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
         # stop token logits
         stop_token = 2
         stop_token_logit = last_token_logits[stop_token]
+        newline_token = 13
+        newline_token_logit = last_token_logits[newline_token]
 
         # safe normalize the logits to get probabilities
-        clean_last_token_logits = last_token_logits[clean_ids]
+        # use float64 since we want to represent small deltas in np.cumsum
+        clean_last_token_logits = last_token_logits[clean_ids].astype(np.float64)
         clean_last_token_probs = clean_last_token_logits.copy()
-        max_logit = max(clean_last_token_logits.max(), stop_token_logit)
-        clean_last_token_probs -= max_logit
-        clean_last_token_probs = np.exp(clean_last_token_probs)
+        max_logit = max(clean_last_token_logits.max(), stop_token_logit, newline_token_logit)
+        clean_last_token_probs = np.exp(clean_last_token_probs - max_logit)
         stop_token_prob = np.exp(stop_token_logit - max_logit)
-        Z = clean_last_token_probs.sum() + stop_token_prob
+        newline_token_prob = np.exp(newline_token_logit - max_logit)
+        Z = clean_last_token_probs.sum() + stop_token_prob + newline_token_prob
         # normalize
         clean_last_token_probs /= Z
         stop_token_prob /= Z
+        newline_token_prob /= Z
+        STOP_PROB = stop_token_prob + newline_token_prob
         # cumulative sum of probabilities
         clean_last_token_probs_cumulative = np.cumsum(clean_last_token_probs)
 
-        result = (np.log(clean_last_token_probs), clean_last_token_probs_cumulative, np.log(stop_token_prob))
-        node = leaf_nodes[i]["children"][int(input_ids[i][-1])]
-        node["result"] = result
-        if cached_results is not None:
-            cached_results[input_texts[i]] = node
+        result = (np.log(clean_last_token_probs), clean_last_token_probs_cumulative, np.log(STOP_PROB))
+        if prefix_cache_trie is not None:
+            node = leaf_nodes[i]["children"][int(input_ids[i][-1])]
+            node["result"] = result
         results.append(result)
     return results
 
-# Example usage:
-# results = asyncio.run(process_input_texts(["a dog a dog a dog a", "a cat a cat a cat a"]))
-# probs, cum = results[1]
-# cum[clean_vocab_to_clean_id[" dog"]] - cum[clean_vocab_to_clean_id[" dog"]-1], cum[clean_vocab_to_clean_id[" cat"]] - cum[clean_vocab_to_clean_id[" cat"]-1]
-
-
-def print_cache(cache, depth=0):
-    if depth == 0:
-        print('--- cache ---')
-    for token,child_node in cache.get("children", {}).items():
-        print(depth*'  ' + str(token))
-        print_cache(child_node, depth+1)
-
-prefix_cache_trie = {"children": {}}
-# prefix_cache_trie = None
-# start_time = time.time()
-# for n in range(50):
-#     s = "cat dog " * n
-#     print(s[:-1])
-#     results = asyncio.run(process_input_texts([s[:-5]], prefix_cache_trie))
-#     results = asyncio.run(process_input_texts([s[:-1]], prefix_cache_trie))
-#     probs, cum = results[0]
-#     catval = cum[clean_vocab_to_clean_id[" dog"]] - cum[clean_vocab_to_clean_id[" dog"]-1]
-# end_time = time.time()
-# print(end_time - start_time)
-# print(catval)
-cached_results = {}
-results = asyncio.run(process_input_texts([""], prefix_cache_trie, cached_results=cached_results))
-results = asyncio.run(process_input_texts(["man"], prefix_cache_trie, cached_results=cached_results))
-results = asyncio.run(process_input_texts(["man plan"], prefix_cache_trie, cached_results=cached_results))
-prefix_cache_trie["children"][1].keys()
-
-#%%
-results = asyncio.run(process_input_texts(["man plan can pan","man plan can pan", "man plan can can"], prefix_cache_trie, batch_texts_are_siblings=True))
-
-#%%
-prefix_cache_trie['children']
+pc_trie = {"children": {}}
+asyncio.run(process_input_texts(['hello'], prefix_cache_trie=pc_trie))
+asyncio.run(process_input_texts(['hello hello'], prefix_cache_trie=pc_trie))
+# tokenizer.encode('')
 
 # %%
 # Simple decoding vs past_key_values caching
@@ -252,133 +304,223 @@ prefix_cache_trie['children']
 # there is very little overhead of larger batches (~0%)
 # (may be the same issue)
 
+#%%
+################ SERVER HANDLES TOKEN REQUEST PRIORITIZATION
 
-# %%
+#%%
+def update_from_new_timer_likelihoods(letter_trie, timer_likelihoods, prompt):
+    old_registry = set(letter_trie.keys())
+    old_vals = [x for x in timer_likelihoods if x in old_registry]
+    new_vals = [x for x in timer_likelihoods if x not in old_registry]
+    for val in sorted(new_vals, key=lambda x: len(x)): # topologically ordered
+        # find the ancestor which appears in the original trie
+        trie_ancestor_val = None
+        possible_ancestors = []
+        for i in range(0, len(val)):
+            proposed_ancestor_val, suffix = val[:i], val[i:]
+            if suffix in clean_token_beginnings:
+                possible_ancestors.append(proposed_ancestor_val)
+            if proposed_ancestor_val in old_registry:
+                trie_ancestor_val = proposed_ancestor_val
+        if trie_ancestor_val is None:
+            raise ValueError(f"val {val} does not have an ancestor in the original trie")
+        parent_val, letter = val[:-1], val[-1]
+        parent = letter_trie[parent_val]
+        parent["child_letters"] += letter
+        likelihood = timer_likelihoods[val]
+        last_token_length = get_last_token_length(prompt + val)
+        if last_token_length > len(val):
+            print(f"warning: last_token_length {last_token_length} > len(val) {len(val)} for {val}. This can occur when using a prompt.")
+            token_ancestor = None
+        else:
+            token_ancestor = val[:-last_token_length]
+        letter_trie[val] = {"likelihood": letter_trie[trie_ancestor_val]["likelihood"] + likelihood, "child_letters": "", "possible_ancestors": possible_ancestors, "token_ancestor": token_ancestor}
+    for val in old_vals:
+        push_likelihood(letter_trie, timer_likelihoods, val, timer_likelihoods[val])
+        
+
+def push_likelihood(letter_trie, timer_likelihoods, val, likelihood):
+    # push likelihood to descendants which were not visible (i.e. present in timer_likelihoods)
+    node = letter_trie[val]
+    node["likelihood"] += likelihood
+    for child_val in [val+letter for letter in node["child_letters"]]:
+        if child_val not in timer_likelihoods:
+            push_likelihood(letter_trie, timer_likelihoods, child_val, likelihood)
+
+def set_mdl(letter_trie):
+    # 1. set mdl for immediate ancestors
+    for val, node in sorted(letter_trie.items(), key=lambda x: len(x[0])):  # topologically ordered
+        node["mdl"] = node["likelihood"]  # overwrite previous mdl with new likelihood
+        for ancestor_val in node["possible_ancestors"]:
+            ancestor_node = letter_trie[ancestor_val]
+            ancestor_node["mdl"] = max(ancestor_node["mdl"], node["mdl"])
+    # 2. bubble up mdl
+    for val, node in sorted(letter_trie.items(), key=lambda x: len(x[0]), reverse=True):  # topologically REVERSE ordered
+        if node["token_ancestor"] is not None:
+            ancestor_node = letter_trie[node["token_ancestor"]]
+            ancestor_node["mdl"] = max(ancestor_node["mdl"], node["mdl"])
+        else:
+            if not val == "":
+                print(f"warning: val {val} does not have a token_ancestor. this is likely because you are using a prompt.")
+
+def set_larr(letter_trie, val, ancestor_val, ancestor_larr):
+    if not val in letter_trie:
+        print(f"setting larr for {val} not in trie")
+        return
+    node = letter_trie[val]
+    suffix = val[len(ancestor_val):]
+    start, end = prefix_range_precomp[suffix]
+    ancestor_larr[start:end] = node["likelihood"]
+    if suffix in clean_tokens_set:
+        ancestor_larr[start] = node["mdl"]
+    for l in node["child_letters"]:
+        child_val = val + l
+        if suffix+l in clean_token_beginnings:
+            set_larr(letter_trie, child_val, ancestor_val, ancestor_larr)
+
+
+#%% SERVER
 from fastapi import FastAPI, WebSocket
-from pydantic import BaseModel
 import json
 import asyncio
 import starlette.websockets
 
-queue_pool = {}
-recent_served_requests_pool = {}
-prefix_cache_trie = {"children": {}}
-
 app = FastAPI()
 
-class ResponseModel(BaseModel):
-    ftp: str
-    logits: list
+# in general the values of the token_trie and priority_queue are the true complete strings
+# but the letter_trie, like the one on the client's side, only refers to the text after the prompt
+import heapq
+async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, prompt, websocket = None):
+    # print("Visiting [", node_val, "] with prior ", node_prior_ill, " and likelihood ", node_likelihood, sep='')
+    larr = np.full(len(clean_tokens), node_likelihood)
+    node_val_minus_prompt = node_val[len(prompt):]
+    if node_val_minus_prompt in letter_trie:
+        # print("setting larr for", node_val_minus_prompt)
+        set_larr(letter_trie, node_val_minus_prompt, node_val_minus_prompt, larr)
+    r = cached_results.get(node_val, None)
+    if r is None:
+        # print("Requesting [", node_val, "] from lm", sep='')
+        results = await process_input_texts([node_val], prefix_cache_trie=lm_prefix_cache_trie)
+        r = results[0]
+        probs, cum, stop_prob = r
+        cum = cum.astype(float).tolist()
+        stop_prob = float(stop_prob)
+        response = {'type': 'processed', 'ftp': node_val, 'cum': cum, 'stop_prob': stop_prob, 'prior_ill': node_prior_ill}
+        try:
+            await websocket.send_text(json.dumps(response))
+        except starlette.websockets.WebSocketDisconnect:
+            print("WebSocket connection closed... not sending result")
+            return False
+        except Exception as e:
+            print("WebSocket connection closed... not sending result", e)
+            return False
+        await asyncio.sleep(0.2)  # TODO: can we yield for 0ms instead of 1ms?
+        cached_results[node_val] = r
+    probs = r[0]
+    priors = node_prior_ill + probs
+    posts = priors + larr
+    K = 100  #
+    best_token_idxs = np.argpartition(posts, -K)[-K:]
+    for idx in best_token_idxs:
+        token = clean_tokens[idx]
+        new_node_val = node_val + token
+        new_node_likelihood = None if new_node_val in letter_trie else larr[idx]
+        new_node_prior_ill = priors[idx]
+        priority = -posts[idx]
+        heapq.heappush(priority_queue, (priority, new_node_val, new_node_prior_ill, new_node_likelihood))
+    return True
 
-import time
+async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie, prompt, websocket = None):
+    while queue:
+        priority, node_val, node_prior_ill, node_likelihood = heapq.heappop(queue)
+        if websocket.client_state != starlette.websockets.WebSocketState.CONNECTED:
+            break
+        conn_open = await visit_token_trie_node(
+            letter_trie=letter_trie,
+            priority_queue=queue,
+            cached_results=cached_results,
+            lm_prefix_cache_trie=lm_prefix_cache_trie,
+            node_val=node_val,
+            node_prior_ill=node_prior_ill,
+            node_likelihood=node_likelihood,
+            prompt=prompt,
+            websocket=websocket
+        )
+        if not conn_open:
+            print("WebSocket connection closed... stopping")
+            break
+    else:
+        raise RuntimeError("Queue Empty")
 
-async def process_queue(websocket: WebSocket):
-    # todo: queue should not be global; it should be specific to the websocket
-    while True:
-        queue = queue_pool[websocket]
-        if queue:
-            await asyncio.sleep(0.001)  # Short delay to yield control
-            # Process the first item in the queue
-            try:
-                first_entry = queue.pop(0)
-                first_tokenization_hash = first_entry[2]
-                siblings = [first_entry]
-                remainder = []
-                for entry in queue:
-                    key, priority, tokenization_hash = entry
-                    if tokenization_hash == first_tokenization_hash and len(siblings) < 5:
-                        siblings.append(entry)
-                    else:
-                        remainder.append(entry)
-                queue_pool[websocket] = remainder
-                input_texts = [entry[0] for entry in siblings]
-            except IndexError:
-                print("queue is empty")
-                continue
-            # add to recent_served_requests so that it won't be put in queue again
-            for text in input_texts:
-                recent_served_requests_pool[websocket].append((text, time.time()))
-            # prune recent_served_requests to only keep the last 10s
-            recent_served_requests_pool[websocket] = [r for r in recent_served_requests_pool[websocket] if time.time() - r[1] < 10]
-            results = await process_input_texts(input_texts, prefix_cache_trie=prefix_cache_trie, batch_texts_are_siblings=True)
-            for i, result in enumerate(results):
-                probs, cum, stop_prob = result
-                probs = probs.astype(float).tolist()  # Convert numpy array to Python list
-                cum = cum.astype(float).tolist()  # Convert numpy array to Python list
-                stop_prob = float(stop_prob)
-                response = {'type': 'processed', 'ftp': input_texts[i], 'probs': probs, 'cum': cum, 'stop_prob': stop_prob}
-                # todo: time this
-                try:
-                    if websocket.client_state == starlette.websockets.WebSocketState.CONNECTED:
-                        await websocket.send_text(json.dumps(response))
-                except starlette.websockets.WebSocketDisconnect:
-                    return  # stop sending messages if we are disconnected
-        else:
-            await asyncio.sleep(0.01)  # poll for new requests
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    queue_pool[websocket] = []
-    recent_served_requests_pool[websocket] = []
 
-    # Start the queue processing task
-    asyncio.create_task(process_queue(websocket))
-    
     while True:
         # Receive message from client
         try:
             data = await websocket.receive_text()
             message = json.loads(data)
+            print("Received message", message)
         except starlette.websockets.WebSocketDisconnect:
             print("WebSocket connection closed")
             break
 
-        if message['type'] == 'set_queue':
-            print("setting queue")
-            # Set the global queue with the provided list of strings
-            q = message['content']
-            recent_keys = [k for k,t in recent_served_requests_pool[websocket]]
-            queue_pool[websocket] = [(key, priority, hash(tuple(list(tokenization[:-1])))) for key,priority,tokenization in sorted(q, key=lambda x: x[1], reverse=True) if key not in recent_keys]
-        elif message['type'] == 'set_trie':
-            pass
-            # json_trie = message['content']
-            # pretty print the trie with indent 2
-            # print(json.dumps(json_trie, indent=2))
+        if message['type'] == 'reset':
+            hard_prompt = message['prompt']
+            cached_results = {}
+            letter_trie = {"": {"likelihood": 0, "child_letters": "", "possible_ancestors": [], "token_ancestor": None, "mdl": 0}}
+            queue = [(0, hard_prompt, 0, 0)]
+            lm_prefix_cache_trie = {"children": {}}
+            asyncio.create_task(process_queue(
+                queue=queue,
+                letter_trie=letter_trie,
+                cached_results=cached_results,
+                lm_prefix_cache_trie=lm_prefix_cache_trie,
+                prompt=hard_prompt,
+                websocket=websocket
+            ))
+
+
+        if message['type'] == 'timer_likelihoods':
+            if 'letter_trie' not in locals():
+                print("letter_trie not initialized; please call reset first.")
+                continue
+            assert 'hard_prompt' in locals() and 'queue' in locals()
+            start_time = time.time()
+            timer_likelihoods = message['content']
+            timer_likelihoods = dict(timer_likelihoods)
+            update_from_new_timer_likelihoods(letter_trie, timer_likelihoods, hard_prompt)
+            set_mdl(letter_trie)
+            queue[:] = [(0, hard_prompt, 0, 0)]  # mutate in place
+            print("RESET QUEUE")
+            end_time = time.time()
+            print(f"update_from_new_timer_likelihoods took {end_time - start_time:.4f} seconds")
+
         elif message['type'] == 'log':
-            # write to log.txt
             with open('log.txt', 'a') as f:
                 f.write(json.dumps(message['content']) + '\n')
-        elif message['type'] == 'test':
-            print("testing")
-            # await websocket.send_text(json.dumps({'type': 'test', 'content': 10}))
-            # continue
-            dummy_prefix_cache_trie = {"children": {}}
-            results = await process_input_texts([''], prefix_cache_trie=dummy_prefix_cache_trie, batch_texts_are_siblings=False)
-            result = results[0]
-            probs, cum, stop_prob = result
-            probs = probs.astype(float).tolist()  # Convert numpy array to Python list
-            cum = cum.astype(float).tolist()  # Convert numpy array to Python list
-            stop_prob = float(stop_prob)
-            response = {'type': 'test', 'content': {'probs': probs, 'cum': cum, 'stop_prob': stop_prob}}
-            await websocket.send_text(json.dumps(response))
-
+        # elif message['type'] == 'test':
+        #     print("testing")
+        #     # await websocket.send_text(json.dumps({'type': 'test', 'content': 10}))
+        #     # continue
+        #     dummy_prefix_cache_trie = {"children": {}}
+        #     results = await process_input_texts([''], prefix_cache_trie=dummy_prefix_cache_trie, batch_texts_are_siblings=False)
+        #     result = results[0]
+        #     probs, cum, stop_prob = result
+        #     probs = probs.astype(float).tolist()  # Convert numpy array to Python list
+        #     cum = cum.astype(float).tolist()  # Convert numpy array to Python list
+        #     stop_prob = float(stop_prob)
+        #     response = {'type': 'test', 'content': {'probs': probs, 'cum': cum, 'stop_prob': stop_prob}}
+        #     await websocket.send_text(json.dumps(response))
         else:
             print(f"unknown message type: {message['type']}")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="localhost", port=8000)
+    uvicorn.run(app, port=8000)
 
 #%%
-# Get the clean_id for 'the'
-len(clean_vocab)
-bs = set()
-for t in clean_vocab:
-    for i in range(len(t)):
-        bs.add(t[:i])
-len(bs)
-# 29000 token beginnings
-# 19000 proper token beginnings
-
-# %%
+tokens = tokenizer.encode('this is a test\nthat is a nest')
+[tokenizer.decode(token) for token in tokens]

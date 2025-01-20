@@ -11,6 +11,7 @@
     let test_worker_1 = null;
     let test_worker_2 = null;
 
+    let socket;
     onMount(async () => {
         console.log("Hello, mount!");
         console.log(new URL('/trie_worker_rust/pkg/trie_worker_rust.js', import.meta.url));
@@ -31,6 +32,22 @@
         // test_worker_2.postMessage({type: "sharedBuffer", sharedBuffer: sharedBuffer});
         let worker_3_url = URL.createObjectURL(new Blob([worker_3_string], {type: 'application/javascript'}));
         let worker_3 = new Worker(worker_3_url, {type: "module"});
+        
+        // Wait a bit for worker 3 to initialize
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        socket = new WebSocket('ws://localhost:8000/ws');
+        socket.addEventListener('open', (event) => {
+            console.log('WebSocket connection established');
+            socket.send(JSON.stringify({type: 'test'}));
+        });
+        socket.addEventListener('message', async (event) => {
+            let response = JSON.parse(event.data);
+            if (response.type === 'test') {
+                console.log("received test message:", response.content);
+                worker_3.postMessage(response);
+            }
+        });
     });
 
     function onclick() {
