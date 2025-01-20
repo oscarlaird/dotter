@@ -414,7 +414,7 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
         except Exception as e:
             print("WebSocket connection closed... not sending result", e)
             return False
-        await asyncio.sleep(0.2)  # TODO: can we yield for 0ms instead of 1ms?
+        await asyncio.sleep(0.05)  # TODO: can we yield for 0ms instead of 1ms?
         cached_results[node_val] = r
     probs = r[0]
     priors = node_prior_ill + probs
@@ -469,6 +469,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
         if message['type'] == 'reset':
             hard_prompt = message['prompt']
+            username = message['username']
+            # lookup all username's records in the log and send them to the client
+            with open('log.txt', 'r') as f:
+                lines = []
+                for line in f:
+                    x = json.loads(line)
+                    if x.get('username') == username:
+                        lines.append(x)
+            await websocket.send_text(json.dumps({'type': 'log_info', 'content': lines}))
+            #
             cached_results = {}
             letter_trie = {"": {"likelihood": 0, "child_letters": "", "possible_ancestors": [], "token_ancestor": None, "mdl": 0}}
             queue = [(0, hard_prompt, 0, 0)]
@@ -490,7 +500,7 @@ async def websocket_endpoint(websocket: WebSocket):
             assert 'hard_prompt' in locals() and 'queue' in locals()
             start_time = time.time()
             timer_likelihoods = message['content']
-            timer_likelihoods = dict(timer_likelihoods)
+            timer_likelihoods = {prefix: v['likelihood'] for prefix, v in timer_likelihoods.items()}
             update_from_new_timer_likelihoods(letter_trie, timer_likelihoods, hard_prompt)
             set_mdl(letter_trie)
             queue[:] = [(0, hard_prompt, 0, 0)]  # mutate in place
