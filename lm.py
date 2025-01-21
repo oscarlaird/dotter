@@ -534,6 +534,8 @@ async def websocket_endpoint(websocket: WebSocket):
         #     stop_prob = float(stop_prob)
         #     response = {'type': 'test', 'content': {'probs': probs, 'cum': cum, 'stop_prob': stop_prob}}
         #     await websocket.send_text(json.dumps(response))
+        elif message['type'] == 'ping':
+            await websocket.send_text(json.dumps({'type': 'pong', 'pingTime': message['pingTime']}))
         else:
             print(f"unknown message type: {message['type']}")
 
