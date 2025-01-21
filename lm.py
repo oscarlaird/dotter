@@ -53,23 +53,15 @@ def bits_per_token(tokens):
 phrase_tokens[10]
 #%%
 from tqdm import tqdm
-bpts = [bits_per_token(tokens) for tokens in tqdm(phrase_tokens)]
+# bpts = [bits_per_token(tokens) for tokens in tqdm(phrase_tokens)]
+# total_bits = sum((bpts[i] * len(phrase_tokens[i])) for i in range(len(phrase_tokens)))
+# total_bits / (sum(len(phrase) for phrase in phrases))
 #%%
-total_bits = sum((bpts[i] * len(phrase_tokens[i])) for i in range(len(phrase_tokens)))
 # total_bits / sum(len(tokens) for tokens in phrase_tokens)
 # TinyLlama: 5.0 bits per token
 # gpt2-xl: 4.6 bits per token
-total_bits / (sum(len(phrase) for phrase in phrases))
 # gpt2-xl: 1.263 bits per character
 # TinyLlama: 1.3082 bits per character
-#%%
-#%%
-import math
-math.exp(5.0)
-math.exp(4.6)
-
-#%%
-phrases[3], phrases[5], phrases[7], phrases[9]
 
 #%%
 # report vram usage
@@ -196,19 +188,21 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
             end_cache_build_time = time.time()
             # run the model
             if not failed_to_build_cache:
-                # print(f"successfully built cache in {end_cache_build_time - start_cache_build_time:.4f} seconds")
+                print(f"successfully built cache in {end_cache_build_time - start_cache_build_time:.4f} seconds")
                 past_key_values = [(past_keys[l], past_values[l]) for l in range(n_layers)]
                 attention_mask = torch.ones(batch_size, seq_len-1, device="cuda")
                 start_time = time.time()
                 output = model(input_ids=input_ids[:,-1:], attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True);
                 torch.cuda.synchronize()
                 end_time = time.time()
+                print(f"model inference time: {end_time - start_time:.4f} seconds")
             else:
                 print("warning: no cache")
                 start_time = time.time()
                 output = model(**inputs);
                 torch.cuda.synchronize()
                 end_time = time.time()
+                print(f"model inference time: {end_time - start_time:.4f} seconds")
                 # update the cache from the root
                 print("updating cache from root")
                 for i in range(batch_size):
@@ -390,8 +384,9 @@ app = FastAPI()
 # in general the values of the token_trie and priority_queue are the true complete strings
 # but the letter_trie, like the one on the client's side, only refers to the text after the prompt
 import heapq
-async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, prompt, websocket = None):
+async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, mutable_prompt, websocket = None):
     # print("Visiting [", node_val, "] with prior ", node_prior_ill, " and likelihood ", node_likelihood, sep='')
+    prompt = ''.join(mutable_prompt)
     larr = np.full(len(clean_tokens), node_likelihood)
     node_val_minus_prompt = node_val[len(prompt):]
     if node_val_minus_prompt in letter_trie:
@@ -414,7 +409,7 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
         except Exception as e:
             print("WebSocket connection closed... not sending result", e)
             return False
-        await asyncio.sleep(0.05)  # TODO: can we yield for 0ms instead of 1ms?
+        await asyncio.sleep(0.1)  # TODO: can we yield for 0ms instead of 1ms?
         cached_results[node_val] = r
     probs = r[0]
     priors = node_prior_ill + probs
@@ -430,7 +425,7 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
         heapq.heappush(priority_queue, (priority, new_node_val, new_node_prior_ill, new_node_likelihood))
     return True
 
-async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie, prompt, websocket = None):
+async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie, mutable_prompt, websocket = None):
     while queue:
         priority, node_val, node_prior_ill, node_likelihood = heapq.heappop(queue)
         if websocket.client_state != starlette.websockets.WebSocketState.CONNECTED:
@@ -443,7 +438,7 @@ async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie
             node_val=node_val,
             node_prior_ill=node_prior_ill,
             node_likelihood=node_likelihood,
-            prompt=prompt,
+            mutable_prompt=mutable_prompt,
             websocket=websocket
         )
         if not conn_open:
@@ -456,6 +451,23 @@ async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+
+    initial_letter_trie = {"": {"likelihood": 0, "child_letters": "", "possible_ancestors": [], "token_ancestor": None, "mdl": 0}}
+    import copy
+    letter_trie = copy.deepcopy(initial_letter_trie)
+    cached_results = {}
+    lm_prefix_cache_trie = {"children": {}}
+    mutable_prompt = []
+    mutable_prompt[:] = ''
+    queue = [(0, ''.join(mutable_prompt), 0, 0)]
+    asyncio.create_task(process_queue(
+        queue=queue,
+        letter_trie=letter_trie,
+        cached_results=cached_results,
+        lm_prefix_cache_trie=lm_prefix_cache_trie,
+        mutable_prompt=mutable_prompt,
+        websocket=websocket
+    ))
 
     while True:
         # Receive message from client
@@ -471,29 +483,27 @@ async def websocket_endpoint(websocket: WebSocket):
             hard_prompt = message['prompt']
             username = message['username']
             # lookup all username's records in the log and send them to the client
-            with open('log.txt', 'r') as f:
+            try:
+                with open('log.txt', 'r') as f:
+                    lines = []
+                    for line in f:
+                        x = json.loads(line)
+                        if x.get('username') == username:
+                            lines.append(x)
+            except FileNotFoundError:
                 lines = []
-                for line in f:
-                    x = json.loads(line)
-                    if x.get('username') == username:
-                        lines.append(x)
             await websocket.send_text(json.dumps({'type': 'log_info', 'content': lines}))
             #
-            cached_results = {}
-            letter_trie = {"": {"likelihood": 0, "child_letters": "", "possible_ancestors": [], "token_ancestor": None, "mdl": 0}}
-            queue = [(0, hard_prompt, 0, 0)]
-            lm_prefix_cache_trie = {"children": {}}
-            asyncio.create_task(process_queue(
-                queue=queue,
-                letter_trie=letter_trie,
-                cached_results=cached_results,
-                lm_prefix_cache_trie=lm_prefix_cache_trie,
-                prompt=hard_prompt,
-                websocket=websocket
-            ))
+            letter_trie.clear()
+            letter_trie.update(copy.deepcopy(initial_letter_trie))
+            cached_results.clear()
+            lm_prefix_cache_trie.clear()
+            lm_prefix_cache_trie.update({"children": {}})
+            mutable_prompt[:] = hard_prompt
+            queue[:] = [(0, ''.join(hard_prompt), 0, 0)]
 
-
-        if message['type'] == 'timer_likelihoods':
+        elif message['type'] == 'timer_likelihoods':
+            await asyncio.sleep(0.2)
             if 'letter_trie' not in locals():
                 print("letter_trie not initialized; please call reset first.")
                 continue
