@@ -162,7 +162,11 @@ i can see the rings on saturn
         await new Promise(resolve => setTimeout(resolve, 100));
         // socket = new WebSocket('ws://localhost:8000/ws');
         // socket = new WebSocket('wss://gg.domainnamefortesting.com:50929/ws');
-        socket = new WebSocket('wss://oo.domainnamefortesting.com:40311/ws');
+        // socket = new WebSocket('wss://oo.domainnamefortesting.com:40311/ws');
+        // [I] ⋊> ~ ssh -p 54716 root@47.186.25.253                                                                                                                16:41:24
+        // socket = new WebSocket('wss://aa.domainnamefortesting.com:54716/ws');
+        // socket = new WebSocket('wss://aa.domainnamefortesting.com:54716/ws');
+        socket = new WebSocket("wss://cm6o1y52t4rsqa-8000.proxy.runpod.net/ws");
         socket.addEventListener('open', () => {
             web_socket_status_msg = 'Connected';
             socket.send(JSON.stringify({type: 'reset', prompt: prompt, username: $username}));
