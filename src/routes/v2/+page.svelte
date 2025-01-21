@@ -226,7 +226,7 @@ i can see the rings on saturn
 
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US';
-        utterance.rate = 1.0;
+        utterance.rate = 0.7;
         utterance.pitch = 1.0;
         window.speechSynthesis.speak(utterance);
         if (true) {
@@ -302,7 +302,7 @@ i can see the rings on saturn
                 confirmed = true;
                 confirm_time = time;
                 // log
-                synthesizeSpeech(best_val.slice(0, -1));
+                // synthesizeSpeech(best_val.slice(0, -1));
                 let log_payload = {
                     username: $username,
                     best_val,
@@ -312,6 +312,8 @@ i can see the rings on saturn
                     delay_pairs: best_descendant.delay_pairs,
                 }
                 socket.send(JSON.stringify({type: 'log', content: log_payload}));
+                // advance to the next phrase after 200ms
+                reset_trie(true); 
             }
         }
     }

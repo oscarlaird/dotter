@@ -61,7 +61,9 @@
         canvas_element.tabIndex = 0; // Make canvas focusable
         document.addEventListener('keydown', (event) => {
             if (event.code === 'Space') {
-                if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                const activeTag = document.activeElement.tagName;
+                const isTextInput = (activeTag === 'INPUT' || activeTag === 'TEXTAREA') && document.activeElement.type !== 'checkbox';
+                if (!isTextInput) {
                     click(event);
                     event.preventDefault();
                 }

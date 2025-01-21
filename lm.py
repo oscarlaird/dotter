@@ -409,7 +409,7 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
         except Exception as e:
             print("WebSocket connection closed... not sending result", e)
             return False
-        await asyncio.sleep(0.1)  # TODO: can we yield for 0ms instead of 1ms?
+        await asyncio.sleep(0.03)  # TODO: can we yield for 0ms instead of 1ms?
         cached_results[node_val] = r
     probs = r[0]
     priors = node_prior_ill + probs
@@ -503,7 +503,7 @@ async def websocket_endpoint(websocket: WebSocket):
             queue[:] = [(0, ''.join(hard_prompt), 0, 0)]
 
         elif message['type'] == 'timer_likelihoods':
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.0)
             if 'letter_trie' not in locals():
                 print("letter_trie not initialized; please call reset first.")
                 continue
