@@ -1,5 +1,5 @@
 nest_asyncio
-transformers
+transformers<=4.42
 torch
 fastapi
 uvicorn[standard]
