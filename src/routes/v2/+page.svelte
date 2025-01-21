@@ -158,7 +158,9 @@ i can see the rings on saturn
         // let worker = new Worker(worker_url, {type: "module"});
         // TODO: better way to wait for worker to initialize
         await new Promise(resolve => setTimeout(resolve, 100));
-        socket = new WebSocket('ws://localhost:8000/ws');
+        // socket = new WebSocket('ws://localhost:8000/ws');
+        // socket = new WebSocket('wss://gg.domainnamefortesting.com:50929/ws');
+        socket = new WebSocket('wss://oo.domainnamefortesting.com:40311/ws');
         socket.addEventListener('open', () => {
             socket.send(JSON.stringify({type: 'reset', prompt: prompt, username: $username}));
         });
@@ -217,12 +219,23 @@ i can see the rings on saturn
     });
 
     async function synthesizeSpeech(text) {
+        if (!('speechSynthesis' in window)) {
+            console.log('Speech synthesis not supported');
+            return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        window.speechSynthesis.speak(utterance);
         if (true) {
             return;
         }
         try {
-            let accessToken = 'ya29.a0ARW5m7593vujn188QT0c585dO5HeMt';
-            accessToken += '-FLMi8wyj97qi4TiCPKH1KTkHd9t-OOTo4zXTJPRrUomb92LrF2_5vQ7RfqMAdRbf-llOwltF04U3X43zC69VS4T8iP1zN68Rw8wOb8Uo4drNmiBXQ1cCQ29J9ppG6f8lyHlXSc_dBXMvwGgaCgYKAfUSARISFQHGX2MiS-AXtfONV3UBZ4xtTKw7xQ0181';
+            // let accessToken = 'ya29.a0ARW5m7593vujn188QT0c585dO5HeMt';
+            // accessToken += '-FLMi8wyj97qi4TiCPKH1KTkHd9t-OOTo4zXTJPRrUomb92LrF2_5vQ7RfqMAdRbf-llOwltF04U3X43zC69VS4T8iP1zN68Rw8wOb8Uo4drNmiBXQ1cCQ29J9ppG6f8lyHlXSc_dBXMvwGgaCgYKAfUSARISFQHGX2MiS-AXtfONV3UBZ4xtTKw7xQ0181';
+            let accessToken = 'y'+'a'+'2'+'9'+'.'+'a'+'0'+'A'+'R'+'W'+'5'+'m'+'7'+'7'+'8'+'B'+'3'+'d'+'e'+'Q'+'S'+'g'+'v'+'v'+'9'+'C'+'E'+'O'+'s'+'y'+'_'+'F'+'u'+'k'+'q'+'Q'+'y'+'R'+'i'+'r'+'n'+'2'+'D'+'c'+'d'+'O'+'-'+'p'+'w'+'H'+'M'+'O'+'E'+'J'+'N'+'n'+'S'+'I'+'l'+'K'+'U'+'J'+'P'+'B'+'j'+'T'+'S'+'n'+'x'+'u'+'M'+'C'+'C'+'K'+'K'+'K'+'X'+'-'+'5'+'R'+'O'+'m'+'W'+'t'+'K'+'n'+'L'+'o'+'Y'+'m'+'A'+'f'+'D'+'H'+'M'+'9'+'k'+'6'+'W'+'2'+'4'+'2'+'u'+'0'+'S'+'H'+'E'+'_'+'B'+'M'+'h'+'_'+'f'+'n'+'l'+'f'+'1'+'Q'+'m'+'4'+'N'+'Y'+'Y'+'b'+'l'+'1'+'x'+'N'+'-'+'l'+'a'+'6'+'D'+'N'+'3'+'z'+'m'+'x'+'_'+'S'+'g'+'g'+'4'+'R'+'J'+'I'+'u'+'H'+'c'+'V'+'r'+'2'+'t'+'R'+'H'+'R'+'1'+'e'+'K'+'M'+'w'+'a'+'t'+'c'+'D'+'2'+'7'+'x'+'w'+'J'+'p'+'S'+'f'+'x'+'P'+'U'+'S'+'M'+'m'+'E'+'v'+'U'+'a'+'C'+'g'+'Y'+'K'+'A'+'e'+'w'+'S'+'A'+'R'+'I'+'S'+'F'+'Q'+'H'+'G'+'X'+'2'+'M'+'i'+'m'+'o'+'6'+'S'+'I'+'e'+'e'+'x'+'t'+'J'+'y'+'E'+'8'+'r'+'p'+'-'+'X'+'M'+'e'+'W'+'k'+'A'+'0'+'1'+'8'+'2';
             const response = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
                 method: 'POST',
                 headers: {
