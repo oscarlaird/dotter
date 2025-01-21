@@ -46,6 +46,8 @@
     //
     let best_val;
     let use_visual_tutor = true;
+    let web_socket_status_msg = 'Connecting...';
+    let latency = null;
     // let prompt = 'pizza and pizza';
     const initial_prompt = `my watch fell in the water
 prevailing wind from the east
@@ -162,12 +164,29 @@ i can see the rings on saturn
         // socket = new WebSocket('wss://gg.domainnamefortesting.com:50929/ws');
         socket = new WebSocket('wss://oo.domainnamefortesting.com:40311/ws');
         socket.addEventListener('open', () => {
+            web_socket_status_msg = 'Connected';
             socket.send(JSON.stringify({type: 'reset', prompt: prompt, username: $username}));
+            startLatencyCheck();
         });
+
+        socket.addEventListener('close', () => {
+            web_socket_status_msg = 'Disconnected';
+        });
+
+        socket.addEventListener('error', () => {
+            web_socket_status_msg = 'Error: Connection failed';
+        });
+
         socket.addEventListener('message', async (event) => {
             console.time('parse_json');
             let response = JSON.parse(event.data);
             console.timeEnd('parse_json');
+
+            if (response.type === 'pong') {
+                const pongTime = performance.now();
+                latency = pongTime - response.pingTime;
+                console.log(`WebSocket latency: ${latency.toFixed(2)} ms`);
+            }
 
             if (response.type === 'log_info') {
                 console.log("log_info", response.content);
@@ -311,9 +330,12 @@ i can see the rings on saturn
                     target_phrase: target_phrase,
                     delay_pairs: best_descendant.delay_pairs,
                 }
-                socket.send(JSON.stringify({type: 'log', content: log_payload}));
+                let time_stamp = performance.now() / 1000.0;
+                socket.send(JSON.stringify({type: 'log', content: log_payload, time_stamp: time_stamp}));
                 // advance to the next phrase after 200ms
-                reset_trie(true); 
+                setTimeout(async () => {
+                    reset_trie(true); 
+                }, 1000);
             }
         }
     }
@@ -329,11 +351,23 @@ i can see the rings on saturn
         confirmed = false;
         socket.send(JSON.stringify({type: 'reset', prompt: proposed_prompt, username: $username}));
     }
+
+    function startLatencyCheck() {
+        const pingTime = performance.now();
+        socket.send(JSON.stringify({type: 'ping', pingTime}));
+        setInterval(() => {
+            const pingTime = performance.now();
+            socket.send(JSON.stringify({type: 'ping', pingTime}));
+        }, 2000); // Check latency every 5 seconds
+    }
 </script>
 <div class="flex flex-col h-screen bg-gray-900 box-border">
     <div class="flex flex-row gap-4 w-full p-4 h-[190px] box-border">
-        <div class="flex-grow p-6 border border-gray-400 rounded-lg bg-white shadow-lg text-4xl font-semibold flex items-center justify-center text-gray-800">
-            {target_phrase.slice(0, -1)}
+        <div class="flex flex-col">
+            <div class="text-sm text-white mb-1">{web_socket_status_msg}{#if latency !== null}&nbsp;&nbsp; | Latency: {latency.toFixed(1)}ms{/if}</div>
+            <div class="flex-grow p-6 border border-gray-400 rounded-lg bg-white shadow-lg text-4xl font-semibold flex items-center justify-center text-gray-800">
+                {target_phrase.slice(0, -1)}
+            </div>
         </div>
 
         <div class="flex flex-col gap-3 h-full">
