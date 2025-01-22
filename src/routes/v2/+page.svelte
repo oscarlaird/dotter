@@ -135,7 +135,7 @@ i can see the rings on saturn
                             display: false
                         }
                     },
-                    aspectRatio: 2.4,
+                    // aspectRatio: 2.4,
                     animation: {
                         duration: 300
                     }
@@ -160,13 +160,13 @@ i can see the rings on saturn
         // let worker = new Worker(worker_url, {type: "module"});
         // TODO: better way to wait for worker to initialize
         await new Promise(resolve => setTimeout(resolve, 100));
-        // socket = new WebSocket('ws://localhost:8000/ws');
+        socket = new WebSocket('ws://localhost:8000/ws');
         // socket = new WebSocket('wss://gg.domainnamefortesting.com:50929/ws');
         // socket = new WebSocket('wss://oo.domainnamefortesting.com:40311/ws');
         // [I] ⋊> ~ ssh -p 54716 root@47.186.25.253                                                                                                                16:41:24
         // socket = new WebSocket('wss://aa.domainnamefortesting.com:54716/ws');
         // socket = new WebSocket('wss://aa.domainnamefortesting.com:54716/ws');
-        socket = new WebSocket("wss://cm6o1y52t4rsqa-8000.proxy.runpod.net/ws");
+        // socket = new WebSocket("wss://cm6o1y52t4rsqa-8000.proxy.runpod.net/ws");
         socket.addEventListener('open', () => {
             web_socket_status_msg = 'Connected';
             socket.send(JSON.stringify({type: 'reset', prompt: prompt, username: $username}));
@@ -242,6 +242,9 @@ i can see the rings on saturn
     });
 
     async function synthesizeSpeech(text) {
+        if (true) {
+            return;
+        }
         if (!('speechSynthesis' in window)) {
             console.log('Speech synthesis not supported');
             return;
@@ -366,49 +369,67 @@ i can see the rings on saturn
     }
 </script>
 <div class="flex flex-col h-screen bg-gray-900 box-border">
-    <div class="flex flex-row gap-4 w-full p-4 h-[190px] box-border">
-        <div class="flex flex-col">
-            <div class="text-sm text-white mb-1">{web_socket_status_msg}{#if latency !== null}&nbsp;&nbsp; | Latency: {latency.toFixed(1)}ms{/if}</div>
-            <div class="flex-grow p-6 border border-gray-400 rounded-lg bg-white shadow-lg text-4xl font-semibold flex items-center justify-center text-gray-800">
+    <!-- Top section with fixed height -->
+    <div class="flex flex-row gap-4 w-full p-4 h-[190px] min-h-[190px] box-border">
+        <!-- Left column with phrase and controls -->
+        <div class="flex flex-col min-w-[300px] max-w-[400px] h-full">
+            <!-- Status bar -->
+            <div class="flex justify-between items-center mb-2">
+                <div class="text-sm text-white truncate">
+                    {web_socket_status_msg}
+                    {#if latency !== null}
+                        <span class="text-gray-400">&nbsp;|&nbsp;{latency.toFixed(1)}ms</span>
+                    {/if}
+                </div>
+                <input 
+                    type="text"
+                    placeholder="Enter username"
+                    bind:value={$username}
+                    class="w-32 px-2 py-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm text-white placeholder-gray-400 text-sm bg-gray-700"
+                />
+            </div>
+            
+            <!-- Target phrase display -->
+            <div class="flex-grow p-6 border border-gray-400 rounded-lg bg-white shadow-lg text-xl font-semibold flex items-center justify-center text-gray-800 overflow-auto mb-3">
                 {target_phrase.slice(0, -1)}
+            </div>
+            
+            <!-- Control buttons -->
+            <div class="flex gap-3">
+                <button 
+                    class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors font-medium shadow-sm text-sm"
+                    on:click={() => { reset_trie(true); }}
+                >
+                    Next Phrase
+                </button>
+                
+                <button 
+                    class="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 active:bg-gray-800 transition-colors font-medium shadow-sm text-sm"
+                    on:click={() => { reset_trie(false); }}
+                >
+                    Retry
+                </button>
             </div>
         </div>
 
-        <div class="flex flex-col gap-3 h-full">
-            <input 
-                type="text"
-                placeholder="Enter username"
-                bind:value={$username}
-                class="w-52 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm text-gray-700 placeholder-gray-400"
-            />
-            <button 
-                class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors flex-grow font-medium shadow-sm"
-                on:click={() => { reset_trie(true); }}
-            >
-                Next Phrase
-            </button>
-            
-            <button 
-                class="w-full px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 active:bg-gray-800 transition-colors flex-grow font-medium shadow-sm"
-                on:click={() => { reset_trie(false); }}
-            >
-                Retry
-            </button>
+        <!-- WPM Chart with fixed dimensions -->
+        <div class="h-full w-[300px] bg-white rounded-lg shadow-lg flex-shrink-0">
+            <canvas bind:this={wpm_chart} width="300" height="170"></canvas>
         </div>
 
-        <canvas bind:this={wpm_chart} class="bg-white rounded-lg shadow-lg"></canvas>
-
+        <!-- Calibration Settings -->
         <CalibrationSettings
             likelihood_model={likelihood_model}
             auto_calibration_likelihood_model={auto_calibration_likelihood_model}
             bind:use_automatic_calibration
+            class="flex-shrink-0 h-full"
         />
 
-        <div class="relative">
+        <!-- Prompt textarea -->
+        <div class="relative flex-shrink-0 h-full">
             <textarea 
                 bind:value={proposed_prompt}
-                rows="6"
-                class="w-96 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm shadow-sm bg-white text-gray-700 placeholder-gray-400"
+                class="h-full w-72 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm shadow-sm bg-white text-gray-700 placeholder-gray-400"
                 placeholder="Enter your prompt here..."
                 on:change={() => {
                     trie = structuredClone(trie_logic.root_node);
@@ -419,7 +440,7 @@ i can see the rings on saturn
                 }}
             ></textarea>
             <button
-                class="absolute bottom-3 right-2 p-1 bg-gray-200 hover:bg-gray-300 rounded-md text-xs text-gray-700"
+                class="absolute bottom-2 right-2 p-1 bg-gray-200 hover:bg-gray-300 rounded-md text-xs text-gray-700"
                 on:click={() => {
                     proposed_prompt = initial_prompt;
                 }}
@@ -429,7 +450,8 @@ i can see the rings on saturn
         </div>
     </div>
 
-    <div class="flex-grow">
+    <!-- Trie visualizer takes remaining height -->
+    <div class="flex-1 min-h-0">
         <TrieVisualizer
             trie={trie}
             trie_updated_flag={trie_updated_flag}

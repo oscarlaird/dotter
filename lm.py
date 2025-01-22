@@ -1,5 +1,5 @@
 #%%
-!pip install -r requirements.txt
+# !pip install -r requirements.txt
 import nest_asyncio
 nest_asyncio.apply()
 import torch
@@ -142,17 +142,17 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
     inputs = tokenizer(input_texts, return_tensors="pt")
     inputs.to("cuda")
     input_ids = inputs.input_ids
-    if "gpt" in model_name:
-        prepend_tokens = torch.full((batch_size, 1), tokenizer.bos_token_id, device="cuda", dtype=torch.long)
-        input_ids = torch.cat([prepend_tokens, input_ids], dim=1)
-        if input_ids.dtype != torch.long:
-            print("input_ids.dtype", input_ids.dtype)
-            input_ids = input_ids.long()
-        inputs.input_ids = input_ids
-        inputs['input_ids'] = input_ids
-        attention_mask = torch.ones((batch_size, input_ids.shape[1]), device="cuda", dtype=torch.long)
-        inputs.attention_mask = attention_mask
-        inputs['attention_mask'] = attention_mask
+    # if "gpt" in model_name:
+    #     prepend_tokens = torch.full((batch_size, 1), tokenizer.bos_token_id, device="cuda", dtype=torch.long)
+    #     input_ids = torch.cat([prepend_tokens, input_ids], dim=1)
+    #     if input_ids.dtype != torch.long:
+    #         print("input_ids.dtype", input_ids.dtype)
+    #         input_ids = input_ids.long()
+    #     inputs.input_ids = input_ids
+    #     inputs['input_ids'] = input_ids
+    #     attention_mask = torch.ones((batch_size, input_ids.shape[1]), device="cuda", dtype=torch.long)
+    #     inputs.attention_mask = attention_mask
+    #     inputs['attention_mask'] = attention_mask
     assert all(len(input_ids[i]) == len(input_ids[0]) for i in range(batch_size))
     seq_len = len(input_ids[0])
     if batch_texts_are_siblings:
@@ -279,7 +279,8 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
 
 pc_trie = {"children": {}}
 asyncio.run(process_input_texts(['hello'], prefix_cache_trie=pc_trie))
-asyncio.run(process_input_texts(['hello hello'], prefix_cache_trie=pc_trie))
+asyncio.run(process_input_texts(['hello hello', 'hello okay'], prefix_cache_trie=pc_trie, batch_texts_are_siblings=True))
+asyncio.run(process_input_texts([''], prefix_cache_trie=pc_trie, batch_texts_are_siblings=True))
 # tokenizer.encode('')
 
 # %%
@@ -385,7 +386,7 @@ app = FastAPI()
 # in general the values of the token_trie and priority_queue are the true complete strings
 # but the letter_trie, like the one on the client's side, only refers to the text after the prompt
 import heapq
-async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, mutable_prompt, websocket = None):
+async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, siblings_to_priorities, mutable_prompt, websocket = None):
     # print("Visiting [", node_val, "] with prior ", node_prior_ill, " and likelihood ", node_likelihood, sep='')
     prompt = ''.join(mutable_prompt)
     larr = np.full(len(clean_tokens), node_likelihood)
@@ -393,10 +394,42 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
     if node_val_minus_prompt in letter_trie:
         # print("setting larr for", node_val_minus_prompt)
         set_larr(letter_trie, node_val_minus_prompt, node_val_minus_prompt, larr)
-    r = cached_results.get(node_val, None)
-    if r is None:
+    if node_val not in cached_results:
         # print("Requesting [", node_val, "] from lm", sep='')
-        results = await process_input_texts([node_val], prefix_cache_trie=lm_prefix_cache_trie)
+        # Get 5 best siblings not already processed, using highest posts (negative priorities)
+        max_siblings = 5
+        best_siblings = []
+        for sibling, priority in sorted(siblings_to_priorities.items(), key=lambda x: x[1])[:5]:  # start w/ highest post
+            if sibling not in cached_results:
+                best_siblings.append(sibling)
+            if len(best_siblings) == max_siblings:
+                break
+        if not node_val in best_siblings:
+            # TODO: why does this occur?
+            print(f"warning: node_val {node_val_minus_prompt} not in best_siblings: {[x[len(prompt):] for x in best_siblings]}")
+        # add node_val to best_siblings if not already present
+        best_siblings = [node_val] + [x for x in best_siblings if x != node_val]
+        print(f"fetching node_val: {node_val_minus_prompt} with siblings: {[x[len(prompt):] for x in best_siblings]}")
+
+        
+        # Tokenize each sibling separately to handle ragged inputs
+        sibling_token_lists = [tokenizer(s).input_ids for s in best_siblings]
+        token_lengths = [len(tokens) for tokens in sibling_token_lists]
+        # Check all sequences have same length
+        if not all(length == token_lengths[0] for length in token_lengths):
+            print(f"warning: siblings have different token counts {list(zip([x[len(prompt):] for x in best_siblings], token_lengths))}")
+            best_siblings = [node_val]
+        else:
+            # Convert to tensor for prefix comparison
+            sibling_inputs = tokenizer(best_siblings, return_tensors="pt") 
+            sibling_input_ids = sibling_inputs.input_ids
+            batch_size = len(best_siblings)
+            # Check all sequences are same except last token
+            if not all((sibling_input_ids[i][:-1] == sibling_input_ids[0][:-1]).all() for i in range(1, batch_size)):
+                print(f"warning: siblings have different prefixes {[x[len(prompt):] for x in best_siblings]}")
+                best_siblings = [node_val]
+
+        results = await process_input_texts(best_siblings, prefix_cache_trie=lm_prefix_cache_trie, batch_texts_are_siblings=True)
         r = results[0]
         probs, cum, stop_prob = r
         cum = cum.astype(float).tolist()
@@ -411,24 +444,49 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
             print("WebSocket connection closed... not sending result", e)
             return False
         await asyncio.sleep(0.1)  # TODO: can we yield for 0ms instead of 1ms?
-        cached_results[node_val] = r
+        cached_results[node_val] = {'result': r, 'sent': True}
+        for sibling, sib_result in zip(best_siblings[1:], results[1:]):
+            cached_results[sibling] = {'result': sib_result, 'sent': False}
+        print(f"cached_results.keys(): {[x[len(prompt):] for x in cached_results.keys()]}")
+
+    if cached_results[node_val]['sent'] == False:
+        print(f"sending node computed as a sibling in a batch: {node_val[len(prompt):]}")
+        r = cached_results[node_val]['result']
+        probs, cum, stop_prob = r
+        cum = cum.astype(float).tolist()
+        stop_prob = float(stop_prob)
+        response = {'type': 'processed', 'ftp': node_val, 'cum': cum, 'stop_prob': stop_prob, 'prior_ill': node_prior_ill}
+        try:
+            await websocket.send_text(json.dumps(response))
+        except starlette.websockets.WebSocketDisconnect:
+            print("WebSocket connection closed... not sending result")
+            return False
+        cached_results[node_val]['sent'] = True
+
+    r = cached_results[node_val]['result']
     probs = r[0]
     priors = node_prior_ill + probs
     posts = priors + larr
     K = 100  #
     best_token_idxs = np.argpartition(posts, -K)[-K:]
+    siblings_to_priorities = {node_val+clean_tokens[idx]: -posts[idx] for idx in best_token_idxs}
     for idx in best_token_idxs:
         token = clean_tokens[idx]
         new_node_val = node_val + token
         new_node_likelihood = None if new_node_val in letter_trie else larr[idx]
         new_node_prior_ill = priors[idx]
         priority = -posts[idx]
-        heapq.heappush(priority_queue, (priority, new_node_val, new_node_prior_ill, new_node_likelihood))
+        heapq.heappush(priority_queue, (priority, new_node_val, new_node_prior_ill, new_node_likelihood, siblings_to_priorities))
     return True
 
-async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie, mutable_prompt, websocket = None):
+MAX_RESPONSES_PER_GESTURE = 30
+async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie, mutable_prompt, num_processed_this_iter, websocket = None):
     while queue:
-        priority, node_val, node_prior_ill, node_likelihood = heapq.heappop(queue)
+        if num_processed_this_iter[0] == MAX_RESPONSES_PER_GESTURE:
+            # spin until the next gesture
+            await asyncio.sleep(0.001)
+            continue
+        priority, node_val, node_prior_ill, node_likelihood, siblings_to_priorities = heapq.heappop(queue)
         if websocket.client_state != starlette.websockets.WebSocketState.CONNECTED:
             break
         conn_open = await visit_token_trie_node(
@@ -439,9 +497,12 @@ async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie
             node_val=node_val,
             node_prior_ill=node_prior_ill,
             node_likelihood=node_likelihood,
+            siblings_to_priorities=siblings_to_priorities,
             mutable_prompt=mutable_prompt,
             websocket=websocket
         )
+        num_processed_this_iter[0] += 1
+        await asyncio.sleep(0.001)  # yield
         if not conn_open:
             print("WebSocket connection closed... stopping")
             break
@@ -460,13 +521,15 @@ async def websocket_endpoint(websocket: WebSocket):
     lm_prefix_cache_trie = {"children": {}}
     mutable_prompt = []
     mutable_prompt[:] = ''
-    queue = [(0, ''.join(mutable_prompt), 0, 0)]
+    queue = [(0, ''.join(mutable_prompt), 0, 0, {'': 0})]
+    num_processed_this_iter = [0]
     asyncio.create_task(process_queue(
         queue=queue,
         letter_trie=letter_trie,
         cached_results=cached_results,
         lm_prefix_cache_trie=lm_prefix_cache_trie,
         mutable_prompt=mutable_prompt,
+        num_processed_this_iter=num_processed_this_iter,
         websocket=websocket
     ))
 
@@ -501,10 +564,11 @@ async def websocket_endpoint(websocket: WebSocket):
             lm_prefix_cache_trie.clear()
             lm_prefix_cache_trie.update({"children": {}})
             mutable_prompt[:] = hard_prompt
-            queue[:] = [(0, ''.join(hard_prompt), 0, 0)]
+            queue[:] = [(0, hard_prompt, 0, 0, {hard_prompt: 0})]
+            num_processed_this_iter[:] = [0]
 
         elif message['type'] == 'timer_likelihoods':
-            await asyncio.sleep(0.0)
+            await asyncio.sleep(0.0)  # simulate network latency
             if 'letter_trie' not in locals():
                 print("letter_trie not initialized; please call reset first.")
                 continue
@@ -514,7 +578,8 @@ async def websocket_endpoint(websocket: WebSocket):
             timer_likelihoods = {prefix: v['likelihood'] for prefix, v in timer_likelihoods.items()}
             update_from_new_timer_likelihoods(letter_trie, timer_likelihoods, hard_prompt)
             set_mdl(letter_trie)
-            queue[:] = [(0, hard_prompt, 0, 0)]  # mutate in place
+            queue[:] = [(0, hard_prompt, 0, 0, {hard_prompt: 0})]  # mutate in place
+            num_processed_this_iter[:] = [0]
             print("RESET QUEUE")
             end_time = time.time()
             print(f"update_from_new_timer_likelihoods took {end_time - start_time:.4f} seconds")
@@ -522,6 +587,7 @@ async def websocket_endpoint(websocket: WebSocket):
         elif message['type'] == 'log':
             with open('log.txt', 'a') as f:
                 f.write(json.dumps(message['content']) + '\n')
+        #
         # elif message['type'] == 'test':
         #     print("testing")
         #     # await websocket.send_text(json.dumps({'type': 'test', 'content': 10}))
