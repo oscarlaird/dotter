@@ -386,7 +386,7 @@ app = FastAPI()
 # in general the values of the token_trie and priority_queue are the true complete strings
 # but the letter_trie, like the one on the client's side, only refers to the text after the prompt
 import heapq
-async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, siblings_to_priorities, mutable_prompt, websocket = None):
+async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_prefix_cache_trie, node_val, node_prior_ill, node_likelihood, siblings, mutable_prompt, websocket = None):
     # print("Visiting [", node_val, "] with prior ", node_prior_ill, " and likelihood ", node_likelihood, sep='')
     prompt = ''.join(mutable_prompt)
     larr = np.full(len(clean_tokens), node_likelihood)
@@ -398,14 +398,9 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
         # print("Requesting [", node_val, "] from lm", sep='')
         # Get 5 best siblings not already processed, using highest posts (negative priorities)
         max_siblings = 5
-        best_siblings = []
-        for sibling, priority in sorted(siblings_to_priorities.items(), key=lambda x: x[1])[:5]:  # start w/ highest post
-            if sibling not in cached_results:
-                best_siblings.append(sibling)
-            if len(best_siblings) == max_siblings:
-                break
+        best_siblings = [s for s in siblings if s not in cached_results][:5]
         if not node_val in best_siblings:
-            # TODO: why does this occur?
+            # TODO: why does this ever occur?
             print(f"warning: node_val {node_val_minus_prompt} not in best_siblings: {[x[len(prompt):] for x in best_siblings]}")
         # add node_val to best_siblings if not already present
         best_siblings = [node_val] + [x for x in best_siblings if x != node_val]
@@ -469,14 +464,15 @@ async def visit_token_trie_node(letter_trie, priority_queue, cached_results, lm_
     posts = priors + larr
     K = 100  #
     best_token_idxs = np.argpartition(posts, -K)[-K:]
-    siblings_to_priorities = {node_val+clean_tokens[idx]: -posts[idx] for idx in best_token_idxs}
+    siblings = sorted([(node_val+clean_tokens[idx], -posts[idx]) for idx in best_token_idxs], key=lambda x: x[1])
+    siblings = [s[0] for s in siblings]
     for idx in best_token_idxs:
         token = clean_tokens[idx]
         new_node_val = node_val + token
         new_node_likelihood = None if new_node_val in letter_trie else larr[idx]
         new_node_prior_ill = priors[idx]
         priority = -posts[idx]
-        heapq.heappush(priority_queue, (priority, new_node_val, new_node_prior_ill, new_node_likelihood, siblings_to_priorities))
+        heapq.heappush(priority_queue, (priority, new_node_val, new_node_prior_ill, new_node_likelihood, siblings))
     return True
 
 MAX_RESPONSES_PER_GESTURE = 30
@@ -486,7 +482,7 @@ async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie
             # spin until the next gesture
             await asyncio.sleep(0.001)
             continue
-        priority, node_val, node_prior_ill, node_likelihood, siblings_to_priorities = heapq.heappop(queue)
+        priority, node_val, node_prior_ill, node_likelihood, siblings = heapq.heappop(queue)
         if websocket.client_state != starlette.websockets.WebSocketState.CONNECTED:
             break
         conn_open = await visit_token_trie_node(
@@ -497,7 +493,7 @@ async def process_queue(queue, letter_trie, cached_results, lm_prefix_cache_trie
             node_val=node_val,
             node_prior_ill=node_prior_ill,
             node_likelihood=node_likelihood,
-            siblings_to_priorities=siblings_to_priorities,
+            siblings=siblings,
             mutable_prompt=mutable_prompt,
             websocket=websocket
         )
