@@ -395,7 +395,7 @@
 </script>
 
 <div class="flex flex-col h-full relative box-border">
-    <canvas bind:this={canvas_element} class="h-full w-full bg-black"></canvas>
+    <canvas bind:this={canvas_element} class="h-full w-full bg-zinc-100"></canvas>
     <div class="absolute top-4 right-6 flex gap-8 text-white text-2xl">
         <label class="flex items-center gap-3">
             <input type="checkbox" bind:checked={developer_visualizer} class="w-6 h-6"/>

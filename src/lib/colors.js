@@ -12,14 +12,25 @@ let color_to_rgb = {
     undefined: [255, 255, 255],
 }
 let adjusted_colors = {
-    'green': [34, 177, 76],
-    'red': [255, 77, 77],
-    'blue': [77, 121, 255],
-    'yellow': [255, 225, 77],
-    'purple': [153, 77, 255],
-    'orange': [255, 153, 51],
-    'tan': [204, 153, 102],
-    'gray': [160, 160, 160],
+    // 'green': [34, 177, 76],
+    // 'red': [255, 77, 77],
+    // 'blue': [77, 121, 255],
+    // 'yellow': [255, 225, 77],
+    // 'purple': [153, 77, 255],
+    // 'orange': [255, 153, 51],
+    // 'tan': [204, 153, 102],
+    // 'gray': [160, 160, 160], 
+    'green': [8, 158, 53],
+    'red': [188, 24, 24],
+    'blue': [62, 89, 169],
+    'yellow': [194, 179, 5],
+    'purple': [96, 37, 173],
+    'orange': [194, 110, 26],
+    'tan': [175, 102, 30],
+    'gray': [62, 62, 62],
+    'white': [22, 22, 22],
+    'black': [228, 228, 228],
+    'white': [22, 22, 22]
 };
 // apply adjusted_colors to color_to_rgb
 for (let color in adjusted_colors) {
@@ -54,7 +65,7 @@ let letter_to_color = {
     x: "orange",
     y: "yellow",
     z: "green",
-    " ": "white",
+    " ": "black",
     "$": "red",
     ".": "red",
 }

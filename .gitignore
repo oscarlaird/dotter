@@ -37,3 +37,4 @@ __pycache__/
 **/*.pyd
 **/*.py[cod]
 **/*$py.class
+.venv/
