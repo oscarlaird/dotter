@@ -39,7 +39,7 @@
 
         <div class="flex flex-col gap-0.5">
             <label class="font-bold text-s">Period ({likelihood_model.period.toFixed(1)}s)</label>
-            <input type="range" min="0.5" max="2.5" step="0.1" bind:value={likelihood_model.period} on:input={save_likelihood_model} class="w-full"/>
+            <input type="range" min="0.3" max="2.5" step="0.1" bind:value={likelihood_model.period} on:input={save_likelihood_model} class="w-full"/>
         </div>
     </div>
 </div>

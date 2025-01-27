@@ -37,3 +37,7 @@ __pycache__/
 **/*.pyd
 **/*.py[cod]
 **/*$py.class
+
+# misc
+log.txt
+prefix_range_precomp.json

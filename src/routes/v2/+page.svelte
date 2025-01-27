@@ -38,9 +38,20 @@
     });
     import phrases_text from '$lib/phrases.txt?raw';
     let phrases = phrases_text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    let used_phrases = new Set();
     function random_phrase() {
         let n_skip_phrases = 6;
-        return phrases[Math.floor(Math.random() * (phrases.length - n_skip_phrases))+n_skip_phrases].toLowerCase() + '$';
+        let available_phrases = phrases.slice(n_skip_phrases).filter(p => !used_phrases.has(p));
+        
+        // Reset used phrases if we've used them all
+        if (available_phrases.length === 0) {
+            used_phrases.clear();
+            available_phrases = phrases.slice(n_skip_phrases);
+        }
+        
+        let phrase = available_phrases[Math.floor(Math.random() * available_phrases.length)];
+        used_phrases.add(phrase);
+        return phrase.toLowerCase() + '$';
     }
     let target_phrase = random_phrase();
     //
@@ -336,13 +347,13 @@ i can see the rings on saturn
                     use_visual_tutor: use_visual_tutor,
                     target_phrase: target_phrase,
                     delay_pairs: best_descendant.delay_pairs,
+                    timestamp: performance.now() / 1000.0
                 }
-                let time_stamp = performance.now() / 1000.0;
-                socket.send(JSON.stringify({type: 'log', content: log_payload, time_stamp: time_stamp}));
+                socket.send(JSON.stringify({type: 'log', content: log_payload}));
                 // advance to the next phrase after 200ms
                 setTimeout(async () => {
                     reset_trie(true); 
-                }, 1000);
+                }, 2000);
             }
         }
     }

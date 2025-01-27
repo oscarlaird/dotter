@@ -27,48 +27,89 @@ def initialize_model_and_tokenizer():
 initialize_model_and_tokenizer()
 #%%
 # tokenizer.vocab["<|endoftext|>"]
-tokenizer.eos_token_id, tokenizer.bos_token_id
+# newline_token_llama = 13
+# tokenizer.eos_token_id, tokenizer.bos_token_id, tokenizer.encode('\n\n\n')
 
-#%% evaluate the model
-phrases_file = "./src/lib/phrases.txt"
-with open(phrases_file, 'r') as f:
-    phrases = f.read().splitlines()
-phrases[0] = "hello hello hello hello hello hello hello hello hello hello hello hello"
-prepend_tokens = [tokenizer.bos_token_id] if model_name == "gpt2-xl" else []
-phrase_tokens = [prepend_tokens + tokenizer.encode(phrase) for phrase in phrases]
-phrase_tokens
-import torch.nn.functional as F
-def bits_per_token(tokens):
-    input_ids = torch.tensor(tokens).unsqueeze(0).cuda()
-    with torch.no_grad():
-        outputs = model(input_ids, return_dict=True)
-    logits = outputs.logits[0]  # Take first batch item
-    shift_logits = logits[:-1, :].contiguous()  # Remove batch dimension since we took first item
-    shift_labels = input_ids[0, 1:].contiguous()  # Also take first batch item and shift
-    # F.cross_entropy takes unnormalized logits and computes the average info of each label
-    loss = F.cross_entropy(
-        shift_logits.view(-1, shift_logits.size(-1)),
-        shift_labels.view(-1)
-    )
-    return loss
-phrase_tokens[10]
-#%%
-from tqdm import tqdm
-# bpts = [bits_per_token(tokens) for tokens in tqdm(phrase_tokens)]
-# total_bits = sum((bpts[i] * len(phrase_tokens[i])) for i in range(len(phrase_tokens)))
-# total_bits / (sum(len(phrase) for phrase in phrases))
+# #%% evaluate the model
+# phrases_file = "./src/lib/phrases.txt"
+# with open(phrases_file, 'r') as f:
+#     phrases = f.read().splitlines()
+# # prepend_tokens = [tokenizer.bos_token_id] if model_name == "gpt2-xl" else []
+# prompt = """my watch fell in the water
+# prevailing wind from the east
+# never too rich and never too thin
+# breathing is difficult
+# i can see the rings on saturn
+# """
+# tokenizer.encode(prompt + "i am okay")
+
+# #%%
+# phrase_tokens = [tokenizer.encode(phrase) for phrase in phrases]
+# print(phrase_tokens[7])
+# import torch.nn.functional as F
+# def bits_in_phrase(prompt, phrase):
+#     prompt_len = len(tokenizer.encode(prompt))
+#     phrase_len = len(tokenizer.encode(prompt + phrase)) - prompt_len
+#     with torch.no_grad():
+#         tokens = tokenizer.encode(prompt + phrase)
+#         input_ids = torch.tensor(tokens).unsqueeze(0).cuda()
+#         outputs = model(input_ids, return_dict=True)
+#     logits = outputs.logits[0]  # Take first batch item
+#     shift_logits = logits[prompt_len-1:-1, :].contiguous()  # Remove batch dimension since we took first item
+#     shift_labels = input_ids[0, prompt_len:].contiguous()  # Also take first batch item and shift
+#     loss = F.cross_entropy(
+#         shift_logits.view(-1, shift_logits.size(-1)),
+#         shift_labels.view(-1)
+#     )
+#     return loss * phrase_len
+# phrase_no = 7
+# print(phrases[phrase_no])
+# bits_in_phrase(prompt='', phrase=phrases[phrase_no])
+# # from tqdm import tqdm
+# # phrase_tokens = phrase_tokens[:10]
+# # bpts = [bits_in_phrase(tokens, include_eos=True) for tokens in tqdm(phrase_tokens)]
+# # total_bits = sum((bpts[i] * len(phrase_tokens[i])) for i in range(len(phrase_tokens)))
+# # total_bits / (sum(len(phrase) for phrase in phrases))
+# # phrase_tokens[1]
+# # bpts[1]
+# from tqdm import tqdm
+# bit_lengths = {}
+# for phrase in tqdm(phrases):
+#     bit_lengths[phrase] = {
+#         'bits_no_prompt_no_newline': bits_in_phrase(prompt='', phrase=phrase),
+#         'bits_no_prompt_with_newline': bits_in_phrase(prompt='', phrase=phrase + '\n'),
+#         'bits_with_prompt_no_newline': bits_in_phrase(prompt=prompt, phrase=phrase),
+#         'bits_with_prompt_with_newline': bits_in_phrase(prompt=prompt, phrase=phrase + '\n'),
+#     }
+# #%%
+# bit_lengths
+# total_bits_with_prompt_no_newline = sum(bit_lengths[phrase]['bits_no_prompt_no_newline'] for phrase in phrases)
+# total_bits_with_prompt_with_newline = sum(bit_lengths[phrase]['bits_no_prompt_with_newline'] for phrase in phrases)
+# newline_overhead = total_bits_with_prompt_with_newline / total_bits_with_prompt_no_newline
+# newline_overhead
+
+# #%%
+# total_bits_no_prompt_no_newline = sum(bit_lengths[phrase]['bits_no_prompt_no_newline'] for phrase in phrases)
+# total_bits_no_prompt_with_newline = sum(bit_lengths[phrase]['bits_no_prompt_with_newline'] for phrase in phrases)
+# total_bits_with_prompt_no_newline = sum(bit_lengths[phrase]['bits_with_prompt_no_newline'] for phrase in phrases)
+# total_bits_with_prompt_with_newline = sum(bit_lengths[phrase]['bits_with_prompt_with_newline'] for phrase in phrases)
+
+# print(f"Total bits without prompt, without newline: {total_bits_no_prompt_no_newline:.2f}")
+# print(f"Total bits without prompt, with newline: {total_bits_no_prompt_with_newline:.2f}")
+# print(f"Total bits with prompt, without newline: {total_bits_with_prompt_no_newline:.2f}")
+# print(f"Total bits with prompt, with newline: {total_bits_with_prompt_with_newline:.2f}")
+
+# 1 - total_bits_with_prompt_with_newline / total_bits_no_prompt_with_newline
+# #%%
+# total_bits_no_prompt_with_newline / total_bits_no_prompt_no_newline
+# #%%
+# (total_bits_with_prompt_with_newline - total_bits_with_prompt_no_newline) / 500
 #%%
 # total_bits / sum(len(tokens) for tokens in phrase_tokens)
 # TinyLlama: 5.0 bits per token
 # gpt2-xl: 4.6 bits per token
 # gpt2-xl: 1.263 bits per character
 # TinyLlama: 1.3082 bits per character
-
-#%%
-# report vram usage
-import torch
-print(torch.cuda.memory_summary(device=None, abbreviated=False))
-
 #%%
 def get_last_token_length(s):
     token_ids = tokenizer.encode(s)

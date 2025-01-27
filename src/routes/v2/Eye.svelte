@@ -14,33 +14,22 @@
 
     let blinking = false;
     let cooldown = false;
+    let cooldown_time = 250;
     let blink_threshold = 25;
-    $: if (blink_right_perc > blink_threshold || blink_right_perc > blink_threshold) {
-        if (!blinking) {
-            // we just crossed the threshold
-            if (!cooldown) {
-                // we are not in cooldown (to avoid multiple triggers in quick succession)
-                handleBlink();
-                cooldown = true;
-                setTimeout(() => {
-                    cooldown = false;
-                }, 300);
-            }
-        }
+    
+    $: if ((blink_left_perc > blink_threshold || blink_right_perc > blink_threshold) && !blinking && !cooldown) {
+        // Eyes just closed and we're not in cooldown
         blinking = true;
-    } else {
+        cooldown = true;
+        handleBlink();
+        setTimeout(() => {
+            cooldown = false;
+        }, cooldown_time);
+    } else if (blink_left_perc < blink_threshold && blink_right_perc < blink_threshold && blinking) {
         blinking = false;
     }
 
-    let letter_idx = 0;
-    let message = "Start typing: ";
-    setInterval(() => {
-        letter_idx = (letter_idx + 1) % 26;
-    }, 140);
-    $: letter = String.fromCharCode(65 + letter_idx);
-
     function handleBlink() {
-        message += letter;
         dispatch("blink", {
             left: blink_left_score,
             right: blink_right_score,
@@ -72,26 +61,11 @@
                 predict();
             }
         })
+        setInterval(() => {
+            console.log({blink_left_perc, blink_right_perc, blinking, cooldown});
+        }, 1000);
     })
 </script>
-
-<!-- {message}
-<div class="flex flex-row">
-    {#each Array.from({ length: 26 }) as _, i}
-        <div class="text-4xl text-center w-16 h-16 border border-black flex items-center justify-center bg-red-100"
-            class:font-bold={i === letter_idx}
-        >{String.fromCharCode(65 + i)}</div>
-    {/each}
-</div> -->
-
-<!-- <div class="progress_container relative w-64 h-32 border-2 border-black">
-    <div class="top-0 absolute progress_bar bg-blue-200 h-full" style="width: {blink_threshold}%"></div>
-    <div class="top-0 absolute progress_bar bg-blue-500 h-full" style="width: {blink_left_perc}%"></div>
-</div>
-<div class="progress_container relative w-64 h-32 border-2 border-black">
-    <div class="top-0 absolute progress_bar bg-blue-200 h-full" style="width: {blink_threshold}%"></div>
-    <div class="top-0 absolute progress_bar bg-blue-500 h-full" style="width: {blink_right_perc}%"></div>
-</div> -->
 
 <video id="webcam" autoplay bind:this={videoElement}
   class="hidden w-full h-full bg-black"

@@ -4,6 +4,7 @@
     import { tweened } from 'svelte/motion';
     import { linear } from 'svelte/easing';
     import { createEventDispatcher } from 'svelte';
+    import Eye from './Eye.svelte';
     const dispatch = createEventDispatcher();
     import * as colors from '$lib/colors.js';
     let canvas_element;
@@ -27,6 +28,8 @@
     let keep_phases = false;
     let developer_visualizer = false;
     let show_boxes = true;
+    let blink_to_click = true;
+    let play_click_sound = true;
     const TWEEN_DURATION = 300;
     const TWEEN_EASING = linear;
     let FPS_SMOOTHING = 0.9;
@@ -41,6 +44,29 @@
             trie_updated_flag.set(false);
         }
     });
+
+    function playClickSound() {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create an oscillator
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+
+        // Set the oscillator frequency for a "click" sound
+        oscillator.frequency.value = 1000; // Frequency in Hz (adjust as needed)
+
+        // Set the gain envelope to make it very short (click-like)
+        gainNode.gain.setValueAtTime(1, audioContext.currentTime); // Start at full volume
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.05); // Fade quickly
+
+        // Connect oscillator to the gain, and then to the audio context
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        // Start and stop the oscillator quickly
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.05); // 50ms for a short click
+    }
 
     onMount(async () => {
         ctx = canvas_element.getContext('2d');
@@ -122,7 +148,15 @@
     }
 
     function click(event) {
-        let time = event.timeStamp / 1000.0;
+        if (play_click_sound) {
+            playClickSound();
+        }
+        let time;
+        if (event && event.timeStamp) {
+            time = event.timeStamp / 1000.0;
+        } else {
+            time = performance.now() / 1000.0;
+        }
         let new_likelihoods = {};
         visible_nodes.filter(node => !(node.go_live_time && node.go_live_time > time)).forEach(node => {
             let node_timer_likelihood = timer_likelihood(time, node.phase, likelihood_model);
@@ -252,6 +286,13 @@
             }
         });
 
+        // Rearrange visibleNodes to put longest target match first
+        visibleNodes.sort((a, b) => {
+            if (a.val === longest_target_val_onscreen) return -1;
+            if (b.val === longest_target_val_onscreen) return 1;
+            return 0;
+        });
+
         // Draw nodes
         visibleNodes.forEach(node => {
             color = colors.color_from_letter(node.letter);
@@ -331,17 +372,29 @@
                 timer_font_size = TIMER_FONT_SIZE * 2.0;
                 timer_radius = TIMER_CIRCLE_RADIUS * 2.0;
             }
+            if (node.letter === 'm' || node.letter === 'w') {
+                timer_radius *= 1.15;
+            }
             const centerX = get(node.tweened_location).x + get(node.tweened_size_width) - get(left_offset) - 1*TIMER_CIRCLE_RADIUS;
             const centerY = get(node.tweened_location).y + get(node.tweened_size_height)/2;
             
+            // Draw circle background
+            if (use_visual_tutor && node.val === longest_target_val_onscreen) {
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, TIMER_CIRCLE_RADIUS * 3, 0, 2 * Math.PI);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.fill();
+                ctx.closePath();
+            }
+
             // Draw letter or box
             ctx.beginPath();
             // ctx.fillStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${1 - Math.pow(timerFrac, 1.0)})`;
             ctx.fillStyle = color_string;
             if (node.letter === '$') {
-                // Draw green box
-                const boxSize = 20;
-                ctx.fillRect(centerX - boxSize/2, centerY - boxSize/2, boxSize, boxSize);
+                // Draw stop square
+                const stop_square_size = 17;
+                ctx.fillRect(centerX - stop_square_size/2, centerY - stop_square_size/2, stop_square_size, stop_square_size);
             } else {
                 // Draw letter
                 // let letter = node.letter !== ' ' ? node.letter : '_';
@@ -350,7 +403,8 @@
                 ctx.textBaseline = 'middle';
                 ctx.fillText(node.letter, centerX, centerY);
             }
-            // beneath in small text write {hello: world}
+
+            // beneath in small text write bayesian info
             if (developer_visualizer) {
                 ctx.font = `${timer_font_size/3}px verdana, helvetica, sans-serif`;
                 ctx.fillText(`l:${node.likelihood.toFixed(2)}`, centerX, centerY + 1*timer_font_size/3);
@@ -359,13 +413,6 @@
             }
             ctx.closePath();
 
-            // Draw circle background
-            // ctx.beginPath();
-            // ctx.arc(centerX, centerY, TIMER_CIRCLE_RADIUS, 0, 2 * Math.PI);
-            // ctx.strokeStyle = color_string;
-            // ctx.lineWidth = 2;
-            // ctx.stroke();
-            // ctx.closePath();
 
             // ctx.globalCompositeOperation = 'xor';
             // Draw timer arc
@@ -383,6 +430,9 @@
                 throw new Error("Invalid TIMER_COLOR: " + TIMER_COLOR);
             }
             ctx.lineWidth = TIMER_CIRCLE_WIDTH;
+            if (use_visual_tutor && node.val === longest_target_val_onscreen) {
+                ctx.lineWidth = TIMER_CIRCLE_WIDTH * 2;
+            }
             ctx.stroke();
             ctx.closePath();
             // ctx.globalCompositeOperation = 'source-over';
@@ -398,8 +448,16 @@
     <canvas bind:this={canvas_element} class="h-full w-full bg-black"></canvas>
     <div class="absolute top-4 right-6 flex gap-8 text-white text-2xl">
         <label class="flex items-center gap-3">
+            <input type="checkbox" bind:checked={blink_to_click} class="w-6 h-6"/>
+            Blink to click
+        </label>
+        <label class="flex items-center gap-3">
             <input type="checkbox" bind:checked={developer_visualizer} class="w-6 h-6"/>
             Debug
+        </label>
+        <label class="flex items-center gap-3">
+            <input type="checkbox" bind:checked={play_click_sound} class="w-6 h-6"/>
+            Click sound
         </label>
         <label class="flex items-center gap-3">
             <input type="checkbox" bind:checked={show_boxes} class="w-6 h-6"/>
@@ -411,3 +469,7 @@
         </label>
     </div>
 </div>
+
+{#if blink_to_click}
+    <Eye on:blink={click}/>
+{/if}
