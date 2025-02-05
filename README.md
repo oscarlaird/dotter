@@ -23,5 +23,5 @@ npm run dev
 View the Application
 Open your browser and go to:
 ```
-localhost:8000/v2
+localhost:5173/v2
 ```
