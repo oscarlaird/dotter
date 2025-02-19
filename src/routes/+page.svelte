@@ -25,7 +25,7 @@ import { tweened } from 'svelte/motion';
 import { tick } from 'svelte';
 import { linear, cubicOut, quadInOut, sineInOut } from 'svelte/easing';
 import { get } from 'svelte/store';
-import Eye from './eye.svelte';
+// import Eye from './eye.svelte';
 import * as problogic from '$lib/tokenizer.js';
 import * as colors from '$lib/colors.js';
 import { env, AutoTokenizer } from "@huggingface/transformers";
@@ -884,4 +884,4 @@ onMount(async () => {
     </div>
 </div>
 
-<Eye on:blink={handleBlink} />
+<!-- <Eye on:blink={handleBlink} /> -->

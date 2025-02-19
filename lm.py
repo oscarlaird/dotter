@@ -4,6 +4,7 @@ import nest_asyncio
 nest_asyncio.apply()
 import torch
 torch.cuda.is_available()
+device = "cuda" if torch.cuda.is_available() else "mps"
 
 # %%
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -23,8 +24,10 @@ def initialize_model_and_tokenizer():
     global tokenizer, model
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(model_name)
-    model.cuda()
+    # model.cuda()
+    model.to(device)
 initialize_model_and_tokenizer()
+
 #%%
 # tokenizer.vocab["<|endoftext|>"]
 # newline_token_llama = 13
@@ -167,9 +170,10 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
     # print(f"processing {len(input_texts)} texts")
     # for text in input_texts:
     #     print('\t', text)
-    torch.cuda.synchronize()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
     batch_size = len(input_texts)
     n_layers = 22
     n_attn_heads = 4
@@ -181,7 +185,7 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
 
     # Encode input and get logits
     inputs = tokenizer(input_texts, return_tensors="pt")
-    inputs.to("cuda")
+    inputs.to(device)
     input_ids = inputs.input_ids
     # if "gpt" in model_name:
     #     prepend_tokens = torch.full((batch_size, 1), tokenizer.bos_token_id, device="cuda", dtype=torch.long)
@@ -204,8 +208,8 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
         if prefix_cache_trie is not None:
             failed_to_build_cache = False
             # initialize past keys/values for each layer
-            past_keys = torch.empty(n_layers, batch_size, n_attn_heads, seq_len-1, head_dimension, device="cuda")
-            past_values = torch.empty(n_layers, batch_size, n_attn_heads, seq_len-1, head_dimension, device="cuda")
+            past_keys = torch.empty(n_layers, batch_size, n_attn_heads, seq_len-1, head_dimension, device=device)
+            past_values = torch.empty(n_layers, batch_size, n_attn_heads, seq_len-1, head_dimension, device=device)
             leaf_nodes = [None for _ in range(batch_size)]
             # for each text
             node = prefix_cache_trie
@@ -232,17 +236,19 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
             if not failed_to_build_cache:
                 print(f"successfully built cache in {end_cache_build_time - start_cache_build_time:.4f} seconds")
                 past_key_values = [(past_keys[l], past_values[l]) for l in range(n_layers)]
-                attention_mask = torch.ones(batch_size, seq_len-1, device="cuda")
+                attention_mask = torch.ones(batch_size, seq_len-1, device=device)
                 start_time = time.time()
                 output = model(input_ids=input_ids[:,-1:], attention_mask=attention_mask, past_key_values=past_key_values, use_cache=True);
-                torch.cuda.synchronize()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 end_time = time.time()
                 print(f"model inference time: {end_time - start_time:.4f} seconds")
             else:
                 print("warning: no cache")
                 start_time = time.time()
                 output = model(**inputs);
-                torch.cuda.synchronize()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 end_time = time.time()
                 print(f"model inference time: {end_time - start_time:.4f} seconds")
                 # update the cache from the root
@@ -255,8 +261,8 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
                         if token not in node["children"]:
                             node["children"][token] = {"children": {}}
                         node = node["children"][token]
-                        node["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,t,:] for l in range(n_layers)]).to("cuda")
-                        node["past_values"] = torch.stack([output.past_key_values[l][1][i,:,t,:] for l in range(n_layers)]).to("cuda")
+                        node["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,t,:] for l in range(n_layers)]).to(device)
+                        node["past_values"] = torch.stack([output.past_key_values[l][1][i,:,t,:] for l in range(n_layers)]).to(device)
                         # node["prior_ill"] = prev_prior_ill + float(output.logits[i, t-1].softmax(-1)[token].log()) if t > 0 else 0.0
                         # prev_prior_ill = node["prior_ill"]
                     leaf_nodes[i] = node
@@ -266,14 +272,15 @@ async def process_input_texts(input_texts, prefix_cache_trie=None, batch_texts_a
                 last_token = int(last_token)
                 node = leaf_nodes[i] 
                 node["children"][last_token] = {"children": {}}
-                node["children"][last_token]["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,-1,:] for l in range(n_layers)]).to("cuda")
-                node["children"][last_token]["past_values"] = torch.stack([output.past_key_values[l][1][i,:,-1,:] for l in range(n_layers)]).to("cuda")
+                node["children"][last_token]["past_keys"] = torch.stack([output.past_key_values[l][0][i,:,-1,:] for l in range(n_layers)]).to(device)
+                node["children"][last_token]["past_values"] = torch.stack([output.past_key_values[l][1][i,:,-1,:] for l in range(n_layers)]).to(device)
                 # node["children"][last_token]["prior_ill"] = node["prior_ill"] + float(output.logits[i, -2].softmax(-1)[last_token].log())
         # run the model without cache
         else:
             start_time = time.time()
-            output = model(**inputs);
-            torch.cuda.synchronize()
+            output = model(**inputs)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             end_time = time.time()
         # print(f"Model inference time: {time.time() - start_time:.4f} seconds")
     results = []
