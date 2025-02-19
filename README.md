@@ -1,5 +1,10 @@
 # Dotter: An Adaptive Single-Switch Text-Entry System
 
+![Dotter Demo: Typing with a single switch](dotter_demo.gif)
+*Dotter enables typing at 20wpm with a single input (e.g. spacebar, blinking). Users synchronize
+their gestures to the timer of their target prefix.*
+
+
 ## Running Locally
 
 Clone the Repository
