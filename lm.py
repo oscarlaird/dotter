@@ -1,7 +1,7 @@
 #%%
 # !pip install -r requirements.txt
-import nest_asyncio
-nest_asyncio.apply()
+# import nest_asyncio
+# nest_asyncio.apply()
 import torch
 torch.cuda.is_available()
 device = "cuda" if torch.cuda.is_available() else "mps"
