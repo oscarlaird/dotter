@@ -30,3 +30,7 @@ Open your browser and go to:
 ```
 localhost:5173/v2
 ```
+
+Stiff, slow, unhurried, feel that the circles are turning very slowly, never reactive. (super fast period (340ms) helped a lot to kick me into this state; 2x confirmed)
+Looking ahead, concentrating and not thinking about other things.
+Not feeling oneself to be blinking but willing.

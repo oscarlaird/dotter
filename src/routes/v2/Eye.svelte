@@ -16,6 +16,8 @@
     let cooldown = false;
     let cooldown_time = 250;
     let blink_threshold = 25;
+
+    let history = [];
     
     $: if ((blink_left_perc > blink_threshold || blink_right_perc > blink_threshold) && !blinking && !cooldown) {
         // Eyes just closed and we're not in cooldown
@@ -51,20 +53,28 @@
         navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
             videoElement.srcObject = stream;
             videoElement.onloadeddata = () => {
-                const predict = async () => {
+                // requestVideoFrameCallback is the corollary to requestAnimationFrame, but for receiving video frames
+                // this lets us use metadata.captureTime to know what timestamp exactly the faceLandmarker is analyzing
+                const draw = async (now, metadata) => {
+                    // console.time('detectForVideo');
                     const results = await faceLandmarker.detectForVideo(videoElement, performance.now());
+                    // console.timeEnd('detectForVideo');
                     if (results.faceBlendshapes.length) {
                         facial_expression_scores = results.faceBlendshapes[0].categories;
+                        let left = facial_expression_scores.find((shape) => shape.categoryName === "eyeBlinkLeft").score;
+                        let right = facial_expression_scores.find((shape) => shape.categoryName === "eyeBlinkRight").score;
+                        let history_entry = {left, right, metadata};
+                        history.push(history_entry);
+                        if (history.length % 100 === 0) {
+                            console.log({history});
+                        }
                     }
-                    requestAnimationFrame(predict);
-                }
-                predict();
-            }
-        })
-        setInterval(() => {
-            console.log({blink_left_perc, blink_right_perc, blinking, cooldown});
-        }, 1000);
-    })
+                    videoElement.requestVideoFrameCallback(draw);
+                };
+                videoElement.requestVideoFrameCallback(draw);
+            };
+        });
+    });
 </script>
 
 <video id="webcam" autoplay bind:this={videoElement}

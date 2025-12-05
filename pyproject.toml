@@ -18,6 +18,7 @@ websockets = "^15.0.1"
 [tool.poetry.group.dev.dependencies]
 matplotlib = "^3.10.7"
 scipy = "^1.16.3"
+ipykernel = "^7.1.0"
 
 [build-system]
 requires = ["poetry-core"]

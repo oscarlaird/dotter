@@ -5,10 +5,12 @@ function estimate_calibration_parameters(delay_pairs) {
     let periods = delay_pairs.map(dp => dp.period);
     console.log("analysing len(delays) = ", delays.length, "delays");
     delays.sort((a, b) => a - b);
+    // TODO: this is significantly biased downwards when some of the delay is rolling over the top
     const middleIndex = Math.floor(delays.length / 2);
     const mu_est = delays.length % 2 === 0 ? (delays[middleIndex - 1] + delays[middleIndex]) / 2 : delays[middleIndex];
     let middleThreeFourths = delays.slice(Math.floor(delays.length / 8), Math.floor(delays.length * 7 / 8));
     console.log("mu_est: ", mu_est);
+    // TODO: invalid if rho > .25
     console.log("Middle three-fourths of delays: ", middleThreeFourths, "len(middleThreeFourths) = ", middleThreeFourths.length);
     middleThreeFourths = middleThreeFourths.map(d => d - mu_est);
     // calculate sample variance
@@ -17,7 +19,7 @@ function estimate_calibration_parameters(delay_pairs) {
     let sigma_est = middle_three_fourths_stddev / 0.607
     //
     let grid_size = 1000;
-    let max_rho = 0.2;
+    let max_rho = 0.40;
     let n_grid_candidates = Math.floor(max_rho * grid_size);
     // estimate outliers (rho)
     let grid_search_candidates = Array(n_grid_candidates).fill(0);
@@ -47,7 +49,10 @@ function estimate_calibration_parameters(delay_pairs) {
     return {mu_est, sigma_est, rho_est, ideal_period_est}
 }
 
-const default_stats = {mu_est: 0.025, sigma_est: 0.120, rho_est: 0.050, ideal_period_est: 2.400};
+// novice default stats
+// const default_stats = {mu_est: 0.025, sigma_est: 0.120, rho_est: 0.050, ideal_period_est: 2.400};
+// oscar
+const default_stats = {mu_est: 0.150, sigma_est: 0.040, rho_est: 0.030, ideal_period_est: 1.100};
 
 function auto_stats(delay_pairs) {
     if (delay_pairs.length < 40) {

@@ -41,3 +41,9 @@ __pycache__/
 # misc
 log.txt
 prefix_range_precomp.json
+log.txt
+blink_log.json
+blink_log_long.json
+log.txt
+log.txt
+poetry.lock

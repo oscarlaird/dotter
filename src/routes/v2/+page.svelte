@@ -18,11 +18,19 @@
     let trie_updated_flag = writable(false);
     let threshold = Math.log(0.03);
     let wpm_chart;
+    // novice
+    // let default_likelihood_model = {
+    //     mu_delay: 0.000,
+    //     stddev_delay: 0.120,
+    //     outliers: 0.100,
+    //     period: 2.200
+    // };
+    // oscar
     let default_likelihood_model = {
-        mu_delay: 0.000,
-        stddev_delay: 0.120,
-        outliers: 0.100,
-        period: 2.200
+        mu_delay: 0.150,
+        stddev_delay: 0.040,
+        outliers: 0.030,
+        period: 1.100
     };
     let auto_calibration_likelihood_model = structuredClone(default_likelihood_model);
     let use_automatic_calibration = true;
@@ -56,7 +64,8 @@
     let target_phrase = random_phrase();
     //
     let best_val;
-    let use_visual_tutor = true;
+    let use_visual_tutor = false;
+    let multiline_mode = false;
     let web_socket_status_msg = 'Connecting...';
     let latency = null;
     // let prompt = 'pizza and pizza';
@@ -133,7 +142,7 @@ i can see the rings on saturn
                             text: () => {
                                 if (trials_cps.length === 0) return 'No attempts yet';
                                 const lastWPM = trials_cps[trials_cps.length - 1];
-                                return `Last: ${lastWPM.toFixed(1)} WPM | Average: ${avg_wpm.toFixed(1)} WPM`;
+                                return `Last: ${lastWPM.toFixed(1)} WPM | Average: ${avg_wpm.toFixed(2)} WPM`;
                             },
                             padding: 8,
                             color: '#1e293b', // Dark slate
@@ -311,13 +320,15 @@ i can see the rings on saturn
     }
 
     function set_likelihoods(event) {
+        let new_likelihoods = event.detail.new_likelihoods;
+        let click_seq = event.detail.click_seq;
         if (socket) {
-            socket.send(JSON.stringify({type: 'timer_likelihoods', content: event.detail}));
+            socket.send(JSON.stringify({type: 'timer_likelihoods', content: new_likelihoods}));
         } else {
             console.log("No socket connection, skipping likelihood set");
         }
         console.time('l pushl_recalc_post_Z_new');
-        trie_logic.pushl_recalc_post_Z_new(trie, event.detail);
+        trie_logic.pushl_recalc_post_Z_new(trie, new_likelihoods);
         console.timeEnd('l pushl_recalc_post_Z_new');
 
         console.time('l set_viztrie_new');
@@ -342,6 +353,7 @@ i can see the rings on saturn
                 // synthesizeSpeech(best_val.slice(0, -1));
                 let log_payload = {
                     username: $username,
+                    click_seq: click_seq,
                     best_val,
                     time_elapsed: confirm_time - wpm_start_time,
                     use_visual_tutor: use_visual_tutor,
@@ -350,10 +362,16 @@ i can see the rings on saturn
                     timestamp: performance.now() / 1000.0
                 }
                 socket.send(JSON.stringify({type: 'log', content: log_payload}));
+                //
+                if (multiline_mode) {
+                    //
+                    proposed_prompt = proposed_prompt + best_val.slice(0, -1) + '\n';
+                    prompt = proposed_prompt;
+                }
                 // advance to the next phrase after 200ms
                 setTimeout(async () => {
                     reset_trie(true); 
-                }, 2000);
+                }, multiline_mode ? 500 : 2000);
             }
         }
     }
@@ -464,6 +482,7 @@ i can see the rings on saturn
     <!-- Trie visualizer takes remaining height -->
     <div class="flex-1 min-h-0">
         <TrieVisualizer
+            bind:multiline_mode
             trie={trie}
             trie_updated_flag={trie_updated_flag}
             bind:use_visual_tutor

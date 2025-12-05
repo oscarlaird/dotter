@@ -8,11 +8,11 @@
     const dispatch = createEventDispatcher();
     import * as colors from '$lib/colors.js';
     let canvas_element;
-    let time_elapsed = 0;
     let fps = 0;
     let lastFrameTime = 0;
     let pause_timer = false;
     let wpm_timer_start = 0;
+    let time_elapsed = 0;
     let left_offset = writable(0);
     let ctx;
     let animationFrameId;
@@ -24,12 +24,13 @@
     let TIMER_FONT_SIZE = 37;
     let TIMER_COLOR = 'color';
     let visible_nodes = [];
+    let click_seq = [];
     let old_visible_registry = {};
     let keep_phases = false;
     let developer_visualizer = false;
     let show_boxes = true;
     let blink_to_click = true;
-    let play_click_sound = true;
+    let play_click_sound = false;
     const TWEEN_DURATION = 300;
     const TWEEN_EASING = linear;
     let FPS_SMOOTHING = 0.9;
@@ -38,6 +39,7 @@
     export let trie_updated_flag;
     export let use_visual_tutor;
     export let target_phrase;
+    export let multiline_mode = false;
     trie_updated_flag.subscribe(new_trie_updated_flag => {
         if (new_trie_updated_flag) {
             setLocations(trie, true);
@@ -133,6 +135,11 @@
         let delay = time - phase
         // map to [-period/2, period/2]
         delay = ((delay + likelihood_model.period*1.5) % likelihood_model.period) - likelihood_model.period/2.0;
+	let dist = Math.abs(delay - likelihood_model.mu_delay);
+	// wrap around to find the closet distance
+	// N.B. at high frequencies it becomes especially clear how much easier it is to select a timer when there are not competing timers nearby
+    // Color also more obviously matters e.g. red timers are harder than white timers
+	dist = Math.min(dist, likelihood_model.period - dist); // Added 12/2/25
         const gaussian_log_likelihood = normal_logpdf(delay, likelihood_model.mu_delay, likelihood_model.stddev_delay);
         const uniform_log_likelihood = Math.log( 1 / likelihood_model.period);
         const outlier_prob = Math.log(likelihood_model.outliers);
@@ -157,13 +164,15 @@
         } else {
             time = performance.now() / 1000.0;
         }
+        click_seq.push(time);
         let new_likelihoods = {};
         visible_nodes.filter(node => !(node.go_live_time && node.go_live_time > time)).forEach(node => {
             let node_timer_likelihood = timer_likelihood(time, node.phase, likelihood_model);
             new_likelihoods[node.val] = node_timer_likelihood;
         });
         keep_phases = false;
-        dispatch('set_likelihoods', new_likelihoods);
+        let payload = {new_likelihoods, click_seq};
+        dispatch('set_likelihoods', payload);
     }
 
     function setLocations(node, root_call = false,  loc = null, size_height = FIRST_BOX_HEIGHT, size_width = BOX_WIDTH) {
@@ -466,6 +475,10 @@
         <label class="flex items-center gap-3">
             <input type="checkbox" bind:checked={use_visual_tutor} class="w-6 h-6"/>
             Tutor
+        </label>
+        <label class="flex items-center gap-3">
+            <input type="checkbox" bind:checked={multiline_mode} class="w-6 h-6"/>
+            Multiline
         </label>
     </div>
 </div>

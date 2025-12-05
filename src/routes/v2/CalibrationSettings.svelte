@@ -24,7 +24,7 @@
     <div class="grid grid-cols-2 gap-2">
         <div class="flex flex-col gap-0.5">
             <label class="font-bold text-s">Mean ({(1000 * likelihood_model.mu_delay).toFixed(0)}ms)</label>
-            <input type="range" min="-0.050" max="0.150" step="0.001" bind:value={likelihood_model.mu_delay} on:input={save_likelihood_model} class="w-full"/>
+            <input type="range" min="-0.050" max="0.200" step="0.001" bind:value={likelihood_model.mu_delay} on:input={save_likelihood_model} class="w-full"/>
         </div>
 
         <div class="flex flex-col gap-0.5">
@@ -34,12 +34,12 @@
 
         <div class="flex flex-col gap-0.5">
             <label class="font-bold text-s">Outliers ({(100 * likelihood_model.outliers).toFixed(1)}%)</label>
-            <input type="range" min="0" max="0.150" step="0.001" bind:value={likelihood_model.outliers} on:input={save_likelihood_model} class="w-full"/>
+            <input type="range" min="0" max="0.250" step="0.001" bind:value={likelihood_model.outliers} on:input={save_likelihood_model} class="w-full"/>
         </div>
 
         <div class="flex flex-col gap-0.5">
-            <label class="font-bold text-s">Period ({likelihood_model.period.toFixed(1)}s)</label>
-            <input type="range" min="0.3" max="2.5" step="0.1" bind:value={likelihood_model.period} on:input={save_likelihood_model} class="w-full"/>
+            <label class="font-bold text-s">Period ({likelihood_model.period.toFixed(2)}s)</label>
+            <input type="range" min="0.3" max="2.5" step="0.01" bind:value={likelihood_model.period} on:input={save_likelihood_model} class="w-full"/>
         </div>
     </div>
 </div>
