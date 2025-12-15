@@ -6,7 +6,7 @@ import numpy as np
 def find_post_rho(sep):
     J = 2
     sigma = 1.0
-    m = 0.0
+    m = 1
     sep = sep
     pi = np.array([0.5, 0.5])
     mu = np.array([0.0, sep])
@@ -16,18 +16,40 @@ def find_post_rho(sep):
     # We must iterate over N to create a quad_over_lin term for each element.
     # This calculates: sum_j [ (y_j - rho_j * mu_j)^2 / rho_j ]
     # Note: y[j] is scalar, rho[j] is scalar, so quad_over_lin works here.
-    perspective_terms = cp.sum([
-        cp.quad_over_lin(y[j] - rho[j] * mu[j], rho[j]) 
-        for j in range(J)
-    ])
-    rate_cost = (1 / 2 * sigma**2) * cp.sum(perspective_terms)
+    moment = 2
+    rate_cost = None
+    moment_constraint = None
+    if moment == 1:
+        perspective_terms = cp.sum([
+            cp.quad_over_lin(y[j] - rho[j] * mu[j], rho[j]) 
+            for j in range(J)
+        ])
+        rate_cost = (1 / (2 * sigma**2)) * cp.sum(perspective_terms)
+        #
+        moment_constraint = cp.sum(y) == m
+    elif moment == 2:
+        # Rate for X^2
+        # I(x) = 1/2 [x/sigma^2 - 1 - log(x/sigma^2)]
+        # ρI(x) = ρI(y/ρ)
+        #       = 1/2 [ y/σ^2 - ρ + ρ log(ρ/y) + log(sigma^2)]
+        perspective_terms = cp.sum([
+            1/2 * (y[j]/sigma**2 - rho[j])
+            # + 1/2 * cp.log(sigma**2)  # constant, so ignored
+            + 1/2 * cp.rel_entr(rho[j], y[j])
+            for j in range(J)
+        ])
+        rate_cost = cp.sum(perspective_terms)
+        # 
+        moment_constraint = cp.sum([rho[j]*mu[j]**2 + y[j] for j in range(J)]) == m
+    else:
+        raise ValueError(f"Moment {moment} not supported. Must be 1 or 2.")
     kl_cost = cp.sum(cp.rel_entr(rho, pi))
     objective = cp.Minimize(rate_cost + kl_cost)
 
     constraints = [
         cp.sum(rho) == 1,
         # Constraint 2: sum_j rho_j x_j = m  <==> sum_j y_j = m
-        cp.sum(y) == m,
+        moment_constraint,
     ]
 
     problem = cp.Problem(objective, constraints)
@@ -102,9 +124,29 @@ def entropy_for_separation(separation):
     xs = np.linspace(-10*sigma, separation + 10*sigma, 200)
     vals = np.array([gmm_pdf(x, means, sigma, weights) for x in xs])
     return empirical_entropy(xs, vals)
+def kolchinsky_ent(sep, dist_func, sigma=1.0, means=np.array([0, 1]), weights=np.array([0.5, 0.5])):
+    # Kolchinsky & Tracey, Estimating Mixture Entropy with Pairwise Distances
+    # H_D(X) := H(X|C) - Sum_i c_i ln( Sum_j c_j exp( - dist_func(p_i||p_j)
+    means = np.array([0, sep])
+    H_X_given_C = H_normal(sigma)
+    t2 = 0
+    J = len(means)
+    dists = [[dist_func(means[i], means[j], sigma) for j in range(J)] for i in range(J)]
+    for i in range(J):
+        t = 0
+        for j in range(J):
+            t += weights[j] * np.exp( - dists[i][j])
+        t2 += weights[i] * np.log(t)
+    return H_X_given_C - t2
+def bhattacharyya_dist(mu1, mu2, sigma):
+    return (mu1 - mu2)**2 / (8 * sigma**2)
+
+
 import matplotlib.pyplot as plt
 
-separations = np.linspace(0, 10, 25)
-plt.plot(separations, [entropy_for_separation(x) for x in separations])
-plt.plot(separations, [cramer4_H_X(x) for x in separations])
+separations = np.linspace(0, 8, 60)
+plt.plot(separations, [entropy_for_separation(x) for x in separations], label='Empirical')
+plt.plot(separations, [cramer4_H_X(x) for x in separations], label='Cramer4')
+plt.plot(separations, [kolchinsky_ent(x, bhattacharyya_dist) for x in separations], label='Kolchinsky')
+plt.legend()
 plt.show()
