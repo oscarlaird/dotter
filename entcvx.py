@@ -1,10 +1,88 @@
 #%%
 
+import time
 import cvxpy as cp
 import numpy as np
 from scipy import stats
+from scipy.special import ndtri
 
-def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwargs=None):
+def compute_analytical_moments(xs, target_mu, target_sigma, r, tail):
+    """
+    Computes partial moments E[Y | condition] * P(condition) vectorized.
+    Returns F_x_vals and slope_vals (quantiles).
+    """
+    slope_vals = np.zeros_like(xs)
+    F_x_vals = np.zeros_like(xs)
+
+    if r == 1:
+        # --- Normal Distribution Case ---
+        # Y = X (Normal)
+        mu, sigma = target_mu, target_sigma
+        
+        if tail == 0:
+            # Lower tail: P(Y < q) = x
+            z_scores = ndtri(xs) 
+            slope_vals = mu + sigma * z_scores
+            
+            # Formula: E[Y | Y < q] * P(Y < q) = mu * x - sigma * pdf(z)
+            # Note: stats.norm.pdf(z) = exp(-z^2/2) / sqrt(2pi)
+            pdf_vals = np.exp(-0.5 * z_scores**2) / np.sqrt(2 * np.pi)
+            F_x_vals = mu * xs - sigma * pdf_vals
+            
+        elif tail == 1:
+            # Upper tail: P(Y > q) = x  =>  P(Y < q) = 1 - x
+            z_scores = ndtri(1.0 - xs)
+            slope_vals = mu + sigma * z_scores
+            
+            # Formula: E[Y | Y > q] * P(Y > q) = mu * x + sigma * pdf(z)
+            pdf_vals = np.exp(-0.5 * z_scores**2) / np.sqrt(2 * np.pi)
+            F_x_vals = mu * xs + sigma * pdf_vals
+
+    elif r == 2:
+        # --- Non-Central Chi-Squared Case ---
+        # Y = X^2 (Non-central Chi-sq)
+        # y_dist is stats.ncx2
+        df = 1.0
+        # safety check for zero division, though target_sigma shouldn't be 0
+        nc = (target_mu / target_sigma) ** 2
+        scale = target_sigma ** 2
+        
+        if tail == 0:
+            # Lower tail
+            # q is the actual value in the scaled domain
+            q_vals = stats.ncx2.ppf(xs, df=df, nc=nc, scale=scale)
+            slope_vals = q_vals
+            
+            # Convert q back to "standard" scale for the formula
+            q_std = q_vals / scale
+            
+            # Formula: Integral_0^q t * pdf(t) dt for ncx2(df, nc) 
+            #        = df * CDF(q, df+2) + nc * CDF(q, df+4)
+            # We perform this on the standard variable, then multiply by scale
+            term1 = df * stats.ncx2.cdf(q_std, df=df+2, nc=nc)
+            term2 = nc * stats.ncx2.cdf(q_std, df=df+4, nc=nc)
+            
+            F_x_vals = scale * (term1 + term2)
+            
+        elif tail == 1:
+            # Upper tail
+            q_vals = stats.ncx2.isf(xs, df=df, nc=nc, scale=scale)
+            slope_vals = q_vals
+            q_std = q_vals / scale
+            
+            # Total Mean of standard ncx2 is (df + nc)
+            total_mean_std = df + nc
+            
+            # Upper integral = Total Mean - Lower Integral
+            term1 = df * stats.ncx2.cdf(q_std, df=df+2, nc=nc)
+            term2 = nc * stats.ncx2.cdf(q_std, df=df+4, nc=nc)
+            lower_integral_std = term1 + term2
+            
+            F_x_vals = scale * (total_mean_std - lower_integral_std)
+            
+    return F_x_vals, slope_vals
+
+def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwargs=None, verbose=False):
     # Infer the posterior distributions rho and X|A_i,[Distributional Stats of X]
     J, D = mu.shape
     target_mu = mu[target_index]
@@ -15,6 +93,9 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
     # J = 2
     # TODO: for now we assume homoskedastic and isotropic, so sigma can just be a constant
     rho = cp.Variable(J, nonneg=True, name="rho")
+
+    t_start = time.time()
+    t_fx = 0.0
 
     rate_cost = None
     moment_constraint = None
@@ -142,7 +223,7 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
             cp.quad_over_lin(y[j], rho[j]) 
             for j in range(J)
         ])
-        rate_cost = (1 / (2 * sigma**2)) * cp.sum(perspective_terms)
+        rate_cost = (1 / (2 * target_sigma**2)) * cp.sum(perspective_terms)
         #
         moment_constraint = cp.sum(y) + cp.sum(cp.multiply(rho, mu)) == m
         constraints.append(moment_constraint)
@@ -192,7 +273,7 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
         # this is confirmed to agree with Cramer4-1 when we omit the m2 constraint
         # but we would like a way to show it agrees with Cramer4-2 when we omit the m1 constraint...
         perspective_terms = cp.sum([
-            1/2 * (y2[j] / sigma**2 + tau[j])
+            1/2 * (y2[j] / target_sigma**2 + tau[j])
             for j in range(J)
         ])
         rate_cost = cp.sum(perspective_terms)
@@ -216,8 +297,8 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
         log_X_prior = np.empty((J, D))
         # bounds = np.array([stats.norm.isf(1 - d/D) for d in range(D+1)])
         for j in range(J):
-            cdf = lambda x: stats.norm.cdf(x, mu[j], sigma)
-            logcdf = lambda x: stats.norm.logcdf(x, mu[j], sigma)
+            cdf = lambda x: stats.norm.cdf(x, mu[j], target_sigma)
+            logcdf = lambda x: stats.norm.logcdf(x, mu[j], target_sigma)
             for d in range(D):
                 lower_end = bounds[d]
                 upper_end = bounds[d+1]
@@ -251,6 +332,8 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
     elif method == 'chebyshev_gaussian':
         assert D == 1, f"D={D} != 1. Chebyshev Gaussian only supports 1-dimensional distributions."
         target_mu = target_mu[0]
+        
+        # t_start and t_fx initialized at function start
 
         R = 3  # number of statistic observations
         # we pad a dummy α0 just so that the indexing matches the standard moment naming
@@ -287,44 +370,64 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
         constraints.append(α_[2,:] >= 0)
         assert J <= 4, f"J={J} > 4. Chebyshev Gaussian creates 2^J constraints. Hence it is not feasible for J > 4."
         import itertools
-        kappas = list(itertools.product([0,1], repeat=J))
+        # Create kappas matrix (excluding all-zeros)
+        kappas_list = [k for k in itertools.product([0, 1], repeat=J) if sum(k) > 0]
+        K_count = len(kappas_list)
+        kappas_matrix = np.array(kappas_list)  # Shape (K, J)
+
+        # Pre-calculate vectorized rho sums: total_rho_vec[k] = sum(rho[j] for j where kappa[k][j]==1)
+        # Shape (K, 1) after reshape
+        total_rho_vec = (kappas_matrix @ rho).reshape((K_count, 1))
+
+        # Constants for piecewise linear approx
+        logits = method_kwargs.get('logitspace', np.linspace(-5, 5, 10))
+        xs = 1 / (1 + np.exp(-logits))  # Shape (N,)
+        N_points = len(xs)
+        xs_row = xs.reshape((1, N_points))
+
         for r in range(R):
             if r == 0:
                 continue
-            elif r == 1:
-                y_dist = stats.norm(loc=target_mu, scale=target_sigma)  # dist of Y = X
-            elif r == 2:
-                # dist of Y = X^2
-                y_dist = stats.ncx2(df=1, nc=(target_mu / target_sigma) ** 2, scale=target_sigma ** 2)
+            
+            # Vectorized LHS: sum(α_[r,j] for j where kappa[k][j]==1)
+            # Shape (K, 1)
+            lhs_vec = (kappas_matrix @ α_[r, :]).reshape((K_count, 1))
+
             # TAIL
             for tail in range(2):
-                # KAPPA
-                for kappa in kappas:
-                    if sum(kappa) == 0:
-                        continue
-                    lhs = sum(α_[r,j] for j in range(J) if kappa[j]==1 )
-                    # lhs > F_r(Σ_κ ρ_i)
-                    # we can do this using a piecewise linear approximation of F_r
-                    # ∀ x, lhs > F_r(x) + (Σ_κ ρ_i - x) * F_r'(x)
-                    total_rho = sum(rho[j] for j in range(J) if kappa[j]==1 )
-                    # since ρ can be very small or very close to 1, we want a logitspace not a linspace
-                    logits = np.linspace(-5, 5, 10)
-                    xs = 1 / (1 + np.exp(-logits))
-                    for x in xs:
-                        if tail == 0:
-                            lb, ub = None, y_dist.ppf(x)
-                            F_x = y_dist.expect(lb=lb, ub=ub)
-                            slope = y_dist.ppf(x)
-                        elif tail == 1:
-                            lb, ub = y_dist.isf(x), None
-                            F_x = y_dist.expect(lb=lb, ub=ub)
-                            slope = y_dist.isf(x)
-                        line = F_x + slope * (total_rho - x)
-                        # print(f"lhs={lhs}, line={line}, total_rho={total_rho}, x={x}")
-                        if tail == 0:
-                            constraints.append(lhs >= line - 1e-6)
-                        elif tail == 1:
-                            constraints.append(lhs <= line + 1e-6)
+                # Precompute distribution constants for all x
+                # We do this once per (r, tail) instead of per kappa
+                t_fx_start = time.time()
+                
+                # Optimized vectorized call
+                F_x_vals, slope_vals = compute_analytical_moments(xs, target_mu, target_sigma, r, tail)
+                
+                t_fx += time.time() - t_fx_start
+                
+                # Reshape for broadcasting
+                # F_x: (1, N)
+                # slope: (1, N)
+                F_x_row = F_x_vals.reshape((1, N_points))
+                slope_row = slope_vals.reshape((1, N_points))
+                
+                # Construct vectorized RHS
+                # line = F_x + slope * (total_rho - x)
+                #      = (F_x - slope * x) + slope * total_rho
+                # RHS matrix shape: (K, N)
+                # total_rho_vec is (K, 1), slope_row is (1, N) -> total_rho_vec @ slope_row is (K, N)
+                
+                constant_part = F_x_row - slope_row * xs_row
+                linear_part = total_rho_vec @ slope_row
+                
+                rhs_matrix = constant_part + linear_part
+                
+                # Broadcast LHS to (K, N) implicitly during comparison or explicit reshape?
+                # lhs_vec is (K, 1). Comparison with (K, N) broadcasts correctly in CVXPY.
+                
+                if tail == 0:
+                    constraints.append(lhs_vec >= rhs_matrix - 1e-6)
+                elif tail == 1:
+                    constraints.append(lhs_vec <= rhs_matrix + 1e-6)
 
     else:
         raise ValueError(f"method {method} not supported. Must be 'gaussian', 'diag_gaussian', 'indicator', 'chebyshev_gaussian', or '12'.")
@@ -332,7 +435,21 @@ def find_post_rho(mu, pi, sigmas, target_index=0, method='gaussian', method_kwar
     kl_cost = cp.sum(cp.rel_entr(rho, pi))
     objective = cp.Minimize(rate_cost + kl_cost)
     problem = cp.Problem(objective, constraints)
-    problem.solve()
+    
+    t_compile_end = time.time()
+    # try:
+    #     problem.solve()
+    # except cp.error.SolverError as e:
+    #     print(f"Solver failed with error: {e}")
+    #     print("Retrying with SCS...")
+    problem.solve(solver=cp.SCS)
+    t_solve_end = time.time()
+    
+    if method == 'chebyshev_gaussian' and verbose:
+        t_setup = t_compile_end - t_start - t_fx
+        t_solve = t_solve_end - t_compile_end
+        print(f"[Chebyshev] F_x: {t_fx:.4f}s, Compile: {t_setup:.4f}s, Solve: {t_solve:.4f}s")
+
     if problem.status not in ['optimal', 'optimal_inaccurate']:
         raise ValueError(f"Problem status is {problem.status}. For mu={mu}, pi={pi}, method={method}")
 
@@ -419,7 +536,11 @@ def cramer4(mu, pi, sigmas, method='gaussian', method_kwargs={}, correction_orde
     H_X_ests = []
     for i in range(J):
         # H(X) = E_i[  H(A) + H(ε_i) - H(A|D_i) + H(X|i) - H(X_n | A, D_i)    ] where D_i is the observation of the distributional statistics
-        rho, stats = find_post_rho(mu, pi, sigmas, target_index=i, method=method, method_kwargs=method_kwargs)
+        if verbose:
+            if method_kwargs is None:
+                method_kwargs = {}
+            method_kwargs['verbose'] = True
+        rho, stats = find_post_rho(mu, pi, sigmas, target_index=i, method=method, method_kwargs=method_kwargs, verbose=verbose)
         H_X_given_D = H_normal(sigmas[i])*D
         if verbose:
             print(f"Rho: {rho}")
@@ -532,7 +653,10 @@ if __name__ == "__main__":
     # plt.plot(separations, [cube_cramer4(x, method='gaussian', verbose=True, method_kwargs={'gaussian_info_bound': True, 'nest_parabolas': False}) for x in separations], label='Cube-Cramer4-Gaussian-no-nest-parabolas')
     plt.plot(separations, [cube_cramer4(x, method='gaussian', verbose=True, method_kwargs={'gaussian_info_bound': False, 'nest_parabolas': False}) for x in separations], label='Cube-Cramer4-Gaussian-no-info-bound-no-nest-parabolas')
     plt.plot(separations, [entropy_for_separation(x, 1) for x in separations], label='Empirical')
-    plt.plot(separations, [cube_cramer4(x, method='chebyshev_gaussian', verbose=True) for x in separations], label='CHEBYSHEV')
+    plt.plot(separations, [cube_cramer4(x, method='chebyshev_gaussian') for x in separations], label='CHEBYSHEV')
+    plt.plot(separations, [cube_cramer4(x, method='chebyshev_gaussian', method_kwargs={'logitspace': np.linspace(-10,10,400)}) for x in separations], label='CHEBYSHEV-logitspace')
+    plt.plot(separations, [cube_cramer4(x, method='chebyshev_gaussian', method_kwargs={'logitspace': np.linspace(-5,5,100)}) for x in separations], label='CHEBYSHEV-logitspace')
+    plt.plot(separations, [cube_cramer4(x, method='chebyshev_gaussian', method_kwargs={'logitspace': np.linspace(-10,10,100)}) for x in separations], label='CHEBYSHEV-logitspace')
     # plt.plot(separations, [cube_cramer4(x, method='chebyshev_gaussian', verbose=True, correction_order=1) for x in separations], label='CHEBYSHEV-correction-1')
     # plt.plot(separations, [cube_cramer4(x, method='gaussian', correction_order=1) for x in separations], label='Cramer4-Gaussian-correction')
     # plt.plot(separations, [cramer4_H_X(x, method='gaussian', fix_mutual=False) for x in separations], label='Cramer4-Gaussian-no-mutual')
@@ -548,12 +672,8 @@ if __name__ == "__main__":
     separations = np.linspace(0, 7.5, 100)
     empirical = np.array([entropy_for_separation(x) for x in separations])
     kolchinsky = np.array([kolchinsky_ent(x, bhattacharyya_dist) for x in separations])
-    cramer4_gauss_correction_0 = np.array([cube_cramer4(x, method='gaussian', correction_order=0) for x in separations])
-    cramer4_gauss_correction_1 = np.array([cube_cramer4(x, method='gaussian', correction_order=1) for x in separations])
-    cramer4_chebyshev = np.array([cube_cramer4(x, method='chebyshev_gaussian') for x in separations])
+    cramer4_chebyshev = np.array([cube_cramer4(x, method='chebyshev_gaussian', method_kwargs={'logitspace': np.linspace(-10,10,100)}) for x in separations])
     plt.plot(separations, np.abs(empirical - kolchinsky) / empirical, label='Kolchinsky rel. error')
-    plt.plot(separations, np.abs(empirical - cramer4_gauss_correction_0) / empirical, label='Cramer4-Gaussian-correction-0 rel. error')
-    plt.plot(separations, np.abs(empirical - cramer4_gauss_correction_1) / empirical, label='Cramer4-Gaussian-correction-1 rel. error')
     plt.plot(separations, np.abs(empirical - cramer4_chebyshev) / empirical, label='Cramer4-Chebyshev rel. error')
     plt.xlim(0, 8)
     plt.ylim(0, 0.15)
