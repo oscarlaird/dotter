@@ -26,6 +26,7 @@
     let visible_nodes = [];
     let click_seq = [];
     let old_visible_registry = {};
+    let device_pixel_ratio = 1;
     let keep_phases = false;
     let developer_visualizer = false;
     let show_boxes = true;
@@ -76,13 +77,13 @@
         FIRST_BOX_HEIGHT = canvas_element.clientHeight;
         
         // Get the device pixel ratio
-        const dpr = window.devicePixelRatio || 1;
+        device_pixel_ratio = window.devicePixelRatio || 1;
         // Set the canvas size accounting for device pixel ratio
         const rect = canvas_element.getBoundingClientRect();
-        canvas_element.width = rect.width * dpr;
-        canvas_element.height = rect.height * dpr;
-        // Scale the canvas context
-        ctx.scale(dpr, dpr);
+        canvas_element.width = rect.width * device_pixel_ratio;
+        canvas_element.height = rect.height * device_pixel_ratio;
+        // Draw in CSS pixels with an explicit DPR transform.
+        ctx.setTransform(device_pixel_ratio, 0, 0, device_pixel_ratio, 0, 0);
         // Set the CSS size
         canvas_element.style.width = `${rect.width}px`;
         canvas_element.style.height = `${rect.height}px`;
@@ -305,7 +306,11 @@
         fps = Math.min(100, fps);
         lastFrameTime = currentTime;
 
+        // Clear in backing-store coordinates so browsers do not interpret
+        // `clearRect` through the active DPR transform differently.
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, canvas_element.width, canvas_element.height);
+        ctx.setTransform(device_pixel_ratio, 0, 0, device_pixel_ratio, 0, 0);
         
         let now = performance.now() / 1000.0;
         const visibleNodes = visible_nodes.filter(node => !(node.go_live_time && node.go_live_time > now));
