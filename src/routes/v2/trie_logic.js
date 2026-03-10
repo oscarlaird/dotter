@@ -386,14 +386,6 @@ function get_best_descendant(node) {
     return get_best_descendant(best_child);
 }
 
-// function gather_visible_nodes(node, node_list) {
-//     if (node.is_visible) {
-//         node_list.push(node);
-//     }
-//     for (let child of node.children) {
-//         gather_visible_nodes(child, node_list);
-//     }
-// }
 
 export {
     // set_viztrie,

@@ -1,0 +1,18 @@
+I want to implement the following changes now:
+1. - smarter preliminary stacking
+2. - frame noise reduction
+3. - renyi optimization
+
+1. smarter preliminary stacking;
+We redraw the trie every time the prefix posteriors change.
+This occurs when the likelihoods change (because of a gesture)
+and this occurs when the priors change (because of a result from the language model server)
+Unfortunately optimization is not possible in the online setting where new nodes are coming into being one at a time.
+So for now, we will just assign random phases to new nodes. Later we will make sure that this is rare.
+A mathematical module handles the bayesian logic of expanding the trie and calculating the posteriors (up to a constant).
+The TrieVisualizer is responsible for actually drawing the trie, drawing the interface (e.g. timers), and receiving gestures to return to the mathematical module.
+The core logic lives in `set_locations` which positions the nodes and sets the phases but does not calculate posteriors. It is a recursive function.
+We would like to separate out the drawing (2d location) from the timing (1d phase). The latter cannot be done with a recursive function because we must optimize the entropy over all nodes at once.
+To set the phases we need to know which nodes are visible, but which nodes are visible depends upon the phases. I think that I should keep much of the same logic but when we get a likelihood update I should set suggested phases before setting the locations and setLocations should try to honor these suggested phases before using a random phase.
+To optimize the phases we need to know the posteriors, and specifically the "selfish" posteriors i.e. the posterior probability after subtracting the posterior probability of all visible children (this metric is not necessary for drawing). post_Z refers to the log posterior probability of being a prefix up to a constant. That constant is precisely root.post_Z since we know that the posterior probability of the root node is exactly 1. Or is post_Z only valid for leaves?
+

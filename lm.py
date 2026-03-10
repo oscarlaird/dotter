@@ -15,7 +15,7 @@ import numpy as np
 
 # Global variables for model and tokenizer
 model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # A small Llama model from Hugging Face
-model_name = "/home/oscar/.cache/huggingface/hub/models--TinyLlama--TinyLlama-1.1B-Chat-v1.0/snapshots/fe8a4ea1ffedaf415f4da2f062534de366a451e6"
+# model_name = "/home/oscar/.cache/huggingface/hub/models--TinyLlama--TinyLlama-1.1B-Chat-v1.0/snapshots/fe8a4ea1ffedaf415f4da2f062534de366a451e6"
 # model_name = "gpt2-xl"  # A small Llama model from Hugging Face
 tokenizer = None
 model = None

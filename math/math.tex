@@ -140,6 +140,8 @@ Given two adjacent components, $i$ and $i+1$, we are interested in their separat
 Letting $\mu_i = 0$ and $\mu_{i+1} = l_i$, we may
 solve for the minimum value of the two-component mixture:
 $$f(x) = \pi_i \frac{1}{\sqrt{2 \pi \sigma^2}} \exp\left( - \frac{x^2}{2 \sigma^2} \right) + \pi_{i+1} \frac{1}{\sqrt{2 \pi \sigma^2}} \exp\left( - \frac{(x - l_i)^2}{2 \sigma^2} \right)$$
+Note that completing the square for the sum of squared distances gives:
+$$(x - \mu_1)^2 + (x - \mu_2)^2 = 2\left(x - \frac{\mu_1 + \mu_2}{2}\right)^2 + \frac{(\mu_1 - \mu_2)^2}{2}$$
 Taking the derivative with respect to $x$ and setting it to zero we have,
 $$\frac{d}{dx} f(x) = \frac{1}{\sqrt{2 \pi \sigma^2}} \left( \frac{-2x\pi_i}{2\sigma^2} \exp\left( - \frac{x^2}{2 \sigma^2} \right) - \frac{-2(x - l_i)\pi_{i+1}}{2\sigma^2} \exp\left( - \frac{(x - l_i)^2}{2 \sigma^2} \right) \right) = 0$$
 Algebra yields,
@@ -156,8 +158,34 @@ to space them such that the log of their sum attains a minimum value of $C$.
 % widths (max)
 % widths (sum)
 % cramer, renyi (quite simplex; approx ln z ~= z - 1)
-\cite{Kolchinsky_2017}
 % numerical integration (reasonable for low D)
+
+\subsubsection{Approximations to the entropy based on pairwise distances}
+
+In order to optimize the placement of the means to maximize entropy, we may minimize a proxy objective $J$ based on pairwise distances between the components. We consider approximations to the entropy for both Gaussian and von Mises mixture models. 
+
+\paragraph{Gaussian Mixture Model with Rényi Entropy}
+The Rényi 2-entropy, also known as collision entropy, is defined as $H_2(X) = -\ln \int p(x)^2 dx$. Maximizing this entropy is equivalent to minimizing the information potential $J = \int p(x)^2 dx$.
+For a mixture of Gaussians $p(x) = \sum_{i=1}^N \pi_i \mathcal{N}(x | \mu_i, \sigma^2)$, the integral of the squared density is:
+$$ J = \int \left( \sum_{i=1}^N \pi_i \mathcal{N}(x | \mu_i, \sigma^2) \right)^2 dx = \sum_{i=1}^N \sum_{j=1}^N \pi_i \pi_j \int \mathcal{N}(x | \mu_i, \sigma^2) \mathcal{N}(x | \mu_j, \sigma^2) dx $$
+The integral of the product of two Gaussians is itself a Gaussian evaluated at the difference of their means:
+$$ \int \mathcal{N}(x | \mu_i, \sigma^2) \mathcal{N}(x | \mu_j, \sigma^2) dx = \mathcal{N}(0 | \mu_i - \mu_j, 2\sigma^2) = \frac{1}{\sqrt{4\pi\sigma^2}} \exp\left( - \frac{(\mu_i - \mu_j)^2}{4\sigma^2} \right) $$
+By dropping the leading scalar and the self-interaction terms ($i=j$) since they are constant with respect to the optimal placement of the means, the objective to minimize simplifies to the pairwise sum:
+$$ J = \sum_{i < j} \pi_i \pi_j \exp\left( - \frac{(\mu_i - \mu_j)^2}{4\sigma^2} \right) $$
+
+\paragraph{Gaussian Mixture Model with Kolchinsky Objective}
+Kolchinsky and Tracey \cite{Kolchinsky_2017} introduced a family of computationally efficient estimators for mixture entropy that rely on calculating pairwise distances between component distributions, proving they form a strict lower bound on the true mixture entropy.
+For homoskedastic Gaussian mixtures, maximizing this lower bound utilizing the Bhattacharyya distance yields a similar pairwise objective. The effective variance in the penalty term is simply doubled compared to the Rényi objective:
+$$ J = \sum_{i < j} \pi_i \pi_j \exp\left( - \frac{(\mu_i - \mu_j)^2}{8\sigma^2} \right) $$
+
+\paragraph{Von Mises Mixture Model with Rényi Entropy}
+When the components are distributed on the unit circle as von Mises distributions with homoskedastic concentration $\kappa$, we again aim to minimize the integral of the squared density. The integral of the cross-term of two von Mises components evaluates to a modified Bessel function of the first kind of order zero, $I_0$. Stripping out constants and self-terms, the objective becomes:
+$$ J = \sum_{i < j} \pi_i \pi_j I_0\left( 2\kappa \cos\left( \frac{\mu_i - \mu_j}{2} \right) \right) $$
+
+\paragraph{Von Mises Mixture Model with Kolchinsky Objective}
+Applying Kolchinsky's lower bound using the Bhattacharyya coefficient to the von Mises mixture model yields an objective with an identical structure to the Rényi case. The difference lies solely in the concentration parameter, which is halved:
+$$ J = \sum_{i < j} \pi_i \pi_j I_0\left( \kappa \cos\left( \frac{\mu_i - \mu_j}{2} \right) \right) $$
+
 \subsubsection{An approximation for the entropy via Cramér's theorem}
 UNFINISHED
 Here we discuss a closed form approximation for the entropy in terms of the

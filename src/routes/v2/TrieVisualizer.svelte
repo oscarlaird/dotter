@@ -42,6 +42,7 @@
     export let multiline_mode = false;
     trie_updated_flag.subscribe(new_trie_updated_flag => {
         if (new_trie_updated_flag) {
+            // if (!keep_phases) suggestPhases(trie);  // (!keep_phases means this was a likelihood update)
             setLocations(trie, true);
             trie_updated_flag.set(false);
         }
@@ -175,6 +176,25 @@
         dispatch('set_likelihoods', payload);
     }
 
+
+    function gather_visible_nodes(node, node_list) {
+        if (node.is_visible) {
+            node_list.push(node);
+        }
+        for (let child of node.children) {
+            gather_visible_nodes(child, node_list);
+        }
+    }
+    function suggestPhases(trie) {
+	if (keep_phases) throw new Error("suggestPhases must only be run when !keep_phases");
+	// trie_logic has already determined which nodes are above threshold
+	let vnodes = []
+	gather_visible_nodes(trie, vnodes); // gather all visible nodes into vnodes
+	
+        // 1. determine pi for the visible nodes
+	// 2. optimize the means
+	// 3. suggest these means
+    }
     function setLocations(node, root_call = false,  loc = null, size_height = FIRST_BOX_HEIGHT, size_width = BOX_WIDTH) {
         if (root_call) {
             loc = { x: 0, y: 0 };
@@ -199,10 +219,12 @@
         node.size_height = size_height;
         node.size_width = size_width;
         // TODO: use more intelligent phases
+    // which cannot be done in a recursive manner
         if (node.val in old_visible_registry && keep_phases) {
             node.phase = old_visible_registry[node.val].phase;
         } else {
             node.phase = Math.random() * likelihood_model.period;
+	    // node.phase = node.suggested_phase;
         }
         let visible_children = node.children.filter(child => child.is_visible || (keep_phases && child.val in old_visible_registry));
         let visible_children_vals = new Set(visible_children.map(child => child.val));
