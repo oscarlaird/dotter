@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.10)  12 MAR 2026 16:34
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.10)  12 MAR 2026 17:18
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -504,94 +504,102 @@ Package: colortbl 2022/06/20 v1.0f Color table columns (DPC)
 \everycr=\toks40
 \minrowclearance=\skip56
 \rownum=\count318
+) (/usr/share/texlive/texmf-dist/tex/latex/enumitem/enumitem.sty
+Package: enumitem 2019/06/20 v3.9 Customized lists
+\labelindent=\skip57
+\enit@outerparindent=\dimen301
+\enit@toks=\toks41
+\enit@inbox=\box70
+\enit@count@id=\count319
+\enitdp@description=\count320
 ) (/usr/share/texlive/texmf-dist/tex/latex/nicematrix/nicematrix.sty
 Package: nicematrix 2024/01/25 v6.26d Enhanced arrays with the help of PGF/TikZ
-\g__nicematrix_env_int=\count319
-\g__nicematrix_NiceMatrixBlock_int=\count320
-\g__nicematrix_notes_caption_int=\count321
-\l__nicematrix_columns_width_dim=\dimen301
-\l__nicematrix_col_width_dim=\dimen302
-\g__nicematrix_row_total_int=\count322
-\g__nicematrix_col_total_int=\count323
-\g__nicematrix_last_row_node_int=\count324
-\l__nicematrix_key_nb_rows_int=\count325
-\g__nicematrix_blocks_wd_dim=\dimen303
-\g__nicematrix_blocks_ht_dim=\dimen304
-\g__nicematrix_blocks_dp_dim=\dimen305
-\l__nicematrix_width_dim=\dimen306
-\l__nicematrix_tabular_width_dim=\dimen307
-\l__nicematrix_rule_width_dim=\dimen308
-\l__nicematrix_old_iRow_int=\count326
-\l__nicematrix_old_jCol_int=\count327
-\g__nicematrix_total_X_weight_int=\count328
-\l__nicematrix_X_columns_dim=\dimen309
-\l__nicematrix_x_initial_dim=\dimen310
-\l__nicematrix_y_initial_dim=\dimen311
-\l__nicematrix_x_final_dim=\dimen312
-\l__nicematrix_y_final_dim=\dimen313
-\l__nicematrix_tmpc_dim=\dimen314
-\l__nicematrix_tmpd_dim=\dimen315
-\g__nicematrix_width_last_col_dim=\dimen316
-\g__nicematrix_width_first_col_dim=\dimen317
-\l__nicematrix_row_min_int=\count329
-\l__nicematrix_row_max_int=\count330
-\l__nicematrix_col_min_int=\count331
-\l__nicematrix_col_max_int=\count332
-\l__nicematrix_start_int=\count333
-\l__nicematrix_end_int=\count334
-\l__nicematrix_local_start_int=\count335
-\l__nicematrix_local_end_int=\count336
-\g__nicematrix_static_num_of_col_int=\count337
-\l__nicematrix_rounded_corners_dim=\dimen318
-\l__nicematrix_tab_rounded_corners_dim=\dimen319
-\l__nicematrix_offset_dim=\dimen320
-\l__nicematrix_line_width_dim=\dimen321
-\g__nicematrix_block_box_int=\count338
-\l__nicematrix_submatrix_extra_height_dim=\dimen322
-\l__nicematrix_submatrix_left_xshift_dim=\dimen323
-\l__nicematrix_submatrix_right_xshift_dim=\dimen324
-\l__nicematrix_first_row_int=\count339
-\l__nicematrix_first_col_int=\count340
-\l__nicematrix_last_row_int=\count341
-\l__nicematrix_last_col_int=\count342
-\c@tabularnote=\count343
-\c@nicematrix_draft=\count344
-\l__nicematrix_cell_space_top_limit_dim=\dimen325
-\l__nicematrix_cell_space_bottom_limit_dim=\dimen326
-\l__nicematrix_xdots_inter_dim=\dimen327
-\l__nicematrix_xdots_shorten_start_dim=\dimen328
-\l__nicematrix_xdots_shorten_end_dim=\dimen329
-\l__nicematrix_xdots_radius_dim=\dimen330
-\l__nicematrix_notes_above_space_dim=\dimen331
-\l__nicematrix_left_margin_dim=\dimen332
-\l__nicematrix_right_margin_dim=\dimen333
-\l__nicematrix_extra_left_margin_dim=\dimen334
-\l__nicematrix_extra_right_margin_dim=\dimen335
-\c__nicematrix_max_l_dim=\dimen336
-\l__nicematrix_position_int=\count345
-\l__nicematrix_multiplicity_int=\count346
-\l__nicematrix_brace_yshift_dim=\dimen337
+\g__nicematrix_env_int=\count321
+\g__nicematrix_NiceMatrixBlock_int=\count322
+\g__nicematrix_notes_caption_int=\count323
+\l__nicematrix_columns_width_dim=\dimen302
+\l__nicematrix_col_width_dim=\dimen303
+\g__nicematrix_row_total_int=\count324
+\g__nicematrix_col_total_int=\count325
+\g__nicematrix_last_row_node_int=\count326
+\l__nicematrix_key_nb_rows_int=\count327
+\g__nicematrix_blocks_wd_dim=\dimen304
+\g__nicematrix_blocks_ht_dim=\dimen305
+\g__nicematrix_blocks_dp_dim=\dimen306
+\l__nicematrix_width_dim=\dimen307
+\l__nicematrix_tabular_width_dim=\dimen308
+\l__nicematrix_rule_width_dim=\dimen309
+\l__nicematrix_old_iRow_int=\count328
+\l__nicematrix_old_jCol_int=\count329
+\g__nicematrix_total_X_weight_int=\count330
+\l__nicematrix_X_columns_dim=\dimen310
+\l__nicematrix_x_initial_dim=\dimen311
+\l__nicematrix_y_initial_dim=\dimen312
+\l__nicematrix_x_final_dim=\dimen313
+\l__nicematrix_y_final_dim=\dimen314
+\l__nicematrix_tmpc_dim=\dimen315
+\l__nicematrix_tmpd_dim=\dimen316
+\g__nicematrix_width_last_col_dim=\dimen317
+\g__nicematrix_width_first_col_dim=\dimen318
+\l__nicematrix_row_min_int=\count331
+\l__nicematrix_row_max_int=\count332
+\l__nicematrix_col_min_int=\count333
+\l__nicematrix_col_max_int=\count334
+\l__nicematrix_start_int=\count335
+\l__nicematrix_end_int=\count336
+\l__nicematrix_local_start_int=\count337
+\l__nicematrix_local_end_int=\count338
+\g__nicematrix_static_num_of_col_int=\count339
+\l__nicematrix_rounded_corners_dim=\dimen319
+\l__nicematrix_tab_rounded_corners_dim=\dimen320
+\l__nicematrix_offset_dim=\dimen321
+\l__nicematrix_line_width_dim=\dimen322
+\g__nicematrix_block_box_int=\count340
+\l__nicematrix_submatrix_extra_height_dim=\dimen323
+\l__nicematrix_submatrix_left_xshift_dim=\dimen324
+\l__nicematrix_submatrix_right_xshift_dim=\dimen325
+\l__nicematrix_first_row_int=\count341
+\l__nicematrix_first_col_int=\count342
+\l__nicematrix_last_row_int=\count343
+\l__nicematrix_last_col_int=\count344
+\c@tabularnote=\count345
+\c@nicematrix_draft=\count346
+\l__nicematrix_cell_space_top_limit_dim=\dimen326
+\l__nicematrix_cell_space_bottom_limit_dim=\dimen327
+\l__nicematrix_xdots_inter_dim=\dimen328
+\l__nicematrix_xdots_shorten_start_dim=\dimen329
+\l__nicematrix_xdots_shorten_end_dim=\dimen330
+\l__nicematrix_xdots_radius_dim=\dimen331
+\l__nicematrix_notes_above_space_dim=\dimen332
+\l__nicematrix_left_margin_dim=\dimen333
+\l__nicematrix_right_margin_dim=\dimen334
+\l__nicematrix_extra_left_margin_dim=\dimen335
+\l__nicematrix_extra_right_margin_dim=\dimen336
+\c__nicematrix_max_l_dim=\dimen337
+\l__nicematrix_position_int=\count347
+\l__nicematrix_multiplicity_int=\count348
+\l__nicematrix_brace_yshift_dim=\dimen338
 ) (./math.aux)
 \openout1 = `math.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 15.
-LaTeX Font Info:    ... okay on input line 15.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 17.
+LaTeX Font Info:    ... okay on input line 17.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -627,40 +635,44 @@ LaTeX Font Info:    ... okay on input line 15.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-Package hyperref Info: Link coloring OFF on input line 15.
+Package hyperref Info: Link coloring OFF on input line 17.
 (./math.out) (./math.out)
 \@outlinefile=\write4
 \openout4 = `math.out'.
 
  (/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count347
-\scratchdimen=\dimen338
-\scratchbox=\box70
-\nofMPsegments=\count348
-\nofMParguments=\count349
-\everyMPshowfont=\toks41
-\MPscratchCnt=\count350
-\MPscratchDim=\dimen339
-\MPnumerator=\count351
-\makeMPintoPDFobject=\count352
-\everyMPtoPDFconversion=\toks42
+\scratchcounter=\count349
+\scratchdimen=\dimen339
+\scratchbox=\box71
+\nofMPsegments=\count350
+\nofMParguments=\count351
+\everyMPshowfont=\toks42
+\MPscratchCnt=\count352
+\MPscratchDim=\dimen340
+\MPnumerator=\count353
+\makeMPintoPDFobject=\count354
+\everyMPtoPDFconversion=\toks43
 ) (/usr/share/texlive/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
 Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
 Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 485.
  (/usr/share/texlive/texmf-dist/tex/latex/latexconfig/epstopdf-sys.cfg
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Live
 ))
-\c__nicematrix_shift_Ldots_last_row_dim=\dimen340
-\c__nicematrix_shift_exterior_Vdots_dim=\dimen341
-\c__nicematrix_innersep_middle_dim=\dimen342
+\c__nicematrix_shift_Ldots_last_row_dim=\dimen341
+\c__nicematrix_shift_exterior_Vdots_dim=\dimen342
+\c__nicematrix_innersep_middle_dim=\dimen343
+\c@tabularnotesi=\count355
+\enitdp@tabularnotes=\count356
+\c@tabularnotes*i=\count357
+\enitdp@tabularnotes*=\count358
  [1
 
 {/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}] (./math.toc
 pdfTeX warning (ext4): destination with the same identifier (name{page.1}) has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.40 ...ine {14.3}Prior Updates}{25}{section.14.3}
+l.40 ...mberline {15}Lazy Updates}{25}{chapter.15}
                                                   % [1
 
 
@@ -672,30 +684,30 @@ l.40 ...ine {14.3}Prior Updates}{25}{section.14.3}
 
 ]
 Chapter 1.
-\colw=\skip57
-\g__nicematrix_max_cell_width_dim=\dimen343
-\c@iRow=\count353
-\c@jCol=\count354
-\l__nicematrix_cell_box=\box71
-\l__nicematrix_the_array_box=\box72
-\l__nicematrix_left_delim_dim=\dimen344
-\l__nicematrix_right_delim_dim=\dimen345
-\g__nicematrix_dp_row_zero_dim=\dimen346
-\g__nicematrix_ht_row_zero_dim=\dimen347
-\g__nicematrix_ht_row_one_dim=\dimen348
-\g__nicematrix_dp_ante_last_row_dim=\dimen349
-\g__nicematrix_ht_last_row_dim=\dimen350
-\g__nicematrix_dp_last_row_dim=\dimen351
-\g__nicematrix_ddots_int=\count355
-\g__nicematrix_iddots_int=\count356
-\g__nicematrix_delta_x_one_dim=\dimen352
-\g__nicematrix_delta_y_one_dim=\dimen353
-\g__nicematrix_delta_x_two_dim=\dimen354
-\g__nicematrix_delta_y_two_dim=\dimen355
-\l__nicematrix_initial_i_int=\count357
-\l__nicematrix_initial_j_int=\count358
-\l__nicematrix_final_i_int=\count359
-\l__nicematrix_final_j_int=\count360
+\colw=\skip58
+\g__nicematrix_max_cell_width_dim=\dimen344
+\c@iRow=\count359
+\c@jCol=\count360
+\l__nicematrix_cell_box=\box72
+\l__nicematrix_the_array_box=\box73
+\l__nicematrix_left_delim_dim=\dimen345
+\l__nicematrix_right_delim_dim=\dimen346
+\g__nicematrix_dp_row_zero_dim=\dimen347
+\g__nicematrix_ht_row_zero_dim=\dimen348
+\g__nicematrix_ht_row_one_dim=\dimen349
+\g__nicematrix_dp_ante_last_row_dim=\dimen350
+\g__nicematrix_ht_last_row_dim=\dimen351
+\g__nicematrix_dp_last_row_dim=\dimen352
+\g__nicematrix_ddots_int=\count361
+\g__nicematrix_iddots_int=\count362
+\g__nicematrix_delta_x_one_dim=\dimen353
+\g__nicematrix_delta_y_one_dim=\dimen354
+\g__nicematrix_delta_x_two_dim=\dimen355
+\g__nicematrix_delta_y_two_dim=\dimen356
+\l__nicematrix_initial_i_int=\count363
+\l__nicematrix_initial_j_int=\count364
+\l__nicematrix_final_i_int=\count365
+\l__nicematrix_final_j_int=\count366
 [4
 
 
@@ -719,52 +731,56 @@ Chapter 4.
 Chapter 5.
 [9
 
-] [10] [11] [12] [13] [14]) (./chapters/render-stimulus.tex [15]
+] [10] [11] [12]) (./chapters/render-stimulus.tex [13] [14]
 Chapter 6.
-) (./chapters/detect-response.tex [16
+) (./chapters/detect-response.tex [15
 
 ]
 Chapter 7.
-) (./chapters/likelihood-result.tex [17
+) (./chapters/likelihood-result.tex [16
 
 ]
 Chapter 8.
-) (./chapters/likelihood-update.tex [18
+) (./chapters/likelihood-update.tex [17
 
 ]
 Chapter 9.
-) (./chapters/determine-most-likely-break-nodes.tex [19
+) (./chapters/determine-most-likely-break-nodes.tex [18
 
 ]
 Chapter 10.
-) (./chapters/llm-query.tex [20
+) (./chapters/llm-query.tex [19
 
 ]
 Chapter 11.
-) (./chapters/llm-result.tex [21
+) (./chapters/llm-result.tex [20
 
 ]
 Chapter 12.
-) (./chapters/prior-update.tex [22
+) (./chapters/prior-update.tex [21
 
 ]
 Chapter 13.
-) (./chapters/lazy-updates.tex [23
+) (./chapters/practice.tex [22
 
 ]
 Chapter 14.
-[24
+[23
 
-] [25
-pdfTeX warning (ext4): destination with the same identifier (name{table.14.1}) has been already used, duplicate ignored
+]) (./chapters/lazy-updates.tex [24]
+Chapter 15.
+[25
+
+] [26
+pdfTeX warning (ext4): destination with the same identifier (name{table.15.1}) has been already used, duplicate ignored
 <argument> ...shipout:D \box_use:N \l_shipout_box 
                                                   \__shipout_drop_firstpage_...
 l.120 
-      ]) (./chapters/embellishments.tex [26]
-Chapter 15.
-) (./math.bbl [27
+      ]) (./chapters/embellishments.tex [27]
+Chapter 16.
+) (./math.bbl [28
 
-]) [28
+]) [29
 
 ] (./math.aux)
  ***********
@@ -772,21 +788,21 @@ LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
  ***********
 Package rerunfilecheck Info: File `math.out' has not changed.
-(rerunfilecheck)             Checksum: CEF9E569E08D77A930AED6075AA3CD2D;5455.
+(rerunfilecheck)             Checksum: CB29C942DB82825133F425E1834BD3D9;6135.
  ) 
 Here is how much of TeX's memory you used:
- 24691 strings out of 476106
- 503323 string characters out of 5793933
+ 25060 strings out of 476106
+ 509671 string characters out of 5793933
  1984975 words of memory out of 5000000
- 46182 multiletter control sequences out of 15000+600000
- 566132 words of font info for 64 fonts, out of 8000000 for 9000
+ 46537 multiletter control sequences out of 15000+600000
+ 566753 words of font info for 66 fonts, out of 8000000 for 9000
  59 hyphenation exceptions out of 8191
  102i,14n,107p,522b,1044s stack positions out of 10000i,1000n,20000p,200000b,200000s
- </home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1000.600pk></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
-Output written on math.pdf (29 pages, 275036 bytes).
+ </home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1000.600pk></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
+Output written on math.pdf (30 pages, 292169 bytes).
 PDF statistics:
- 496 PDF objects out of 1000 (max. 8388607)
- 425 compressed objects within 5 object streams
- 104 named destinations out of 1000 (max. 500000)
- 301 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 525 PDF objects out of 1000 (max. 8388607)
+ 451 compressed objects within 5 object streams
+ 109 named destinations out of 1000 (max. 500000)
+ 325 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -2,4 +2,52 @@
 \chapter{Determine Visible Nodes}
 \label{chap:determine-visible-nodes}
 
-% TODO: Add content.
+In this step we identify which prefixes have sufficient
+posterior probability to be visually displayed.
+
+The two questions are which prefixes to show and whether
+to show them immediately or to wait until showing them.
+
+\section{Setting the Visibility Threshold}
+
+The visibility threshold will determine the number
+of visible nodes, which entails a trade-off.
+
+
+\medskip\noindent\textbf{Advantages of a high threshold and few visible nodes:}
+\begin{itemize}[topsep=2pt]
+  \item There is less clutter and it is less overwhelming to the user.
+  \item Nodes are larger, avoiding the need for small fonts and timers. The user can recognize timers more easily.
+  \item Faster computation and rendering.
+\end{itemize}
+
+
+\medskip\noindent\textbf{Advantages of a low threshold and many visible nodes:}
+\begin{itemize}[topsep=2pt]
+  \item More granular targets allows us to spread out the probability
+  more evenly, i.e., we can set the timers to make a better approximation to the uniform distribution.
+  (Refer to chapter \ref{chap:optimize-stimulus-parameters}.)
+\end{itemize}
+
+Thus, we want to set the visibility threshold as high as we can while still
+being able set the timers to approximate a uniform distribution.
+
+\section{Responding to Likelihood Updates versus Prior Updates}
+
+Every time our trie is updated, we need to recalculate the visible nodes.
+Thus the set of visible nodes will change in response to prior updates as well
+as in response to likelihood updates. However, these should not be handled in the same way.
+Since a likelihood update is triggered by the user's gesture, the user expects that the visible nodes
+will change in response. On the other hand, a prior update is triggered by the background evaluation of a language model.
+Immediately redrawing in response to these updates would be jarring and disorienting.
+It could be especially problematic if a child appeared right before the user was about to select its parent, causing
+the user to make an error (select the parent instead of the child), through no fault of their own.
+Similarly, it would be problematic if a node disappeared right as the user was about to select it.
+
+To mitigate this issue, we enforce a couple of rules about redrawing the trie in response to prior updates:
+\begin{itemize}[topsep=2pt]
+  \item A new visible node cannot be drawn while its parent is close to culmination.
+  \item A visible node can not be removed until the next likelihood update.
+\end{itemize}
+
+

@@ -229,6 +229,8 @@ INPUT /usr/share/texlive/texmf-dist/tex/latex/float/float.sty
 INPUT /usr/share/texlive/texmf-dist/tex/latex/colortbl/colortbl.sty
 INPUT /usr/share/texlive/texmf-dist/tex/latex/colortbl/colortbl.sty
 INPUT /usr/share/texlive/texmf-dist/tex/latex/graphics/color.sty
+INPUT /usr/share/texlive/texmf-dist/tex/latex/enumitem/enumitem.sty
+INPUT /usr/share/texlive/texmf-dist/tex/latex/enumitem/enumitem.sty
 INPUT /usr/share/texlive/texmf-dist/tex/latex/nicematrix/nicematrix.sty
 INPUT /usr/share/texlive/texmf-dist/tex/latex/nicematrix/nicematrix.sty
 INPUT ./math.aux
@@ -300,6 +302,7 @@ INPUT ./chapters/determine-visible-nodes.tex
 INPUT ./chapters/determine-visible-nodes.tex
 INPUT ./chapters/determine-visible-nodes.tex
 INPUT chapters/determine-visible-nodes.tex
+INPUT /usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/tcrm1000.tfm
 INPUT ./chapters/render-trie.tex
 INPUT ./chapters/render-trie.tex
 INPUT ./chapters/render-trie.tex
@@ -353,13 +356,19 @@ INPUT ./chapters/prior-update.tex
 INPUT ./chapters/prior-update.tex
 INPUT ./chapters/prior-update.tex
 INPUT chapters/prior-update.tex
+INPUT ./chapters/practice.tex
+INPUT ./chapters/practice.tex
+INPUT ./chapters/practice.tex
+INPUT ./chapters/practice.tex
+INPUT chapters/practice.tex
+INPUT /usr/share/texlive/texmf-dist/fonts/tfm/public/cm/cmbx8.tfm
+INPUT /usr/share/texlive/texmf-dist/fonts/tfm/public/cm/cmbx6.tfm
 INPUT ./chapters/lazy-updates.tex
 INPUT ./chapters/lazy-updates.tex
 INPUT ./chapters/lazy-updates.tex
 INPUT ./chapters/lazy-updates.tex
 INPUT chapters/lazy-updates.tex
 INPUT /usr/share/texlive/texmf-dist/fonts/tfm/public/cm/cmtt10.tfm
-INPUT /usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/tcrm1000.tfm
 INPUT ./chapters/embellishments.tex
 INPUT ./chapters/embellishments.tex
 INPUT ./chapters/embellishments.tex
@@ -383,6 +392,7 @@ INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb
 INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb
 INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb
 INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb
+INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb
 INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb
 INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb
 INPUT /usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb
