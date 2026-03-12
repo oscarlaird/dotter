@@ -1,0 +1,30 @@
+\contentsline {chapter}{Table of Contents}{1}{section*.1}%
+\contentsline {chapter}{Introduction}{2}{section*.4}%
+\contentsline {chapter}{\numberline {1}Architecture}{3}{chapter.1}%
+\contentsline {chapter}{\numberline {2}Stimulus Optimization: Ideal Timer Placement}{4}{chapter.2}%
+\contentsline {section}{\numberline {2.1}The Continuous One Bit Channel}{4}{section.2.1}%
+\contentsline {subsection}{\numberline {2.1.1}Two Interpretations}{4}{subsection.2.1.1}%
+\contentsline {subsection}{\numberline {2.1.2}The Ideal Timing Distribution}{4}{subsection.2.1.2}%
+\contentsline {subsubsection}{A Geometric Intuition}{5}{section*.5}%
+\contentsline {section}{\numberline {2.2}Periodic Signals}{5}{section.2.2}%
+\contentsline {subsection}{\numberline {2.2.1}Random Scan Times}{5}{subsection.2.2.1}%
+\contentsline {subsection}{\numberline {2.2.2}Periodic signals}{5}{subsection.2.2.2}%
+\contentsline {subsection}{\numberline {2.2.3}Approximating A Uniform Distribution with a Gaussian Mixture}{5}{subsection.2.2.3}%
+\contentsline {subsubsection}{Two Heuristics}{6}{section*.6}%
+\contentsline {subsubsection}{Approximations to the entropy based on pairwise distances}{7}{section*.7}%
+\contentsline {paragraph}{Gaussian Mixture Model with Rényi Entropy}{7}{section*.8}%
+\contentsline {paragraph}{Gaussian Mixture Model with Kolchinsky Objective}{7}{section*.9}%
+\contentsline {paragraph}{Von Mises Mixture Model with Rényi Entropy}{7}{section*.10}%
+\contentsline {paragraph}{Von Mises Mixture Model with Kolchinsky Objective}{7}{section*.11}%
+\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{7}{section*.12}%
+\contentsline {section}{\numberline {2.3}User Parameters}{8}{section.2.3}%
+\contentsline {subsection}{\numberline {2.3.1}The Likelihood Model}{8}{subsection.2.3.1}%
+\contentsline {subsection}{\numberline {2.3.2}Directional Statistics}{9}{subsection.2.3.2}%
+\contentsline {subsection}{\numberline {2.3.3}The Cost of Unintended Signals}{9}{subsection.2.3.3}%
+\contentsline {chapter}{\numberline {3}Lazy Updates}{11}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Two Kinds of Updates}{11}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Likelihood Updates}{12}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Prior Updates}{12}{section.3.3}%
+\contentsline {section}{\numberline {3.4}Token Paths}{13}{section.3.4}%
+\contentsline {chapter}{\numberline {4}Embellishments}{14}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Branches of the Tree}{14}{section.4.1}%

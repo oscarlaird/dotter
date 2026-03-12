@@ -1,0 +1,21 @@
+\chapter*{Introduction}
+\phantomsection
+\addcontentsline{toc}{chapter}{Introduction}
+
+% TODO: Add introduction text.
+
+Dotter is a text-entry technology that allows users to type over a 1-bit channel.
+This allows a simple input mechanism such as blinking or pressing a single button
+to be used as a typing mechanism.
+Dotter milks as much information out of that 1-bit channel as possible,
+allowing an experienced user to type standard english text at speeds of 20 words per minute
+only by blinking.
+
+Dotter was inspired by the project "Dasher" which was a text-entry technology
+developed by David MacKay's group at the University of Cambridge that took inspiration from arithmetic coding to 
+map the space of all possible text sequences to the unit interval. Assuming a version
+of Fitt's law, Dasher is an optimal text-entry technology for 1-dimensional continuous (pointing) input.
+
+This document is a mathematical analysis of Dotter as well as an implementation guide,
+describing the architecture and key algorithms of Dotter.
+

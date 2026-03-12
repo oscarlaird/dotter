@@ -1,0 +1,158 @@
+\chapter{Lazy Updates}
+The core of Dotter, is calculating the posterior probabilities of prefixes.
+These posterior probabilities can be calculated exactly since both the prior, the likelihood, and the normalizing constant are all known.
+However, the challenge is to make these calculations within milliseconds of the user's signal.
+
+Our program maintains a trie of literal prefixes. Our goal is for our updates
+to touch as few nodes of the trie as possible.
+
+\section{Two Kinds of Updates}
+The purpose of an update is to:
+\begin{enumerate}
+    \item Identify all nodes with a posterior probability exceeding the visibility threshold.
+    \item Calculate the posterior probabilities of these nodes.
+    This is equivalent to calculating the unnormalized posterior probability of these nodes
+    (so long as they are using the same normalizing constant),
+    since the posterior probability of the root node must always be 1,
+     and thus we can identify the normalizing constant from the unnormalized probability of the root node.
+\end{enumerate}
+
+In order to identify visible nodes, we must know normalized posterior probabilities, which in turn requires knowing the normalizing constant, i.e., the unnormalized probability of the root node.
+Hence before we can descend the trie to identify visible nodes, we must first find the unnormalized probability of the root node.
+Thus our update procedure has two phases:
+\begin{enumerate}
+    \item Up Propagation: we choose a complete prefix partition for which we know the unnormalized probabilities, and push their sums to the root of the trie \texttt{root\_post\_Z}.
+    \item Down Propagation: we descend the trie, visiting a child node if it exceeds the visibility threshold, \texttt{post\_Z - root\_post\_Z > visibility\_threshold}.
+    To visit a node means to create its children if the node is a leaf, or else recalculate its children's statistics.
+    (Note that when later gathering the visible nodes, we must descend the trie. A flat scan could cause a bug since \texttt{post\_Z} is not guaranteed to be correct a greater depths. I.e.,
+    a deep descendant could have a higher \texttt{post\_Z} than its ancestors if there is unpushed likelihood along the way.)
+\end{enumerate}
+
+The trick is to choose the smallest prefix partition for which we can truly calculate the unnormalized posteriors.
+The unnormalized posterior is a sum over one's children's unnormalized posteriors:
+$$
+P(x|D) = \sum_i P(x_i) P(D | x_i)
+$$
+In general if one term is reweighted, we will have to recalculate,
+but there are three cases in which we can avoid recalculation and descent:
+\begin{enumerate}
+    \item Neither term (neither likelihood nor prior) changes.
+    \item One term changes by a constant factor, $\sum_i (Ca_i)b_i = C \sum_i a_i b_i$.
+    \item One set of terms is reweighted to a known sum, and the other set of terms is a constant value across all indices.
+    $\sum_i a_i' b_i = (\sum_i a_i' / \sum_i a_i) \sum_i a_i b_i$.
+\end{enumerate}
+In order to find the smallest prefix partition for the Up Propagation step,
+we consider the set of all nodes that satisfy any of these three cases and
+then take the minimal elements of this set (resulting in an antichain / frontier of the tree).
+
+\bigskip
+We update the posterior probabilities in two ways:
+\begin{enumerate}
+    \item \textbf{Likelihood updates}: when the user makes a gesture, the likelihoods of the prefixes are updated. This is a traditional update.
+    \item \textbf{Prior updates}: when the language model server returns new or better prior probabilities, we must recalculate the posteriors.
+\end{enumerate}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\hline
+\textbf{} & \textbf{Likelihood Update} & \textbf{Prior Update} \\
+\hline
+Mathematical Term       & $P(D \mid X)$                         & $P(X)$ \\
+Recompute Posteriors    & Yes                                   & Yes \\
+Resize Boxes            & Yes                                   & Yes \\
+How Many New Nodes?     & Dozens                                & Zero to a few \\
+How to Set Phases       & Optimized / gradient descent          & Random (or ancestor / minimum placement) \\
+Human-Initiated         & Yes                                   & No \\
+Show Immediately        & Yes                                   & No --- wait for ancestor to finish \\
+Branch of Tree Affected & Entire tree                           & Single branch \\
+\hline
+\end{tabular}
+\caption{Comparison of likelihood updates and prior updates.}
+\label{tab:updates}
+\end{table}
+
+
+\section{Likelihood Updates}
+For our complete prefix partition we choose the set
+of all nodes that were leaves in the visible trie,
+along with all invisible nodes that have a visible sibling.
+Equivalently, we are choosing the minimal elements of the set of nodes where
+every node has no visible children (resulting in an antichain).
+
+Since all of each of these nodes' children no visible children,
+each of these nodes' children's likelihoods should be updated
+in the same way as this node's likelihood (since they all share the same timer).
+Since all childrens' likelihood are updated by the same factor,
+this satisfies case 2 above.
+
+In implementation we add the log likelihood of the user's gesture conditional on this node's timer
+to the node's \texttt{post\_Z} and also add this value to the node's \texttt{unpushed\_likelihood}.
+If later we determine that this node meets the visibility threshold and thus decide to visit it (i.e., recalculate its children's statistics),
+we will add the node's \texttt{unpushed\_likelihood} to the \texttt{post\_Z} of each of its children
+and reset the node's \texttt{unpushed\_likelihood} to 0.
+
+\section{Prior Updates}
+Prior updates are more subtle. To find our prefix partition
+we descend from the token prefix of the update until reaching either (1) 
+a node that \textit{never} was a parent to a visible node, or (2)
+a space character.
+
+If we reach a node that was never a parent to a visible node,
+then we are guaranteed that its children all have the same likelihood
+and thus case 3 above is satisfied.
+If we reach a space character, then there is only one possible
+token path up to this point. If that path does not break on the received token prefix,
+then there is no change to the prior and we are in case 1 above. If that path
+does contain the received token, then this node and all its literal children
+will contain the received token in their paths and thus their 
+priors will all change by the same factor which is case 2 above.
+
+In implementation, we do not track the prior as a single value.
+Instead each literal node tracks the prior assigned to it by each of its
+(at most 15) possible token paths. The prior update id, the prior value, and the model strength
+is stored for each of these paths. Unlike a single scalar \texttt{unpushed\_likelihood},
+we store a set of \texttt{unpushed\_prior\_update\_ids}. When we visit a node,
+we push this set to its children, and appropriately update the children's priors.
+By comparing the new prior with the old prior, we can correctly modify the \texttt{post\_Z} of the children.
+
+We want to ensure that our prior over prefixes is always a valid prior.
+That means we should always use a valid prior (not the zero prior) for every next token distribution,
+even if it hasn't yet been received from the language model.
+A reasonable choice of default is either a uniform prior over tokens, or a 100\% prior on the terminal token.
+(Note that the terminal token should \textit{never} be visited since subsequent tokens are nonsensical.)
+However, this technique would also allow for the use of multiple levels of language model power (e.g. an ngram model, a provisional language model, and a full language model).
+
+\section{Token Paths}
+Since Dotter uses a letter-by-letter trie, but language models return token probabilities,
+we face the task of converting a token model to a literal model.
+
+A given literal prefix corresponds to several token paths.
+For example, the prefix \texttt{sci} could be part of the words with the following
+tokenizations (using the GPT-2 tokenizer):
+\begin{itemize}
+    \item \texttt{scientific} (single token),
+    \item \texttt{science} (single token),
+    \item \texttt{sci-ences} (two tokens),
+    \item \texttt{sc-iss-or} (three tokens),
+\end{itemize}
+We can see that a literal prefix can correspond to multiple 
+token prefixes (empty string, \texttt{sci}, and \texttt{sc}), and that for a given token prefix, the literal prefix
+can be generated from multiple terminal tokens (\texttt{science}, \texttt{scientific}).
+
+Formally, to convert a token model to a literal model, we take the sum across 
+all compatible token prefixes $B$, and all compatible terminal tokens $T$,
+$$
+P(x) = \sum_{B < x} P(B) \sum_{T,\, x \leq B+T} P(T \mid B)
+$$
+
+We use two tricks to efficiently compute this sum:
+\begin{enumerate}
+    \item We recognize that the eligible longest token prefixes correspond to the prefixes of the last word, since tokens never contain spaces in the middle of them.
+    Additionally we can limit the values of $B$ to at most 15 ancestor prefixes, since tokens are at most 15 characters long in our tokenizer.
+    \item We can preconvert the language model's output of logits to an array of \textit{cumulative} probabilities.
+    This allows us to efficiently compute the alphabetical sum over compatible $T$, by taking the difference between the cumulative probabilities of the start and end.
+\end{enumerate}
+
+
+
