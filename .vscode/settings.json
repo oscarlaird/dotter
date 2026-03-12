@@ -1,0 +1,7 @@
+{
+  "latex-workshop.latex.autoBuild.run": "onSave",
+  "latex-workshop.latex.rootFile.doNotPrompt": true,
+  "latex-workshop.latex.rootFile.useSubfilePackage": false,
+  "latex-workshop.latex.watch.files.include": ["**/*.tex", "**/*.bib"],
+  "latex-workshop.latex.outDir": "%DIR%"
+}

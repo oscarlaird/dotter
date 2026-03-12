@@ -5,4 +5,9 @@ Artemy Kolchinsky and Brendan Tracey.
 \newblock Estimating mixture entropy with pairwise distances.
 \newblock {\em Entropy}, 19(7):361, July 2017.
 
+\bibitem{Ward2000Dasher}
+David~J. Ward, Alan~F. Blackwell, and David J.~C. MacKay.
+\newblock Dasher---a data entry interface using continuous gestures and language models.
+\newblock In {\em Proceedings of the 13th Annual {ACM} Symposium on User Interface Software and Technology}, {UIST} '00, pages 129--137, New York, NY, USA, 2000. ACM.
+
 \end{thebibliography}

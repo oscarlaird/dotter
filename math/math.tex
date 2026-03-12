@@ -3,11 +3,20 @@
 \usepackage{amsmath}
 \usepackage[margin=1in]{geometry} % Reduce margins
 \usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{tikzmark,decorations.pathreplacing,calc}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{nicematrix}
 
 \begin{document}
 \hypertarget{titlepage}{}
 
 \title{Math for Dotter}
+\author{Oscar Laird}
 \maketitle
 
 \clearpage
@@ -21,11 +30,32 @@
 % --- Chapters in separate files (single source of truth; \input is fine for chapters) ---
 \input{chapters/introduction}
 \input{chapters/architecture}
-\input{chapters/stimulus}
+
+% Central component
+\input{chapters/trie}
+
+% Likelihood Cycle (in order)
+\input{chapters/determine-visible-nodes}
+\input{chapters/render-trie}
+\input{chapters/stimulus}               % Optimize Stimulus Parameters
+\input{chapters/render-stimulus}
+\input{chapters/detect-response}
+\input{chapters/likelihood-result}
+\input{chapters/likelihood-update}
+
+% Prior Cycle (in order)
+\input{chapters/determine-most-likely-break-nodes}
+\input{chapters/llm-query}
+\input{chapters/llm-result}
+\input{chapters/prior-update}
+
+% Supporting chapters
 \input{chapters/lazy-updates}
 \input{chapters/embellishments}
 
 \bibliographystyle{plain}
+\phantomsection
+\addcontentsline{toc}{chapter}{Bibliography}
 \bibliography{references}
 
 \end{document}

@@ -1,3 +1,4 @@
+% !TEX root = ../math.tex
 \chapter*{Introduction}
 \phantomsection
 \addcontentsline{toc}{chapter}{Introduction}
@@ -5,17 +6,29 @@
 % TODO: Add introduction text.
 
 Dotter is a text-entry technology that allows users to type over a 1-bit channel.
-This allows a simple input mechanism such as blinking or pressing a single button
-to be used as a typing mechanism.
+It allows a simple input mechanism such as blinking or pressing a single button
+to be used to type.
 Dotter milks as much information out of that 1-bit channel as possible,
 allowing an experienced user to type standard english text at speeds of 20 words per minute
 only by blinking.
 
-Dotter was inspired by the project "Dasher" which was a text-entry technology
-developed by David MacKay's group at the University of Cambridge that took inspiration from arithmetic coding to 
+\begin{quote}
+\textbf{Dotter only has one rule:} Identify the longest visible prefix of your target text and synchronize your signal to its timer.
+\end{quote}
+
+Dotter was inspired by the project ``Dasher''~\cite{Ward2000Dasher}, a text-entry technology
+developed by David MacKay's group at the University of Cambridge that took inspiration from arithmetic coding to
 map the space of all possible text sequences to the unit interval. Assuming a version
 of Fitt's law, Dasher is an optimal text-entry technology for 1-dimensional continuous (pointing) input.
 
 This document is a mathematical analysis of Dotter as well as an implementation guide,
 describing the architecture and key algorithms of Dotter.
+Chapter \ref{chap:architecture} describes the architecture of Dotter,
+outlining its key data structures and algorithms.
+The succeeding chapters describe individual components of Dotter.
+The final chapter gives theory and advice on how to learn to type with Dotter.
+(If the person reading this only wants to learn how to use Dotter, they should skip to the final chapter.)
 
+The name ``Dotter'' is a nod the most famous 1-bit text-entry system, telegraphy,
+system which consisted of ``dots'' and ``dashes.''
+The name ``Dasher'' was already taken, so I had to go with this.

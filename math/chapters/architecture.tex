@@ -1,4 +1,149 @@
+% !TEX root = ../math.tex
 \chapter{Architecture}
+\label{chap:architecture}
 
-% TODO: Add architecture content.
+\renewcommand{\arraystretch}{1.5}
+\setlength{\tabcolsep}{12pt}
+\newlength{\colw}
+\setlength{\colw}{\dimexpr(\textwidth - 6\arrayrulewidth)/5 - 2\tabcolsep\relax}
+\newcolumntype{C}{>{\centering\arraybackslash}m{\colw}}
+\begin{table}[H]
+\centering
+\normalsize
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\begin{NiceTabular}{|[color=black]C|C|C|C|C|[color=black]}[rules/color=black!25]
+\Hline[color=black]
+\textbf{Visual} & \textbf{Physical} & \textbf{Calculation (Visual)} & \textbf{Update Algorithm} & \textbf{Bayesian Model} \\
+\Hline[color=black]
+Render Trie \newline {\footnotesize (Ch.~\ref{chap:render-trie})} &   & Determine Visible Nodes \newline {\footnotesize (Ch.~\ref{chap:determine-visible-nodes})} & & \\
+ & & & & \\
+Render Stimulus \newline {\footnotesize (Ch.~\ref{chap:render-stimulus})} & & Optimize Stimulus Parameters \newline {\footnotesize (Ch.~\ref{chap:optimize-stimulus-parameters})} & & \\
+ & & & & \\
+ & Detect Response \newline {\footnotesize (Ch.~\ref{chap:detect-response})} & Likelihood Result \newline {\footnotesize (Ch.~\ref{chap:likelihood-result})} & Likelihood Update \newline {\footnotesize (Ch.~\ref{chap:likelihood-update})} & \\
+ & & & & \\
+ & & & & TRIE \newline {\footnotesize (Ch.~\ref{chap:trie})} \\
+\textbf{LLM} & \textbf{} & \textbf{Calculation (LLM)} & & \\
+\Hline[color=black,start=1,end=3]
+ & & LLM Result \newline {\footnotesize (Ch.~\ref{chap:llm-result})} & Prior Update \newline {\footnotesize (Ch.~\ref{chap:prior-update})} & \\
+ & & & & \\
+LLM Query \newline {\footnotesize (Ch.~\ref{chap:llm-query})} & & Determine Most Likely Break Nodes \newline {\footnotesize (Ch.~\ref{chap:determine-most-likely-break-nodes})} & & \\
+ & & & & \\
+KV Cache Trie & & & & \\
+\Hline[color=black]
+\CodeAfter
+  \begin{tikzpicture}
+    % ── Top cycle ──────────────────────────────────────────────────────────
+    % Determine Visible Nodes (2,3) → Render Trie (2,1)  [same row, left]
+    \draw[->, thick] (2-3.west) to[out=180, in=0] (2-1.east);
 
+    % Determine Visible Nodes (2,3) → Optimize Stimulus Parameters (4,3)  [same column, down]
+    \draw[->, thick] (2-3.south) to[out=270, in=90] (4-3.north);
+
+    % Optimize Stimulus Parameters (4,3) → Likelihood Result (6,3)  [same column, down]
+    \draw[->, thick] (4-3.south) to[out=270, in=90] (6-3.north);
+
+    % Optimize Stimulus Parameters (4,3) → Render Stimulus (4,1)  [same row, left]
+    \draw[->, thick] (4-3.west) to[out=180, in=0] (4-1.east);
+
+    % Render Stimulus (4,1) → Detect Response (6,2)  [down-right]
+    \draw[->, thick] (4-1.south) to[out=270, in=180] (6-2.west);
+
+    % Detect Response (6,2) → Likelihood Result (6,3)  [same row, right]
+    \draw[->, thick] (6-2.east) to[out=0, in=180] (6-3.west);
+
+    % Likelihood Result (6,3) → Likelihood Update (6,4)  [same row, right]
+    \draw[->, thick] (6-3.east) to[out=0, in=180] (6-4.west);
+
+    % Likelihood Update (6,4) → TRIE (8,5) north  [arrive at north]
+    \draw[->, thick] (6-4.east) to[out=0, in=90] ([xshift=-1.2em]8-5.north);
+
+    % TRIE (8,5) north → Determine Visible Nodes (2,3)  [leave from north, arrive at east]
+    \draw[->, thick] ([xshift=1.2em]8-5.north) to[out=90, in=0] (2-3.east);
+
+    % ── Bottom cycle ───────────────────────────────────────────────────────
+    % TRIE (8,5) south → Determine Most Likely Break Nodes (12,3)  [leave from south]
+    \draw[->, thick] ([xshift=1.2em]8-5.south) to[out=270, in=0] (12-3.east);
+
+    % Determine Most Likely Break Nodes (12,3) → LLM Query (12,1)  [same row, left]
+    \draw[->, thick] (12-3.west) to[out=180, in=0] (12-1.east);
+
+    % LLM Query (12,1) → LLM Result (10,3)  [leave north travelling north]
+    \draw[->, thick] (12-1.north) to[out=90, in=180] (10-3.west);
+
+    % LLM Result (10,3) → Prior Update (10,4)  [same row, right]
+    \draw[->, thick] (10-3.east) to[out=0, in=180] (10-4.west);
+
+    % Prior Update (10,4) → TRIE (8,5) south  [exit east, arrive at south]
+    \draw[->, thick] (10-4.east) to[out=0, in=270] ([xshift=-1.2em]8-5.south);
+
+    % LLM Query (12,1) ↔ KV Cache Trie (14,1)  [double-headed, same column]
+    \draw[<->, thick] (12-1.south) to[out=270, in=90] (14-1.north);
+
+    % ── Cycle labels (curly braces to the left of the table) ───────────────
+    \draw[decorate, decoration={brace, amplitude=10pt, mirror}, thick, black!55]
+      ($0.5*([xshift=-12pt]1-1.south west)+0.5*([xshift=-12pt]2-1.north west)$) -- ([xshift=-12pt]7-1.west)
+      node[midway, xshift=-18pt, rotate=90, anchor=center,
+           font=\normalsize\itshape, black!70]
+        {Likelihood Cycle};
+
+    \draw[decorate, decoration={brace, amplitude=10pt, mirror}, thick, black!55]
+      ([xshift=-12pt]10-1.north west) -- ([xshift=-12pt]14-1.south west)
+      node[midway, xshift=-18pt, rotate=90, anchor=center,
+           font=\normalsize\itshape, black!70]
+        {Prior Cycle};
+  \end{tikzpicture}
+\end{NiceTabular}
+\caption{Architecture of Dotter}
+\label{tab:architecture}
+\end{table}
+\renewcommand{\arraystretch}{1}
+\setlength{\tabcolsep}{6pt}
+
+Table \ref{tab:architecture} shows the architecture of Dotter.
+At its heart is the ``TRIE'' (chapter \ref{chap:trie}) in the rightmost column, 
+which is a Bayesian prefix trie which maintains
+a calculation of the posterior probability of every prefix.
+The other elements of the system may be separated into the Likelihood Cycle and the Prior Cycle.
+
+Every element in Table \ref{tab:architecture} is discussed in detail in its own chapter.
+
+\section{The Likelihood Cycle}
+The Likelihood Cycle refers to the series of steps by which we elicit
+a signal from the user and then interpret that signal to update our
+posterior probabilities. It has seven steps,
+\begin{enumerate}
+  \item \textbf{Determine Visible Nodes} (chapter \ref{chap:determine-visible-nodes}): we determine which prefixes should be visually displayed
+  by checking which prefixes have a posterior probability exceeding the visibility threshold (e.g. 2\%).
+  \item \textbf{Render Trie} (chapter \ref{chap:render-trie}): here we draw the visible prefixes to the screen, connecting parent nodes to their
+  children with smooth curves.
+  \item \textbf{Optimize Stimulus Parameters} (chapter \ref{chap:optimize-stimulus-parameters}): in this step we assign timers to every prefix. 
+  We want to maximize the information gain from the user's signal which is accomplished by making the timers as
+  far apart from each other as possible (in a formal sense). This helps to make the user's selection unambiguous.
+  \item \textbf{Render Stimulus} (chapter \ref{chap:render-stimulus}): we draw the timers to the screen.
+  \item \textbf{Detect Response} (chapter \ref{chap:detect-response}): we detect the user's signal. It is trivial to detect a keypress; detecting the exact timing of a blink is a more sophisticated problem.
+  \item \textbf{Likelihood Result} (chapter \ref{chap:likelihood-result}): we compare the detected user signal to the timers that were assigned in step 3.
+  This gives us a likelihood score for each prefix.
+  \item \textbf{Likelihood Update} (chapter \ref{chap:likelihood-update}): we update the trie to reflect the received likelihoods.
+  Performing this update in a lazy and efficient manner is a central technical
+  challenge of Dotter.
+  (This is an ``update'' in the traditional bayesian sense.)
+\end{enumerate}
+
+\section{The Prior Cycle}
+The Prior Cycle refers to the series of steps by which we 
+query a large language model to refine our prior probabilities
+and incorporate those results into our posterior beliefs.
+It has four steps,
+\begin{enumerate}
+  \item \textbf{Determine Most Likely Break Nodes} (chapter \ref{chap:determine-most-likely-break-nodes}): we determine which nodes are most likely
+  to a break between tokens in the tokenization of the user's target text.
+  \item \textbf{LLM Query} (chapter \ref{chap:llm-query}): we query the large language model to predict the distribution over the next token for the prefixes
+  identified in the previous step.
+  \item \textbf{LLM Result} (chapter \ref{chap:llm-result}): we receive the result from the language model.
+  \item \textbf{Prior Update} (chapter \ref{chap:prior-update}): we update the trie to reflect the received prior probabilities.
+  Performing this update in a lazy and efficient manner is a central technical
+  challenge of Dotter.
+  (This is not truly an ``update'' in the traditional bayesian sense, since normally our priors are fixed.)
+
+\end{enumerate}

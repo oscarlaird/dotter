@@ -1,0 +1,15 @@
+name = "demorgan"
+version = "0.1.0"
+defaultTargets = ["demorgan"]
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "v4.28.0"
+
+[[lean_lib]]
+name = "Demorgan"
+
+[[lean_exe]]
+name = "demorgan"
+root = "Main"

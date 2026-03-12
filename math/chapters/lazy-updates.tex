@@ -1,4 +1,6 @@
+% !TEX root = ../math.tex
 \chapter{Lazy Updates}
+\label{chap:lazy-updates}
 The core of Dotter, is calculating the posterior probabilities of prefixes.
 These posterior probabilities can be calculated exactly since both the prior, the likelihood, and the normalizing constant are all known.
 However, the challenge is to make these calculations within milliseconds of the user's signal.
