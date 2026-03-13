@@ -22,7 +22,7 @@ Render Stimulus \linebreak[4]{\footnotesize (Ch.~\ref{chap:render-stimulus})} & 
  & & & & \\
  & Detect Response \linebreak[4]{\footnotesize (Ch.~\ref{chap:detect-response})} & Likelihood Result \linebreak[4]{\footnotesize (Ch.~\ref{chap:likelihood-result})} & Likelihood Update \linebreak[4]{\footnotesize (Ch.~\ref{chap:likelihood-update})} & \\
  & & & & \\
- & & & & TRIE \linebreak[4]{\footnotesize (Ch.~\ref{chap:trie})} \\
+ & & & & Bayesian Trie \linebreak[4]{\footnotesize (Ch.~\ref{chap:trie})} \\
 \textbf{LLM} & \textbf{} & \textbf{Calculation (LLM)} & & \\
 \Hline[color=black,start=1,end=3]
  & & LLM Result \linebreak[4]{\footnotesize (Ch.~\ref{chap:llm-result})} & Prior Update \linebreak[4]{\footnotesize (Ch.~\ref{chap:prior-update})} & \\
@@ -55,14 +55,14 @@ KV Cache Trie & & & & \\
     % Likelihood Result (6,3) → Likelihood Update (6,4)  [same row, right]
     \draw[->, thick] (6-3.east) to[out=0, in=180] (6-4.west);
 
-    % Likelihood Update (6,4) → TRIE (8,5) north  [arrive at north]
+    % Likelihood Update (6,4) → Bayesian Trie (8,5) north  [arrive at north]
     \draw[->, thick] (6-4.east) to[out=0, in=90] ([xshift=-1.2em]8-5.north);
 
-    % TRIE (8,5) north → Determine Visible Nodes (2,3)  [leave from north, arrive at east]
+    % Bayesian Trie (8,5) north → Determine Visible Nodes (2,3)  [leave from north, arrive at east]
     \draw[->, thick] ([xshift=1.2em]8-5.north) to[out=90, in=0] (2-3.east);
 
     % ── Bottom cycle ───────────────────────────────────────────────────────
-    % TRIE (8,5) south → Determine Most Likely Break Nodes (12,3)  [leave from south]
+    % Bayesian Trie (8,5) south → Determine Most Likely Break Nodes (12,3)  [leave from south]
     \draw[->, thick] ([xshift=1.2em]8-5.south) to[out=270, in=0] (12-3.east);
 
     % Determine Most Likely Break Nodes (12,3) → LLM Query (12,1)  [same row, left]
@@ -74,7 +74,7 @@ KV Cache Trie & & & & \\
     % LLM Result (10,3) → Prior Update (10,4)  [same row, right]
     \draw[->, thick] (10-3.east) to[out=0, in=180] (10-4.west);
 
-    % Prior Update (10,4) → TRIE (8,5) south  [exit east, arrive at south]
+    % Prior Update (10,4) → Bayesian Trie (8,5) south  [exit east, arrive at south]
     \draw[->, thick] (10-4.east) to[out=0, in=270] ([xshift=-1.2em]8-5.south);
 
     % LLM Query (12,1) ↔ KV Cache Trie (14,1)  [double-headed, same column]
@@ -101,7 +101,7 @@ KV Cache Trie & & & & \\
 \setlength{\tabcolsep}{6pt}
 
 Table \ref{tab:architecture} shows the architecture of Dotter.
-At its heart is the ``TRIE'' (chapter \ref{chap:trie}) in the rightmost column, 
+At its heart is the ``bayesian trie'' (chapter \ref{chap:trie}) in the rightmost column, 
 which is a Bayesian prefix trie which maintains
 a calculation of the posterior probability of every prefix.
 The other elements of the system may be separated into the Likelihood Cycle and the Prior Cycle.

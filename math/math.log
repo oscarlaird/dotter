@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.10)  12 MAR 2026 17:18
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.10)  12 MAR 2026 21:02
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -672,7 +672,7 @@ File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Live
 pdfTeX warning (ext4): destination with the same identifier (name{page.1}) has been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.40 ...mberline {15}Lazy Updates}{25}{chapter.15}
+l.40 ...numberline {12}LLM Result}{23}{chapter.12}
                                                   % [1
 
 
@@ -717,70 +717,70 @@ pdfTeX warning (ext4): destination with the same identifier (name{table.1.1}) ha
 l.108 
       ]) (./chapters/trie.tex [5]
 Chapter 2.
-) (./chapters/determine-visible-nodes.tex [6
+[6
 
-]
+]) (./chapters/determine-visible-nodes.tex [7]
 Chapter 3.
-) (./chapters/render-trie.tex [7
+[8
 
-]
+]) (./chapters/render-trie.tex [9]
 Chapter 4.
-) (./chapters/stimulus.tex [8
+) (./chapters/stimulus.tex [10
 
 ]
 Chapter 5.
-[9
+[11
 
-] [10] [11] [12]) (./chapters/render-stimulus.tex [13] [14]
+] [12] [13] [14]) (./chapters/render-stimulus.tex [15] [16]
 Chapter 6.
-) (./chapters/detect-response.tex [15
+) (./chapters/detect-response.tex [17
 
 ]
 Chapter 7.
-) (./chapters/likelihood-result.tex [16
+) (./chapters/likelihood-result.tex [18
 
 ]
 Chapter 8.
-) (./chapters/likelihood-update.tex [17
+) (./chapters/likelihood-update.tex [19
 
 ]
 Chapter 9.
-) (./chapters/determine-most-likely-break-nodes.tex [18
+) (./chapters/determine-most-likely-break-nodes.tex [20
 
 ]
 Chapter 10.
-) (./chapters/llm-query.tex [19
+) (./chapters/llm-query.tex [21
 
 ]
 Chapter 11.
-) (./chapters/llm-result.tex [20
+) (./chapters/llm-result.tex [22
 
 ]
 Chapter 12.
-) (./chapters/prior-update.tex [21
+) (./chapters/prior-update.tex [23
 
 ]
 Chapter 13.
-) (./chapters/practice.tex [22
+) (./chapters/practice.tex [24
 
 ]
 Chapter 14.
-[23
-
-]) (./chapters/lazy-updates.tex [24]
-Chapter 15.
 [25
 
-] [26
+]) (./chapters/lazy-updates.tex [26]
+Chapter 15.
+[27
+
+] [28
 pdfTeX warning (ext4): destination with the same identifier (name{table.15.1}) has been already used, duplicate ignored
 <argument> ...shipout:D \box_use:N \l_shipout_box 
                                                   \__shipout_drop_firstpage_...
 l.120 
-      ]) (./chapters/embellishments.tex [27]
+      ]) (./chapters/embellishments.tex [29]
 Chapter 16.
-) (./math.bbl [28
+) (./math.bbl [30
 
-]) [29
+]) [31
 
 ] (./math.aux)
  ***********
@@ -788,21 +788,21 @@ LaTeX2e <2023-11-01> patch level 1
 L3 programming layer <2024-01-22>
  ***********
 Package rerunfilecheck Info: File `math.out' has not changed.
-(rerunfilecheck)             Checksum: CB29C942DB82825133F425E1834BD3D9;6135.
+(rerunfilecheck)             Checksum: B3DACD69DD4271A31170B3DD40983089;6772.
  ) 
 Here is how much of TeX's memory you used:
- 25060 strings out of 476106
- 509671 string characters out of 5793933
+ 25077 strings out of 476106
+ 509842 string characters out of 5793933
  1984975 words of memory out of 5000000
- 46537 multiletter control sequences out of 15000+600000
- 566753 words of font info for 66 fonts, out of 8000000 for 9000
+ 46543 multiletter control sequences out of 15000+600000
+ 567089 words of font info for 68 fonts, out of 8000000 for 9000
  59 hyphenation exceptions out of 8191
  102i,14n,107p,522b,1044s stack positions out of 10000i,1000n,20000p,200000b,200000s
- </home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1000.600pk></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
-Output written on math.pdf (30 pages, 292169 bytes).
+ </home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1000.600pk></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt8.pfb>
+Output written on math.pdf (32 pages, 307626 bytes).
 PDF statistics:
- 525 PDF objects out of 1000 (max. 8388607)
- 451 compressed objects within 5 object streams
- 109 named destinations out of 1000 (max. 500000)
- 325 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 567 PDF objects out of 1000 (max. 8388607)
+ 489 compressed objects within 5 object streams
+ 119 named destinations out of 1000 (max. 500000)
+ 357 words of extra memory for PDF output out of 10000 (max. 10000000)
 

@@ -2,4 +2,17 @@
 \chapter{Determine Most Likely Break Nodes}
 \label{chap:determine-most-likely-break-nodes}
 
-% TODO: Add content.
+One challenge of Dotter is that likelihoods are received with reference to a character-based trie,
+but priors are received with reference to a token-based trie. A considerable portion of the implementation
+is devoted to closing that gap.
+
+In the chapter \ref{chap:determine-visible-nodes} we saw how to identify the character sequence prefixes with the highest
+posterior probabilities so that we could display them to the user. Here our task is to identify the token sequence prefixes
+with the highest posterior probabilities, so that we can query the language model for predictions.
+Just as we solved that problem with a character-based trie, so here we will solve it with a token-based trie.
+A token-based trie has a very high radix equal to the model's vocabulary size, e.g., 50,257 for GPT-2.
+
+In the letter-based trie (see chapter \ref{chap:trie}), calculating the likelihoods were trivial, but owing to the token-based nature of the
+language model, calculating the priors of a character sequence was somewhat involved. Here the situation is reversed.
+Calculating the prior of a token sequence is trivial, since that is directly what the language model returns,
+while calculating the likelihood of a token sequence prefix is difficult.

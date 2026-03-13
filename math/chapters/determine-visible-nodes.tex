@@ -32,6 +32,15 @@ of visible nodes, which entails a trade-off.
 Thus, we want to set the visibility threshold as high as we can while still
 being able set the timers to approximate a uniform distribution.
 
+\section{Searching for Visible Nodes}
+In order to identify all nodes exceeding the visibility threshold, we descend the trie.
+We know that posterior probability decreases monotonically with depth, hence we may
+stop descending upon reaching a node whose (normalized) posterior probability is less than the visibility threshold.
+It is necessary to descend the trie in the manner described in chapter \ref{chap:trie}, 
+since this guarantees that the unnormalized posterior probabilities we observe are valid.
+(Searching for visible nodes with a flat scan over all nodes would be invalid,
+since many of their posteriors would be stale, since their updates have been deferred.)
+
 \section{Responding to Likelihood Updates versus Prior Updates}
 
 Every time our trie is updated, we need to recalculate the visible nodes.

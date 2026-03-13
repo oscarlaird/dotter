@@ -1,5 +1,98 @@
 % !TEX root = ../math.tex
-\chapter{The TRIE}
+\chapter{The Bayesian Trie}
 \label{chap:trie}
 
-% TODO: Add content.
+Dotter must determine the most likely string that the user is typing, based 
+on observation of the user's signals.
+To accomplish this, Dotter maintains a trie indicating the posterior probability
+that any given prefix is a prefix of the user's target string.
+
+To compare strings, we use the inequality notation $x \leq y$ to mean that the string $x$ is a prefix of the string $y$.
+
+Letting $X$ be the user's target string, $D$ be the user's signals, then the posterior probability 
+that a given string, $s$, is a prefix of $X$ is given by:
+$$
+P(s \leq X | D) = \frac{P(D | s \leq X) P(s \leq X)}{P(D)}
+$$
+
+In practice, we only keep track of the unnormalized posterior probabilities, denoted in code as \texttt{post\_Z} (to mean the posterior probability multiplied by a normalizing constant).
+Since the root node, $s_0$, is the empty string, we have $P(s_0 \leq X) = 1$ 
+and thus the unnormalized posterior probability of the root node is $P(D)$, i.e., the normalizing constant.
+Thus if we know the unnormalized posterior probabilities in our trie, we can convert these to normalized
+posterior probabilities by dividing by the root node's unnormalized posterior probability.
+
+The posterior probabilities are derived from the prior probabilities and the likelihoods.
+In Dotter, both are subject to updates. The likelihood is updated as we receive signals from the user
+and the prior is updates as our language model refines our predictions.
+
+We confront two challenges:
+\begin{enumerate}
+    \item How do we update the trie in an efficient and lazy manner, to ensure that the trie is immediately responsive to the user's signals and to results from the language model?
+    \item How do we efficiently search for visible nodes?
+\end{enumerate}
+
+We require two properties of our trie:
+\begin{enumerate}
+    \item \textbf{Valid Descent}: The root node's unnormalized posterior probability is always correct,
+    and if we descend from the root node to a given descendant node (while possibly performing deferred calculations
+    along the way), then the descendant node's unnormalized posterior probability is also correct.
+    \item \textbf{Valid Updates}: Our algorithms to assimilate likelihood and prior updates preserve the property of valid descent.
+\end{enumerate}
+
+\section{Fields of a Node}
+A node in the trie has the following fields:
+\begin{itemize}
+    \item \texttt{letter}: \textbf{str} --- the character represented by this node.
+    \item \texttt{depth}: \textbf{int} --- the depth of this node in the trie.
+    \item \texttt{ever\_parent\_of\_visible\_node}: \textbf{bool} --- indicates whether this node has ever been a parent of a visible node
+    (at a time when a signal was received).
+    This must be false for the likelihood field to be valid.
+    If this flag is true, the likelihood can only be calculated as a weighted sum of its children's likelihoods,
+    $P(D | s \leq X) = \sum_l P(D | s+l \leq X) P(s+l \leq X | s \leq X)$,
+    since its children have different likelihoods.
+    Hence, if a node was not ever a parent of a visible node, then its likelihood is known absolutely,
+    but if a node was once a parent of a visible node, then its likelihood is at best known conditional on a prior model.
+    Since our prior model mutates over time, this is not definite knowledge of the likelihood.
+
+    \item \texttt{likelihood}: \textbf{float} --- the accumulated likelihood of all signals conditional on this node being a prefix
+    of the user's target string, $\prod_{d \in D} P(d | s \leq X)$.
+    \item \texttt{prior}: \textbf{float} --- the prior probability of this node being a prefix of the user's target string.
+    \item \texttt{posterior\_Z}: \textbf{float} --- the unnormalized posterior probability of this node being a prefix of the user's target string,
+    \item \texttt{unpushed\_likelihood}: \textbf{float} --- likelihood that has not been accumulated to descendant nodes.
+    \item \texttt{break\_prior}: \textbf{float} --- the prior probability that not only is this node a prefix of the user's target string,
+    but also that it is the last character of a token in the tokenization of the user's target string.
+    \item \texttt{token\_fans}: \textbf{list of floats} --- the $i$-th token fan is the prior probability of this node being a prefix of the target string 
+    conditional on its $i$-th parent being the last character of the token immediately preceding the token to which this character belongs.
+    \item \texttt{ancestor\_break\_priors}: \textbf{list of floats} --- the $i$-th ancestor break prior is the \texttt{break\_prior} of the $i$-th ancestor. This may be stale.
+    \item \texttt{final\_token}: \textbf{str} --- the token to which this node belongs, if this node is the last character of a token.
+    \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
+    \item \texttt{final\_token\_prior}: \textbf{float} --- the conditional prior probability of the final token if the ancestor
+    at depth \texttt{depth - final\_token\_length} is the last character of a token.
+    \item \texttt{unpushed\_break\_priors}: \textbf{list of ints} --- a list of depths corresponding to the ancestors of this node
+    whose \texttt{break\_prior} has changed since the last time we visited this node.
+    \item \texttt{unpushed\_llm\_results}: \textbf{list of ints} --- a list of depths corresponding to the ancestors for which
+    we have received next token probabilities from the language model since we last visited this node.
+\end{itemize}
+
+\section{Valid Descent}
+The above data structure gives us the machinery to effectively defer the calculation of the posteriors of most nodes.
+
+The posterior for a node \texttt{x} is calculated as,
+$$
+\texttt{x.posterior\_Z} = \texttt{x.prior} * \texttt{x.likelihood}
+$$
+
+while the prior is calculated as,
+$$
+\texttt{x.prior} = \sum_{i < \texttt{x.depth}} \texttt{x.ancestor\_break\_priors[i]} * \texttt{x.token\_fans[i]}
+$$
+
+and the break prior is calculated as,
+$$
+\texttt{x.break\_prior} = \texttt{x.ancestor\_break\_priors[x.final\_token\_length]} * \texttt{x.final\_token\_prior}
+$$
+
+
+
+
+\section{Valid Updates}
