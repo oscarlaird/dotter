@@ -3,3 +3,16 @@
 \label{chap:render-stimulus}
 
 % TODO: Add content.
+\section{Circular Timers}
+In this step we represent the nodes' phases to the user.
+Dotter does this by drawing a small circular ``timer'' for each node.
+
+We justify this choice with reference to the concept of ``local attention''.
+
+One visually simpler choice would be to let a ``selection'' bar descend the screen from top to bottom,
+and to adjust nodes' vertical positions to reflect their phases.
+This approach resembles that row and column selection method of many communication boards.
+
+Although this is less cluttered, it requires the use of global attention.
+By letting each node carry its own timer, the user does not need to be aware of any part of the screen
+outside of their foveal vision.

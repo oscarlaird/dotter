@@ -10,9 +10,72 @@ In the chapter \ref{chap:determine-visible-nodes} we saw how to identify the cha
 posterior probabilities so that we could display them to the user. Here our task is to identify the token sequence prefixes
 with the highest posterior probabilities, so that we can query the language model for predictions.
 Just as we solved that problem with a character-based trie, so here we will solve it with a token-based trie.
-A token-based trie has a very high radix equal to the model's vocabulary size, e.g., 50,257 for GPT-2.
+A token-based trie has a very high radix, equal to the model's vocabulary size, e.g., 50,257 for GPT-2.
 
-In the letter-based trie (see chapter \ref{chap:trie}), calculating the likelihoods were trivial, but owing to the token-based nature of the
+\section{An Upper Bound for the Likelihood of a Token Sequence}
+
+In the character-based trie (see chapter \ref{chap:trie}), calculating the likelihoods was trivial, but owing to the token-based nature of the
 language model, calculating the priors of a character sequence was somewhat involved. Here the situation is reversed.
 Calculating the prior of a token sequence is trivial, since that is directly what the language model returns,
 while calculating the likelihood of a token sequence prefix is difficult.
+
+For any given token prefix $A$, and any token prefix sequence paritition set $T$ (e.g. the set of all tokens, i.e., all token sequences of length 1),
+the likelihood of $A$ is given by,
+$$
+P(D | A) = \sum_{t \in T} P(D | A+t) P(A+t | A)
+$$
+
+However, this poses a problem since we assume that $P(A+t | A)$ is not known.
+We are seeking to evaluate the likelihood of $A$ in order to decide the priority of querying the language model for its next token,
+but in order to calculate this likelihood, we must already know the prior probabilities of the next token conditioned on $A$!
+Thus we are in a catch-22 and must resort to using a heuristic for the likelihood.
+
+Since the likelihood of $A$ is a weighted sum of its descendants' likelihoods,
+it must be bounded by the minimum and maximum of its descendants' likelihoods.
+$$
+\min_{t \in T} P(D | A+t) \leq P(D | A) \leq \max_{t \in T} P(D | A+t)
+$$
+
+Since we don't want to rely upon our current model of the prior, we require choose $T$ so that all the descendants $A+t$ have
+a valid likelihood, i.e., so that they have never been a parent of a visible node.
+
+We will prioritize token prefixes by their upper bound on the likelihood. Thus it is necessary to know, for a given node,
+the maximum likelihood of any descendant which has this node as a token ancestor. This is referred to as the \texttt{max\_token\_descendant\_likelihood} of the node.
+
+Maintaining this value during likelihood updates is discussed in chapter \ref{chap:likelihood-update}.
+
+\section{Descending the Token Trie}
+Our choice of upper bound has the property that it strictly decreases with depth.
+This is because if a given node, $x$, is a token descendant of $B$, and $B$ has $A$ as a token ancestor,
+then $x$ must be a token descendant of $A$ as well and thus $\texttt{A.max\_token\_descendant\_likelihood} \geq \texttt{B.max\_token\_descendant\_likelihood}$.
+
+We make a priority-first search of the token trie, visiting the node with the highest upper bound on its posterior probability first.
+When we visit a node about which we have not yet queried the language model, we query the language model (chapter \ref{chap:llm-query})
+about this node. The next token probabilities are referred to as the ``LLM Result'' which can then be 
+consumed to update the character-based trie with a prior update (chapter \ref{chap:prior-update}).
+Our descent of the token trie is not interrupted by the prior update,
+but we will need to restart our descent from the root after any likelihood update.
+
+When we visit a node we must add its children to the priority queue. However, the radix is very high, equal to the vocabulary size (e.g., $V=50,257$ for GPT-2).
+Thus we only add the children with the large posterior upper bounds to the queue. In implementation we use $K=100$.
+To identify these one hundred children with the highest posterior upper bounds, we must calculate the posterior upper bound
+for all children.
+The language model itself gives us an array of length $V$ for the prior probabilities of the children.
+Our task is to construct the array of likelihood upper bounds. To do so, we descend the character-based trie
+from the node in the character-based trie which corresponds to our current node in the token-based trie.
+
+We descend the character-based trie until one of two conditions are met:
+\begin{enumerate}
+    \item The descendant has a valid likelihood, i.e., it has never been a parent of a visible node.
+    In this case, we know that this likelihood is the likelihood of all possible child token sequences.
+    We set the relevant alphabetical range of the likelihood array to this likelihood.
+    (E.g. if our node is `the', and this descendant with a valid likelihood is `the ho', we must set
+    the likelihood array to this descendant's likelihood for every token in the range ` ho' to ` hp' such as
+    the tokens ` horse', ` home', ` hound', etc.)
+    \item It is impossible for deeper descendants to be direct token children of our root node. I.e.,
+    the descendant does not extend our node by a strictly partial token prefix.
+    In this case, we are at a direction token sequence child, `B', of our root node, `A'.
+    For the specific element of the likelihood array corresponding to the last token of $B$,
+    we set the likelihood to the maximum descendant likelihood of $B$ which could have $B$ as a token ancestor,
+    i.e., $\texttt{B.max\_token\_descendant\_likelihood}$.
+\end{enumerate}

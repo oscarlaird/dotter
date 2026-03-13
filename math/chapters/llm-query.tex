@@ -3,3 +3,11 @@
 \label{chap:llm-query}
 
 % TODO: Add content.
+This step is straightforward. We call a model to find the distribution over the next token
+for a given token sequence. The only challenge is to correctly maintain the model's Key-Value Cache.
+
+\section{Maintaining a Key-Value Cache Trie}
+\label{sec:kv-cache-trie}
+Traditionally, when we call a language model to generate a sequence of tokens,
+our Key-Value Cache is a simple list that grows as the sequence of tokens is extended.
+In our case, we must use a trie to store the Key-Value Cache.

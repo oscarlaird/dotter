@@ -39,11 +39,58 @@ We require two properties of our trie:
     \item \textbf{Valid Updates}: Our algorithms to assimilate likelihood and prior updates preserve the property of valid descent.
 \end{enumerate}
 
+
+\section{Token Paths}
+Since Dotter uses a letter-by-letter trie, but language models return token probabilities,
+we face the task of converting a token model to a literal model.
+
+A given literal prefix corresponds to several token paths.
+For example, the prefix \texttt{sci} could be part of the words with the following
+tokenizations (using the GPT-2 tokenizer):
+\begin{itemize}
+    \item \texttt{scientific} (single token),
+    \item \texttt{science} (single token),
+    \item \texttt{sci-ences} (two tokens),
+    \item \texttt{sc-iss-or} (three tokens),
+\end{itemize}
+We can see that a literal prefix can correspond to multiple 
+token prefixes (empty string, \texttt{sci}, and \texttt{sc}), and that for a given token prefix, the literal prefix
+can be generated from multiple terminal tokens (\texttt{science}, \texttt{scientific}).
+
+Formally, to convert a token model to a literal model, we take the sum across 
+all compatible token prefixes $B$, and all compatible terminal tokens $T$,
+$$
+P(x) = \sum_{B < x} P(B) \sum_{T,\, x \leq B+T} P(T \mid B)
+$$
+
+We use two tricks to efficiently compute this sum:
+\begin{enumerate}
+    \item We recognize that the eligible longest token prefixes correspond to the prefixes of the last word, since tokens never contain spaces in the middle of them.
+    Additionally we can limit the values of $B$ to at most 15 ancestor prefixes, since tokens are at most 15 characters long in our tokenizer.
+    \item We can preconvert the language model's output of logits to an array of \textit{cumulative} probabilities.
+    This allows us to efficiently compute the alphabetical sum over compatible $T$, by taking the difference between the cumulative probabilities of the start and end.
+\end{enumerate}
+
+
 \section{Fields of a Node}
 A node in the trie has the following fields:
+
+Constant Fields:
 \begin{itemize}
     \item \texttt{letter}: \textbf{str} --- the character represented by this node.
+    \item \texttt{value}: \textbf{str} --- the string represented by this node, i.e., the concatenation of the parent's value and the character represented by this node.
+    (In implementation, we only need at most the last 2*MAX\_TOKEN\_LENGTH characters of the value.)
     \item \texttt{depth}: \textbf{int} --- the depth of this node in the trie.
+    \item \texttt{final\_token}: \textbf{str} --- the token to which this node belongs, if this node is the last character of a token.
+    \item \texttt{ancestor\_final\_tokens}: \textbf{list of strs} --- the $i$-th ancestor final token is the final token of the $i$-th ancestor.
+     (In implementation, this can be an array of the ancestor final token lengths, and we may slice into our value to dervie the final token.)
+    \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
+    \item \texttt{possible\_token\_ancestors}: \textbf{list of bool} --- a list of flags indicating whether the $i$-th ancestor
+    could possibly be a token ancestor of this node. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
+\end{itemize}
+
+Mutable Fields:
+\begin{itemize}
     \item \texttt{ever\_parent\_of\_visible\_node}: \textbf{bool} --- indicates whether this node has ever been a parent of a visible node
     (at a time when a signal was received).
     This must be false for the likelihood field to be valid.
@@ -53,7 +100,6 @@ A node in the trie has the following fields:
     Hence, if a node was not ever a parent of a visible node, then its likelihood is known absolutely,
     but if a node was once a parent of a visible node, then its likelihood is at best known conditional on a prior model.
     Since our prior model mutates over time, this is not definite knowledge of the likelihood.
-
     \item \texttt{likelihood}: \textbf{float} --- the accumulated likelihood of all signals conditional on this node being a prefix
     of the user's target string, $\prod_{d \in D} P(d | s \leq X)$.
     \item \texttt{prior}: \textbf{float} --- the prior probability of this node being a prefix of the user's target string.
@@ -64,18 +110,132 @@ A node in the trie has the following fields:
     \item \texttt{token\_fans}: \textbf{list of floats} --- the $i$-th token fan is the prior probability of this node being a prefix of the target string 
     conditional on its $i$-th parent being the last character of the token immediately preceding the token to which this character belongs.
     \item \texttt{ancestor\_break\_priors}: \textbf{list of floats} --- the $i$-th ancestor break prior is the \texttt{break\_prior} of the $i$-th ancestor. This may be stale.
-    \item \texttt{final\_token}: \textbf{str} --- the token to which this node belongs, if this node is the last character of a token.
-    \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
     \item \texttt{final\_token\_prior}: \textbf{float} --- the conditional prior probability of the final token if the ancestor
     at depth \texttt{depth - final\_token\_length} is the last character of a token.
     \item \texttt{unpushed\_break\_priors}: \textbf{list of ints} --- a list of depths corresponding to the ancestors of this node
     whose \texttt{break\_prior} has changed since the last time we visited this node.
     \item \texttt{unpushed\_llm\_results}: \textbf{list of ints} --- a list of depths corresponding to the ancestors for which
     we have received next token probabilities from the language model since we last visited this node.
+    \item \texttt{max\_descendant\_likelihood\_for\_token\_ancestor}: \textbf{list of floats} --- the $i$-th element is the 
+    maximum (valid) likelihood of any descendant of this node which could also have this node's $i$-th ancestor as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
+    \item \texttt{max\_token\_descendant\_likelihood}: \textbf{float} --- the maximum (valid) likelihood of any descendant of this node which could also have this node as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
 \end{itemize}
+
+
 
 \section{Valid Descent}
 The above data structure gives us the machinery to effectively defer the calculation of the posteriors of most nodes.
+
+When we visit a node $x$, we update the statistics of its children. If
+the node $x$ has no children because it has never been visited before,
+then we initialize its children.
+
+\begin{algorithm}[H]
+\caption{Initialize Children}
+\label{alg:initialize-children}
+\begin{algorithmic}[1]
+\Require Node $x$
+\For{each character $c$ in the alphabet}
+    \State Create child node $y$ of $x$
+    \State $y.\text{letter} \gets c$
+    \State $y.\text{value} \gets x.\text{value} + c$
+    \State $y.\text{likelihood} \gets x.\text{likelihood}$
+    \State Tokenize the string corresponding to $y$ into a sequence of tokens $T = [t_1, \dots, t_k]$
+    \State $y.\text{final\_token} \gets t_k$
+    \State $y.\text{final\_token\_length} \gets |t_k|$
+    \State $y.\text{max\_token\_descendant\_likelihood} \gets 0$
+    \For{$i = 1$ \textbf{to} \text{max\_token\_length}}
+        \If{$i > 0$}
+            \State $y.\text{ancestor\_final\_tokens}[i] \gets x.\text{ancestor\_final\_tokens}[i-1]$
+            \State $y.\text{ancestor\_break\_priors}[i] \gets x.\text{ancestor\_break\_priors}[i-1]$
+        \Else 
+            \State $y.\text{ancestor\_final\_tokens}[0] \gets y.\text{final\_token}$
+            \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
+        \EndIf
+        \State $y.\text{possible\_token\_ancestors}[i] \gets \text{PTA\_LUT}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]]$
+        \If{$y.\text{possible\_token\_ancestors}[i]$}
+            \State $y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets y.\text{likelihood}$
+        \Else
+            \State $y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets 0$
+        \EndIf
+    \EndFor
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+When we visit a node, we push the unpushed likelihood and the unpushed break priors to its children.
+Let $x$ be our current node, and $y$ be a child of $x$.
+
+\begin{algorithm}[H]
+\caption{Visit Node}
+\label{alg:visit-node}
+\begin{algorithmic}[1]
+\Require Node $x$
+\For{each child $y$ of $x$}
+    \State $y.\text{likelihood} \gets y.\text{likelihood} * x.\text{unpushed\_likelihood}$
+    \State $y.\text{unpushed\_likelihood} \gets y.\text{unpushed\_likelihood} * x.\text{unpushed\_likelihood}$
+    \State $y.\text{post\_Z} \gets y.\text{post\_Z} * x.\text{unpushed\_likelihood}$
+    \State $y.\text{unpushed\_llm\_results} \gets y.\text{unpushed\_llm\_results} \cup x.\text{unpushed\_llm\_results}$
+    \If{Track Token Likelihoods}
+        \For{$i = 0$ \textbf{to} \text{max\_token\_length}}
+            \State $\begin{aligned}[t]
+                & y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets \\
+                & \quad y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] * x.\text{unpushed\_likelihood}
+            \end{aligned}$
+        \EndFor
+    \EndIf
+\EndFor
+\State $x.\text{unpushed\_likelihood} \gets 1$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{Valid Descent}
+\label{alg:valid-descent}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$ and node $x$ in $B$.
+\If{$x$ is a leaf in $B$}
+    \State InitializeChildren($x$) Using algorithm \ref{alg:initialize-children}.
+\Else
+    \State VisitNode($x$) Using algorithm \ref{alg:visit-node}.
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Ensure Rooted Subgraph}
+\label{alg:ensure-rooted-subgraph}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$, and a trie $V$ which is a subgraph of $B$ sharing the root.
+\State Let $Q$ be a queue initialized with the root of $V$.
+\While{$Q$ is not empty}
+    \State Pop $v$ from $Q$
+    \State Let $b$ be the node in $B$ corresponding to $v$
+    \State ValidDescent($B$, $b$) Using algorithm \ref{alg:valid-descent}.
+    \For{each child $u$ of $v$ in $V$}
+        \State Push $u$ to $Q$
+    \EndFor
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Up Propagation}
+\label{alg:up-propagation}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$ and rooted subgraph $V$ of $B$.
+\State Sort the nodes in $V$ in reverse topological order.
+\For{each node $v$ in the reverse topological order}
+     \If{$v$ is not a leaf in $V$}
+        \State Set $v.\text{post\_Z} \gets \sum_{u \in v.\text{children}} u.\text{post\_Z}$
+    \EndIf
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+
+
+\subsection{Recalculate Posterior}
 
 The posterior for a node \texttt{x} is calculated as,
 $$
@@ -93,6 +253,290 @@ $$
 $$
 
 
+\section{Lazy Updates}
+The purpose of an update is to assimilate a change to the likelihood or prior
+so that the trie remains in a valid state, i.e., the trie will continue to 
+yield correct posterior probabilities if explored via the
+``valid descent'' algorithm.
+
+An important necessary condition for an update to be valid is that
+it correctly updates the unnormalized posterior probability of the root node.
+
+Each update must be performed in four phases:
+\begin{enumerate}
+    \item Select intial frontier: we choose a set of nodes from which to begin the algorithm.
+    \item Down Propagation: 
+    we descend the trie until we reach a ``valid update leafset'' of nodes, i.e., a set of nodes
+    which is a complete prefix partition and for which we can known the unnormalized posteriors of each node.
+    Efficiency demands that we recognize once we have reached a valid leafset and stop descending as early as possible.
+    \item Fix Leafset: we fix the unnormalized posteriors
+    of all the nodes in the valid update leafset.
+    \item Up Propagation: 
+    we ascend the trie, accumulating unnormalized posteriors
+\end{enumerate}
+
+The trick is to choose the smallest prefix partition for which we can truly calculate the unnormalized posteriors.
+The unnormalized posterior is a sum over one's children's unnormalized posteriors:
+
+How do we know when we have reached a valid update leafset?
+We assume that after receiving an update, \texttt{posterior\_Z},
+that is, $P_0(x | D)$,
+has been invalidated for every node in the trie. 
+We hope to derive $P_1(x | D)$, without summing over the children's posteriors,
+$$
+P_1(x|D) = \sum_i P_1(x_i | D)
+$$
+.
+
+In general if one term is reweighted, we will have to recalculate,
+but there are four cases in which we can avoid recalculation and descent:
+\begin{enumerate}
+    \item The likelihood (and prior) of $x$ is known explicitly,
+    \begin{align}
+        P_1(x | D) &= P_1(x) P_1(D | x)
+    \end{align}
+    \item Neither term (neither likelihood nor prior) changes.
+    \begin{align}
+        P_1(x | D) &= P_0(x | D)
+    \end{align}
+    \item The likelihoods change by a constant factor $l$, and the priors do not change.
+    \begin{align}
+        P_1(x|D) 
+            &= \sum_i P_1(x_i | D) \notag \\
+            &= \sum_i P_1(x_i) P_1(D | x_i) \notag \\
+            &= \sum_i P_1(x_i) \big(l \cdot P_0(D | x_i)\big) \notag \\
+            &= l \sum_i P_0(x_i) P_0(D | x_i) \notag \\
+            &= l \cdot P_0(x | D)
+    \end{align}
+    \item The priors change by a constant factor $p$, and the likelihoods do not change,
+    \begin{align}
+        P_1(x|D) 
+            &= \sum_i P_1(x_i | D) \notag \\
+            &= \sum_i P_1(x_i) P_0(D | x_i) \notag \\
+            &= \sum_i \big(p \cdot P_0(x_i)\big) P_0(D | x_i) \notag \\
+            &= p \sum_i P_0(x_i) P_0(D | x_i) \notag \\
+            &= p \cdot P_0(x | D)
+    \end{align}
+\end{enumerate}
+In order to find the smallest prefix partition for the Up Propagation step,
+we consider the set of all nodes that satisfy any of these three cases and
+then take the minimal elements of this set (resulting in an antichain / frontier of the tree).
 
 
-\section{Valid Updates}
+
+
+% !TEX root = ../math.tex
+\section{Likelihood Update}
+\label{sec:likelihood-update}
+
+After receiving a likelihood result from the user interface, we must update the trie to increase the
+posterior probabilities of the nodes most likely indicated by the user's signal.
+
+\textbf{Step 1: Select initial frontier:}
+We choose the set
+of all nodes that were leaves in the visible trie,
+along with all invisible nodes that have a visible sibling.
+Equivalently, we are choosing the minimal elements of the set of nodes where
+every node has no visible children, i.e., has a valid likelihood for this observation, $D_i$.
+(We should descend from the root to gather these nodes to ensure that
+unpushed priors have been updated correctly, i.e., to ensure that every
+node in this set has a correctly calculated prior.)
+
+\textbf{Step 2: Down Propagation:}
+Our initially selected frontier is actually a valid update leafset,
+so no down propagation is necessary.
+Our initially selected frontier is a valid leafset because the 
+it satisfies case 3 above:
+the likelihood of a given node in this set may not be known explicitly
+(since it may have been the parent to visible children at some time),
+but we know how its implicit (true) likelihood has changed and we known that
+its prior has not changed.
+
+\textbf{Step 3: Fix Leafset:}
+We fix the unnormalized posteriors of all the nodes in the valid update leafset.
+We guarantee a valid unnormalized posterior by setting the \texttt{post\_Z} of each node to,
+$$
+x.\text{post\_Z} = x.\text{post\_Z} * \text{new\_likelihoods[x.value]}
+$$
+
+\textbf{Step 4: Up Propagation:}
+We ascend the trie, accumulating unnormalized posteriors of the parents as
+$$
+x.\text{post\_Z} = \sum_{y \in x.\text{children}} y.\text{post\_Z}
+$$
+
+\begin{algorithm}[H]
+\caption{Complete Visible Trie}
+\label{alg:complete-visible-trie}
+\begin{algorithmic}[1]
+\Require{Trie $V$ of visible nodes}
+\For{each node $v \in V$}
+    \If{$v$ is a leaf in $V$}
+        \State \textbf{continue} \Comment{Skip if it is already a leaf}
+    \EndIf
+    \Comment{Propagate likelihood to invisible children}
+    \For{each character $c$ in the alphabet}
+        \If{$(v + c) \notin V$}
+            \State Add $(v + c)$ to $V$
+            \State Set $(v + c).\text{new\_likelihood} \gets v.\text{new\_likelihood}$
+        \EndIf
+    \EndFor
+\EndFor
+\Return $V$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Likelihood Update}
+\label{alg:likelihood-update}
+\begin{algorithmic}[1]
+\Require{Bayesian Trie $B$, trie of visible nodes, $V$, with likelihoods for latest observation.}
+\State $V \gets \text{CompleteVisibleTrie}(V)$ Using algorithm \ref{alg:complete-visible-trie}.
+\State EnsureRootedSubgraph($B$, $V$) Using algorithm \ref{alg:ensure-rooted-subgraph}.
+\For{each node $v \in V$}
+    \State Set $b$ to be the node in the bayesian trie corresponding to $v$
+    \If{$v$ is a leaf in $V$}
+        \State Set $b.\text{likelihood} \gets b.\text{likelihood} * v.\text{new\_likelihood}$
+        \State Set $b.\text{post\_Z} \gets b.\text{post\_Z} * v.\text{new\_likelihood}$
+    \EndIf
+\EndFor
+\State UpPropagation($B$, $V$) Using algorithm \ref{alg:up-propagation}.
+\end{algorithmic}
+\end{algorithm}
+
+
+\subsubsection{Maintaining maximum descendant likelihoods}
+For every node in our update leafset we increment not only the likelihood of the node, but all elements of the array,
+\texttt{max\_descendant\_likelihood\_for\_token\_ancestor} as well as the scalar, \texttt{max\_token\_descendant\_likelihood}.
+when we visit a node during up propagation we immediately accumulate these quantities in the node's possible ancestors.
+
+\subsubsection{Possible Token Ancestors}
+A possible token ancestor of a character sequence, $x$, is a token sequence, $A$, such that there is some string $y$, such
+that $x$ is a prefix of $y$, $x \leq y$, and $A$ is a token sequence prefix of the full tokenization of $y$, and is the longest
+such prefix for which $A \leq x$. In other words, it is possible that the last token of $A$ is the last complete token in the tokenization of $y$ before
+the last character of $x$.
+
+A necessary condition is that $(x - A)$ is a character sequence prefix of some token $t$.
+Designating the last token of $A$ as $s = A[-1]$, the necessary and sufficient condition
+is that there exists some token $t$ such that $(x - A)$ is a prefix of $t$, 
+and tokenizing the string formed by concatenating $s$ and $t$ yields exactly the two tokens $s$ and $t$ in order,
+i.e., \texttt{Tokenize}$(s + t) = [s, t]$.
+
+Evaluating this predicate for given $s$ and $(x - A)$ has resisted my attempts to find an efficient algorithm.
+However, it can be solved in $O(1)$ time by precomputing a lookup table for all possible pairs of tokens, $s$, and
+token prefixes, $(x - A)$. This table has size $O(V^2)$, where $V$ is the vocabulary size.
+If the vocabulary size is $50,\!000$ and we require one bit of memory per entry, this amounts to only about $300$MB.
+
+Interestingly for a random choice of $s$ and $t$, the probability that $s + t$ tokenizes to $[s, t]$ is about $1/2$.
+Even knowing $s$ does not help very much: the conditional entropy is still about $0.6$ bits.
+This result holds when we restrict $t$ to tokens that are not prefixes of other tokens. Since a substantial
+fraction of the possible values for $(x - A)$ will be of this form, this indicates that we cannot effectively
+make a compression of the lookup table.
+
+However, since this is only needed for the step of determining the most likely break nodes, which occurs on the server,
+we can afford to use a lookup table, since the server has to keep a language model in memory anyway.
+
+
+
+
+% !TEX root = ../math.tex
+\section{Prior Update}
+\label{sec:prior-update}
+
+After receiving an ``LLM Result'' we must update the trie to reflect this refinement of
+the language model.
+
+\textbf{Step 1: Select initial frontier:}
+The ``LLM Result'' corresponds to a token sequence, $A$.
+We choose the corresponding character sequence, $a$, in the bayesian trie as our initial frontier.
+
+\textbf{Step 2: Down Propagation:}
+We descend from the initial frontier via valid descent until we reach a valid update leafset.
+A node is known to belong to the valid update leafset, and no further descent from that
+node is necessary, if and only if the node satisfies one of the following two cases:
+\begin{itemize}
+    \item \textbf{Valid Likelihood}: The node has never been a parent to a visible node, i.e., it has a valid likelihood.
+    \item \textbf{Space Character}: The node is a space character. Formally, the condition is that there exists
+    some token following upon $A$ which every possible suffix of our node $x$, must contain, i.e.,
+    we require that $x$ satisfy,
+    $$
+    \exists B, B>A, |B|=|A|+1, \forall y \geq x, B < Tokenize(y)
+    $$
+    but in practice we implement this by recognizing that this condition is always true of the space
+    character and rarely true otherwise.
+\end{itemize}
+
+\textbf{Step 3: Fix Leafset:}
+How we fix the unnormalized posterior of an update leafset node depends on which of the 
+two cases above it satisfies.
+If it has a valid likelihood, then the likelihood and prior are known 
+explicitly (case 1 above) and we can set the \texttt{post\_Z} to,
+$$
+x.\text{post\_Z} = x.\text{prior} * x.\text{likelihood}
+$$
+If it is a space character, then we know that this node's prior and the priors of all
+its descendants must pass through the same token sequence, $B > A$.
+For this node and for all descendants $y$, we have,
+$$
+P_1(y) = P_0(y) * \frac{P_1(B|A)}{P_0(B|A)}
+$$
+since this is the only factor in the product of conditional probabilities that has changed.
+We can determine the relevant predicted token as, $\texttt{shared\_token} = Tokenize(x)[|A|]$ and so the correction factor
+is,
+$$
+\texttt{correction\_factor} = \frac{P_1(B|A)}{P_0(B|A)} = \frac{\text{LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}
+$$
+and we can set the \texttt{post\_Z} to,
+$$
+x.\text{post\_Z} = x.\text{post\_Z} * \texttt{correction\_factor}
+$$
+
+\textbf{Step 4: Up Propagation:}
+We ascend the trie, accumulating unnormalized posteriors of the parents as
+$$
+x.\text{post\_Z} = \sum_{y \in x.\text{children}} y.\text{post\_Z}
+$$
+
+\textbf{Note Bene:} Why is descending to the space character necessary? After all,
+if we know exactly how a node's prior has changed, and we know that its likelihood has not changed,
+then we should be able to correctly recalculate the unnormalized posterior, just as how 
+in the likelihood update we could recalculate the unnormalized posterior of a node
+if we knew how its likelihood had changed and that its prior had remained constant.
+The subtle fallacy in this thinking is that the \textit{likelihood of the node has changed}.
+Although we often think of the likelihood as being independent of the prior,
+this is only true for pure hypotheses. For a composite hypothesis, like this node we have,
+$$
+P(D | x) = \sum_i P(D | x_i) P(x_i | x)
+$$
+where $x_i$ are the children of $x$.
+Since the weighting, i.e., the prior, has changed, so has the \textit{likelihood}
+of this node.
+Thus we do not satisfy case 4 above, because the likelihood has changed.
+
+
+\bigskip
+We update the posterior probabilities in two ways:
+\begin{enumerate}
+    \item \textbf{Likelihood updates}: when the user makes a gesture, the likelihoods of the prefixes are updated. This is a traditional update.
+    \item \textbf{Prior updates}: when the language model server returns new or better prior probabilities, we must recalculate the posteriors.
+\end{enumerate}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\hline
+\textbf{} & \textbf{Likelihood Update} & \textbf{Prior Update} \\
+\hline
+Mathematical Term       & $P(D \mid X)$                         & $P(X)$ \\
+Recompute Posteriors    & Yes                                   & Yes \\
+Resize Boxes            & Yes                                   & Yes \\
+How Many New Nodes?     & Dozens                                & Zero to a few \\
+How to Set Phases       & Optimized / gradient descent          & Random (or ancestor / minimum placement) \\
+Human-Initiated         & Yes                                   & No \\
+Show Immediately        & Yes                                   & No --- wait for ancestor to finish \\
+Branch of Tree Affected & Entire tree                           & Single branch \\
+\hline
+\end{tabular}
+\caption{Comparison of likelihood updates and prior updates.}
+\label{tab:updates}
+\end{table}

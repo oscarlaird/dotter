@@ -20,16 +20,16 @@ Render Trie \linebreak[4]{\footnotesize (Ch.~\ref{chap:render-trie})} &   & Dete
  & & & & \\
 Render Stimulus \linebreak[4]{\footnotesize (Ch.~\ref{chap:render-stimulus})} & & Optimize Stimulus Parameters \linebreak[4]{\footnotesize (Ch.~\ref{chap:optimize-stimulus-parameters})} & & \\
  & & & & \\
- & Detect Response \linebreak[4]{\footnotesize (Ch.~\ref{chap:detect-response})} & Likelihood Result \linebreak[4]{\footnotesize (Ch.~\ref{chap:likelihood-result})} & Likelihood Update \linebreak[4]{\footnotesize (Ch.~\ref{chap:likelihood-update})} & \\
+ & Detect Response \linebreak[4]{\footnotesize (Ch.~\ref{chap:detect-response})} & Likelihood Result & Likelihood Update \linebreak[4]{\footnotesize (\S~\ref{sec:likelihood-update})} & \\
  & & & & \\
  & & & & Bayesian Trie \linebreak[4]{\footnotesize (Ch.~\ref{chap:trie})} \\
 \textbf{LLM} & \textbf{} & \textbf{Calculation (LLM)} & & \\
 \Hline[color=black,start=1,end=3]
- & & LLM Result \linebreak[4]{\footnotesize (Ch.~\ref{chap:llm-result})} & Prior Update \linebreak[4]{\footnotesize (Ch.~\ref{chap:prior-update})} & \\
+ & & LLM Result & Prior Update \linebreak[4]{\footnotesize (\S~\ref{sec:prior-update})} & \\
  & & & & \\
 LLM Query \linebreak[4]{\footnotesize (Ch.~\ref{chap:llm-query})} & & Determine Most Likely Break Nodes \linebreak[4]{\footnotesize (Ch.~\ref{chap:determine-most-likely-break-nodes})} & & \\
  & & & & \\
-KV Cache Trie & & & & \\
+KV Cache Trie \linebreak[4]{\footnotesize (\S~\ref{sec:kv-cache-trie})} & & & & \\
 \Hline[color=black]
 \CodeAfter
   \begin{tikzpicture}
@@ -102,11 +102,12 @@ KV Cache Trie & & & & \\
 
 Table \ref{tab:architecture} shows the architecture of Dotter.
 At its heart is the ``bayesian trie'' (chapter \ref{chap:trie}) in the rightmost column, 
-which is a Bayesian prefix trie which maintains
+which is a character-based Bayesian prefix trie which maintains
 a calculation of the posterior probability of every prefix.
 The other elements of the system may be separated into the Likelihood Cycle and the Prior Cycle.
 
-Every element in Table \ref{tab:architecture} is discussed in detail in its own chapter.
+Each element in Table \ref{tab:architecture} is discussed in detail in its own chapter or 
+section.
 
 \section{The Likelihood Cycle}
 The Likelihood Cycle refers to the series of steps by which we elicit
@@ -122,9 +123,9 @@ posterior probabilities. It has seven steps,
   far apart from each other as possible (in a formal sense). This helps to make the user's selection unambiguous.
   \item \textbf{Render Stimulus} (chapter \ref{chap:render-stimulus}): we draw the timers to the screen.
   \item \textbf{Detect Response} (chapter \ref{chap:detect-response}): we detect the user's signal. It is trivial to detect a keypress; detecting the exact timing of a blink is a more sophisticated problem.
-  \item \textbf{Likelihood Result} (chapter \ref{chap:likelihood-result}): we compare the detected user signal to the timers that were assigned in step 3.
+  \item \textbf{Likelihood Result}: we compare the detected user signal to the timers that were assigned in step 3.
   This gives us a likelihood score for each prefix.
-  \item \textbf{Likelihood Update} (chapter \ref{chap:likelihood-update}): we update the trie to reflect the received likelihoods.
+  \item \textbf{Likelihood Update} (\S~\ref{sec:likelihood-update}): we update the trie to reflect the received likelihoods.
   Performing this update in a lazy and efficient manner is a central technical
   challenge of Dotter.
   (This is an ``update'' in the traditional bayesian sense.)
@@ -139,11 +140,23 @@ It has four steps,
   \item \textbf{Determine Most Likely Break Nodes} (chapter \ref{chap:determine-most-likely-break-nodes}): we determine which nodes are most likely
   to a break between tokens in the tokenization of the user's target text.
   \item \textbf{LLM Query} (chapter \ref{chap:llm-query}): we query the large language model to predict the distribution over the next token for the prefixes
-  identified in the previous step.
-  \item \textbf{LLM Result} (chapter \ref{chap:llm-result}): we receive the result from the language model.
-  \item \textbf{Prior Update} (chapter \ref{chap:prior-update}): we update the trie to reflect the received prior probabilities.
+  identified in the previous step, making use of the Key-Value Cache Trie (\S~\ref{sec:kv-cache-trie}).
+  \item \textbf{LLM Result}: we receive the result from the language model.
+  \item \textbf{Prior Update} (\S~\ref{sec:prior-update}): we update the trie to reflect the received prior probabilities.
   Performing this update in a lazy and efficient manner is a central technical
   challenge of Dotter.
   (This is not truly an ``update'' in the traditional bayesian sense, since normally our priors are fixed.)
-
 \end{enumerate}
+
+\section{Client-Server Communication}
+A web-based client is responsible for the likelihood cycle,
+while a server with a large language model handles the prior cycle.
+Since these two cycles must run independently, it is necessary for both the client and
+the server to maintain a copy of the trie.
+
+The data designated ``Likelihood Result'' and ``LLM Result'' are exchanged between the client and the server,
+with each side updating its copy of the trie in response to the stream of these results.
+
+The two sides will not necessarily receive this stream of results in the same order,
+but an important correctness property of our update algorithms is that the state of the trie
+does not depend on the order in which the updates are performed.

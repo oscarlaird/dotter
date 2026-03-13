@@ -13,11 +13,14 @@
 \usepackage{enumitem}
 \setlist{itemsep=2pt, topsep=4pt, parsep=0pt}
 \usepackage{nicematrix}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 
 \begin{document}
 \hypertarget{titlepage}{}
 
-\title{Math for Dotter}
+\title{Dotter: Mathematical Analysis and Implementation Guide}
+\date{March 2026}
 \author{Oscar Laird}
 \maketitle
 
@@ -42,21 +45,13 @@
 \input{chapters/stimulus}               % Optimize Stimulus Parameters
 \input{chapters/render-stimulus}
 \input{chapters/detect-response}
-\input{chapters/likelihood-result}
-\input{chapters/likelihood-update}
 
 % Prior Cycle (in order)
 \input{chapters/determine-most-likely-break-nodes}
 \input{chapters/llm-query}
-\input{chapters/llm-result}
-\input{chapters/prior-update}
 
 % Practice
 \input{chapters/practice}
-
-% Supporting chapters
-\input{chapters/lazy-updates}
-\input{chapters/embellishments}
 
 \bibliographystyle{plain}
 \phantomsection

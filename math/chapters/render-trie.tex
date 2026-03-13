@@ -2,4 +2,23 @@
 \chapter{Render Trie}
 \label{chap:render-trie}
 
-% TODO: Add content.
+\section{Embellishments}
+\subsection{Branches of the Tree}
+% curvature is minimized with cubic splines
+% the constant velocity condition is that r'(t) \dot r''(t) = 0
+% There are eight dof
+% start and end positions define 4 of them
+% initial and final angles define 2
+% equal initial and final speeds define 1
+% constant velocity defines 1
+
+% the speed implicity defines the length of the curve
+% we can calculate the curvature as 12a_3^2 + 12a_2a_3 + 4a_2^2
+% but then we'd like to imagine reparameterizing so that
+% the initial speed is unit.
+% saying that the particles is now traveling slower by a factor of [speed]
+% means that the total squared curvature decreases by a factor of [speed]^2
+
+% N.B. Euler's method produces necessary conditions (arising from δJ/δf = 0)
+% but for J to be an extremum this condition is not sufficient
+% We would also need to ensure that the "Hessian" of variations is positive definite

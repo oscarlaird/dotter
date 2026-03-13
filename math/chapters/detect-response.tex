@@ -3,3 +3,30 @@
 \label{chap:detect-response}
 
 % TODO: Add content.
+Dotter requires the precise timing of the user's signal.
+Because the user's signal's variance is often as little a 20 milliseconds,
+and signal detection frames might be spaced as far apart as 30 milliseconds,
+the noise introduced by the signal detection process can be on the order of the
+noise introduced by the user.
+
+
+\section{Blink Detection}
+This frame frequency problem arises when the user's signal is a blink.
+A typical laptop webcam might capture 40 frames per second.
+If we use a simple threshold to detect a blink, this will introduce on the order of 20 milliseconds of noise.
+To resolve this problem we should use interpolation.
+The blink signal can be linearly interpolated between the frame before and the frame after the threshold was crossed
+to estimate the precise time of the blink.
+In post-hoc analysis making this change reduced about 3 milliseconds of noise when my blink standard deviation was about 20 milliseconds.
+
+Further noise reductions should be made through a simple linear regression of features of the blink signal against
+the correct blink times. This can remove another millisecond of noise.
+
+
+\section{Keypress Detection}
+
+For an in-browser implementation,
+the \texttt{keydown} even should be preferred
+at the time should be read directly from the 
+\texttt{event.timeStamp} field which provides the precise
+time that the keydown even was received by the browser.
