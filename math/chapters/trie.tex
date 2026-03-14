@@ -7,16 +7,16 @@ on observation of the user's signals.
 To accomplish this, Dotter maintains a trie indicating the posterior probability
 that any given prefix is a prefix of the user's target string.
 
-To compare strings, we use the inequality notation $x \leq y$ to mean that the string $x$ is a prefix of the string $y$.
+To compare strings, we use the inequality notation $X \leq Y$ to mean that the string $X$ is a prefix of the string $Y$.
 
 Letting $X$ be the user's target string, $D$ be the user's signals, then the posterior probability 
-that a given string, $s$, is a prefix of $X$ is given by:
+that a given string, $S$, is a prefix of $X$ is given by:
 $$
-P(s \leq X | D) = \frac{P(D | s \leq X) P(s \leq X)}{P(D)}
+P(S \leq X | D) = \frac{P(D | S \leq X) P(S \leq X)}{P(D)}
 $$
 
 In practice, we only keep track of the unnormalized posterior probabilities, denoted in code as \texttt{post\_Z} (to mean the posterior probability multiplied by a normalizing constant).
-Since the root node, $s_0$, is the empty string, we have $P(s_0 \leq X) = 1$ 
+Since the root node, $S_0$, is the empty string, we have $P(S_0 \leq X) = 1$ 
 and thus the unnormalized posterior probability of the root node is $P(D)$, i.e., the normalizing constant.
 Thus if we know the unnormalized posterior probabilities in our trie, we can convert these to normalized
 posterior probabilities by dividing by the root node's unnormalized posterior probability.
@@ -25,22 +25,38 @@ The posterior probabilities are derived from the prior probabilities and the lik
 In Dotter, both are subject to updates. The likelihood is updated as we receive signals from the user
 and the prior is updates as our language model refines our predictions.
 
-We confront two challenges:
-\begin{enumerate}
-    \item How do we update the trie in an efficient and lazy manner, to ensure that the trie is immediately responsive to the user's signals and to results from the language model?
-    \item How do we efficiently search for visible nodes?
-\end{enumerate}
+We will define the notion of a \emph{valid trie} and prove that it is invariant under the legal operations.
 
-We require two properties of our trie:
+\begin{definition}[Fresh]
+    A node in the trie is called \emph{fresh} if none of its parents
+    have non-empty ``unpushed'' fields. Otherwise, it is called \emph{stale}.
+\end{definition}
+
+\begin{definition}[Valid Trie]
+A trie is called \emph{valid} if the following conditions hold:
 \begin{enumerate}
-    \item \textbf{Valid Descent}: The root node's unnormalized posterior probability is always correct,
-    and if we descend from the root node to a given descendant node (while possibly performing deferred calculations
-    along the way), then the descendant node's unnormalized posterior probability is also correct.
-    \item \textbf{Valid Updates}: Our algorithms to assimilate likelihood and prior updates preserve the property of valid descent.
+    \item \textbf{Posterior Correctness:} The posterior of every fresh node is correct, up to the normalizing constant $P(D)$.
+    \item \textbf{Unpushed Consistency:} For every node with ``unpushed'' fields, one of the following two conditions holds:
+    \begin{enumerate}
+        \item The node has a valid likelihood (i.e., it has never been a parent to a visible node).
+        \item All unpushed likelihoods and unpushed priors apply uniformly to all descendants of the node.
+    \end{enumerate}
 \end{enumerate}
+\end{definition}
+
+\begin{theorem}[Valid Descent]
+    If a trie is valid, then it remains valid after performing the valid descent algorithm.
+\end{theorem}
+
+\begin{theorem}[Valid Updates]
+    If a trie is valid, then it remains valid after performing a valid likelihood or prior update.
+\end{theorem}
+
 
 
 \section{Token Paths}
+In our notation, we use uppercase letters for sequences (either of letters or of tokens) and lowercase letters for individual elements. Furthermore, we use bold font for tokens (whether a single token or a sequence of tokens) to distinguish them from literal characters or strings.
+
 Since Dotter uses a letter-by-letter trie, but language models return token probabilities,
 we face the task of converting a token model to a literal model.
 
@@ -58,19 +74,30 @@ token prefixes (empty string, \texttt{sci}, and \texttt{sc}), and that for a giv
 can be generated from multiple terminal tokens (\texttt{science}, \texttt{scientific}).
 
 Formally, to convert a token model to a literal model, we take the sum across 
-all compatible token prefixes $B$, and all compatible terminal tokens $T$,
+all compatible token sequences $\mathbf{B}$, and all compatible terminal tokens $\mathbf{t}$,
 $$
-P(x) = \sum_{B < x} P(B) \sum_{T,\, x \leq B+T} P(T \mid B)
+P(S) = \sum_{\mathbf{B} < S} P(\mathbf{B}) \sum_{\mathbf{t},\, S \leq \mathbf{B}+\mathbf{t}} P(\mathbf{t} \mid \mathbf{B})
 $$
 
 We use two tricks to efficiently compute this sum:
 \begin{enumerate}
     \item We recognize that the eligible longest token prefixes correspond to the prefixes of the last word, since tokens never contain spaces in the middle of them.
-    Additionally we can limit the values of $B$ to at most 15 ancestor prefixes, since tokens are at most 15 characters long in our tokenizer.
+    Additionally we can limit the values of $\mathbf{B}$ to at most 15 ancestor prefixes, since tokens are at most 15 characters long in our tokenizer.
     \item We can preconvert the language model's output of logits to an array of \textit{cumulative} probabilities.
-    This allows us to efficiently compute the alphabetical sum over compatible $T$, by taking the difference between the cumulative probabilities of the start and end.
+    This allows us to efficiently compute the alphabetical sum over compatible $\mathbf{t}$, by taking the difference between the cumulative probabilities of the start and end.
 \end{enumerate}
 
+\section{Global Variables}
+
+\begin{itemize}
+    \item \texttt{track\_mdlfta}: \textbf{bool} --- indicates whether we are tracking maximum descendant likelihoods for token ancestors.
+    This is only necessary on the server where we will want to be able to evaluate token sequence posteriors.
+    \item \texttt{max\_token\_length}: \textbf{int} --- the maximum length of a token.
+    \item \texttt{pta\_lut}: \textbf{dict} --- a lookup table for possible token ancestors, mapping from (ancestor final token, token prefix) to a boolean indicating whether it 
+    is possible for any token beginning with the token prefix to follow upon the ancestor final token.
+    \item \texttt{llm\_results}: \textbf{dict} --- a mapping from (token sequence, token) to the language model's conditional probability of the token given the token sequence.
+    \item \texttt{llm\_fans}: \textbf{dict} --- a mapping from (token sequence, token prefix) to the language model's conditional probability that the next token begins with the token prefix given the token sequence.
+\end{itemize}
 
 \section{Fields of a Node}
 A node in the trie has the following fields:
@@ -79,43 +106,44 @@ Constant Fields:
 \begin{itemize}
     \item \texttt{letter}: \textbf{str} --- the character represented by this node.
     \item \texttt{value}: \textbf{str} --- the string represented by this node, i.e., the concatenation of the parent's value and the character represented by this node.
-    (In implementation, we only need at most the last 2*MAX\_TOKEN\_LENGTH characters of the value.)
+    (In implementation, we only need at most the last 2*\texttt{max\_token\_length} characters of the value.)
     \item \texttt{depth}: \textbf{int} --- the depth of this node in the trie.
     \item \texttt{final\_token}: \textbf{str} --- the token to which this node belongs, if this node is the last character of a token.
+    \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
     \item \texttt{ancestor\_final\_tokens}: \textbf{list of strs} --- the $i$-th ancestor final token is the final token of the $i$-th ancestor.
      (In implementation, this can be an array of the ancestor final token lengths, and we may slice into our value to dervie the final token.)
-    \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
     \item \texttt{possible\_token\_ancestors}: \textbf{list of bool} --- a list of flags indicating whether the $i$-th ancestor
     could possibly be a token ancestor of this node. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
 \end{itemize}
 
 Mutable Fields:
 \begin{itemize}
+    \item \texttt{posterior\_Z}: \textbf{float} --- the unnormalized posterior probability of this node being a prefix of the user's target string,
     \item \texttt{ever\_parent\_of\_visible\_node}: \textbf{bool} --- indicates whether this node has ever been a parent of a visible node
     (at a time when a signal was received).
     This must be false for the likelihood field to be valid.
     If this flag is true, the likelihood can only be calculated as a weighted sum of its children's likelihoods,
-    $P(D | s \leq X) = \sum_l P(D | s+l \leq X) P(s+l \leq X | s \leq X)$,
+    $P(D | S \leq X) = \sum_l P(D | S+l \leq X) P(S+l \leq X | S \leq X)$,
     since its children have different likelihoods.
     Hence, if a node was not ever a parent of a visible node, then its likelihood is known absolutely,
     but if a node was once a parent of a visible node, then its likelihood is at best known conditional on a prior model.
     Since our prior model mutates over time, this is not definite knowledge of the likelihood.
-    \item \texttt{likelihood}: \textbf{float} --- the accumulated likelihood of all signals conditional on this node being a prefix
-    of the user's target string, $\prod_{d \in D} P(d | s \leq X)$.
+    % prior
     \item \texttt{prior}: \textbf{float} --- the prior probability of this node being a prefix of the user's target string.
-    \item \texttt{posterior\_Z}: \textbf{float} --- the unnormalized posterior probability of this node being a prefix of the user's target string,
-    \item \texttt{unpushed\_likelihood}: \textbf{float} --- likelihood that has not been accumulated to descendant nodes.
     \item \texttt{break\_prior}: \textbf{float} --- the prior probability that not only is this node a prefix of the user's target string,
     but also that it is the last character of a token in the tokenization of the user's target string.
+    \item \texttt{ancestor\_break\_priors}: \textbf{list of floats} --- the $i$-th ancestor break prior is the \texttt{break\_prior} of the $i$-th ancestor. This may be stale.
+    \item \texttt{unpushed\_break\_priors}: \textbf{list of optional floats} --- the $i$-th element is the fresh \texttt{break\_prior} if the $i$-th ancestor's \texttt{break\_prior} has changed since the last time we visited this node.
     \item \texttt{token\_fans}: \textbf{list of floats} --- the $i$-th token fan is the prior probability of this node being a prefix of the target string 
     conditional on its $i$-th parent being the last character of the token immediately preceding the token to which this character belongs.
-    \item \texttt{ancestor\_break\_priors}: \textbf{list of floats} --- the $i$-th ancestor break prior is the \texttt{break\_prior} of the $i$-th ancestor. This may be stale.
     \item \texttt{final\_token\_prior}: \textbf{float} --- the conditional prior probability of the final token if the ancestor
     at depth \texttt{depth - final\_token\_length} is the last character of a token.
-    \item \texttt{unpushed\_break\_priors}: \textbf{list of ints} --- a list of depths corresponding to the ancestors of this node
-    whose \texttt{break\_prior} has changed since the last time we visited this node.
-    \item \texttt{unpushed\_llm\_results}: \textbf{list of ints} --- a list of depths corresponding to the ancestors for which
-    we have received next token probabilities from the language model since we last visited this node.
+    \item \texttt{unpushed\_llm\_results}: \textbf{list of optional bool} --- the $i$-th element is true if the $\texttt{llm\_result}$ corresponding
+    to the value of the $i$-th ancestor has changed since the last time we visited this node.
+    % likelihood
+    \item \texttt{likelihood}: \textbf{optional float} --- the accumulated likelihood of all signals conditional on this node being a prefix
+    of the user's target string, $\prod_{d \in D} P(d | S \leq X)$.
+    \item \texttt{unpushed\_likelihood}: \textbf{float} --- likelihood that has not been accumulated to descendant nodes.
     \item \texttt{max\_descendant\_likelihood\_for\_token\_ancestor}: \textbf{list of floats} --- the $i$-th element is the 
     maximum (valid) likelihood of any descendant of this node which could also have this node's $i$-th ancestor as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
     \item \texttt{max\_token\_descendant\_likelihood}: \textbf{float} --- the maximum (valid) likelihood of any descendant of this node which could also have this node as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
@@ -135,31 +163,63 @@ then we initialize its children.
 \label{alg:initialize-children}
 \begin{algorithmic}[1]
 \Require Node $x$
+\State $x.\text{unpushed\_likelihood} \gets 1$
+\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
 \For{each character $c$ in the alphabet}
     \State Create child node $y$ of $x$
+    % constant fields
     \State $y.\text{letter} \gets c$
     \State $y.\text{value} \gets x.\text{value} + c$
+    \State $y.\text{depth} \gets x.\text{depth} + 1$
+    \State Tokenize the string corresponding to $y$ into a sequence of tokens $\mathbf{T} = [\mathbf{t}_1, \dots, \mathbf{t}_k]$
+    \State $y.\text{final\_token} \gets \mathbf{t}_k$
+    \State $y.\text{final\_token\_length} \gets |\mathbf{t}_k|$
+    \State $y.\text{ancestor\_final\_tokens}[0] \gets y.\text{final\_token}$
+    \State $\begin{aligned}[t]
+        y.\text{ancestor\_final\_tokens}[i] &\gets x.\text{ancestor\_final\_tokens}[i - 1] \\
+        &\quad \textbf{for } i = 1 \dots \text{max\_token\_length}
+    \end{aligned}$
+    \State $\begin{aligned}[t]
+        y.\text{possible\_token\_ancestors}[i] &\gets \\
+        &\quad \texttt{pta\_lut}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]]
+    \end{aligned}$
+    % mutable fields
+    \State $y.\text{ever\_parent\_of\_visible\_node} \gets \text{false}$
+    % prior
+    \State $\begin{aligned}[t]
+        y.\text{ancestor\_break\_priors}[i] &\gets x.\text{ancestor\_break\_priors}[i-1] \\
+        &\quad \textbf{for } i = 1 \dots \text{max\_token\_length}
+    \end{aligned}$
+    \State $y.\text{unpushed\_break\_priors}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+    \State $y.\text{unpushed\_llm\_results}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+    \State $y.\text{final\_token\_prior} \gets \texttt{llm\_results}[(y.\text{value}[:-y.\text{final\_token\_length}],\ y.\text{final\_token})]$
+    \State $\begin{aligned}[t]
+        y.\text{break\_prior} &\gets y.\text{ancestor\_break\_priors}[y.\text{final\_token\_length}] \\
+        &\quad * y.\text{final\_token\_prior}
+    \end{aligned}$
+    \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
+    \State $\begin{aligned}[t]
+        y.\text{token\_fans}[i] &\gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \\
+        &\quad \textbf{for } i = 0 \dots \text{max\_token\_length}
+    \end{aligned}$
+    \State $\begin{aligned}[t]
+        y.\text{prior} &\gets \sum_{i < \text{max\_token\_length}} y.\text{ancestor\_break\_priors}[i] \\
+        &\quad * y.\text{token\_fans}[i]
+    \end{aligned}$
+    % likelihood
     \State $y.\text{likelihood} \gets x.\text{likelihood}$
-    \State Tokenize the string corresponding to $y$ into a sequence of tokens $T = [t_1, \dots, t_k]$
-    \State $y.\text{final\_token} \gets t_k$
-    \State $y.\text{final\_token\_length} \gets |t_k|$
-    \State $y.\text{max\_token\_descendant\_likelihood} \gets 0$
-    \For{$i = 1$ \textbf{to} \text{max\_token\_length}}
-        \If{$i > 0$}
-            \State $y.\text{ancestor\_final\_tokens}[i] \gets x.\text{ancestor\_final\_tokens}[i-1]$
-            \State $y.\text{ancestor\_break\_priors}[i] \gets x.\text{ancestor\_break\_priors}[i-1]$
-        \Else 
-            \State $y.\text{ancestor\_final\_tokens}[0] \gets y.\text{final\_token}$
-            \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
-        \EndIf
-        \State $y.\text{possible\_token\_ancestors}[i] \gets \text{PTA\_LUT}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]]$
-        \If{$y.\text{possible\_token\_ancestors}[i]$}
-            \State $y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets y.\text{likelihood}$
-        \Else
-            \State $y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets 0$
-        \EndIf
-    \EndFor
+    \State $y.\text{unpushed\_likelihood} \gets 1$
+    \State $y.\text{max\_token\_descendant\_likelihood} \gets x.\text{likelihood}$
+    \State $\begin{aligned}[t]
+        y.\text{max\_token\_descendant\_likelihoods}[i] &\gets x.\text{likelihood} \\
+        &\quad \textbf{for } i = 0 \dots \text{max\_token\_length} \\
+        &\quad \textbf{if } y.\text{possible\_token\_ancestors}[i]
+    \end{aligned}$
+    % posterior
+    \State $y.\text{posterior\_Z} \gets y.\text{prior} * y.\text{likelihood}$
 \EndFor
+\State $x.\text{likelihood} \gets \text{None}$
 \end{algorithmic}
 \end{algorithm}
 
@@ -172,20 +232,80 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 \begin{algorithmic}[1]
 \Require Node $x$
 \For{each child $y$ of $x$}
-    \State $y.\text{likelihood} \gets y.\text{likelihood} * x.\text{unpushed\_likelihood}$
+    % save initial values
+    \State $\texttt{old\_prior} \gets y.\text{prior}$
+
+    \If{$y.\text{ever\_parent\_of\_visible\_node} \text{is false}$}
+        \State $\texttt{old\_likelihood} \gets y.\text{likelihood}$
+        \State $y.\text{likelihood} \gets y.\text{likelihood} * x.\text{unpushed\_likelihood}$
+    \EndIf
+    %
     \State $y.\text{unpushed\_likelihood} \gets y.\text{unpushed\_likelihood} * x.\text{unpushed\_likelihood}$
-    \State $y.\text{post\_Z} \gets y.\text{post\_Z} * x.\text{unpushed\_likelihood}$
-    \State $y.\text{unpushed\_llm\_results} \gets y.\text{unpushed\_llm\_results} \cup x.\text{unpushed\_llm\_results}$
-    \If{Track Token Likelihoods}
-        \For{$i = 0$ \textbf{to} \text{max\_token\_length}}
-            \State $\begin{aligned}[t]
-                & y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets \\
-                & \quad y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] * x.\text{unpushed\_likelihood}
-            \end{aligned}$
-        \EndFor
+    \State $y.\text{unpushed\_llm\_results}[i] \gets x.\text{unpushed\_llm\_results}[i] \lor y.\text{unpushed\_llm\_results}[i]$
+    \State $y.\text{unpushed\_break\_priors}[i] \gets x.\text{unpushed\_break\_priors}[i] \mathbf{\,or\,} y.\text{unpushed\_break\_priors}[i]$
+    % refresh token fans
+    \For{$i = 0$ \textbf{to} $\text{max\_token\_length}$}
+        \If{$x.\text{unpushed\_llm\_results}[i]$ is not \text{None}}
+            \State $y.\text{token\_fans}[i] \gets \text{LLM\_Results}[y.\text{value}[:-i]].\text{Fans}[y.\text{value}[-i:]]$
+        \EndIf
+    \EndFor
+    % refresh prior
+    \State $\texttt{prior\_changed} \gets \left(\exists~i:~x.\text{unpushed\_break\_priors}[i] \neq \text{None}\right) \vee \left(\exists~i:~x.\text{unpushed\_llm\_results}[i] \neq \text{None}\right)$
+    \If{$\texttt{prior\_changed}$}
+        \State $y.\text{prior} \gets \sum_{i < \text{max\_token\_length}} y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
+    \EndIf
+    % refresh final_token_prior
+    \If{$x.\text{unpushed\_llm\_results}[x.\text{final\_token\_length}]$ is not \text{None}}
+        \State $y.\text{final\_token\_prior} \gets \text{LLM\_Results}[y.\text{value}[:-y.\text{final\_token\_length}]][y.\text{final\_token}]$
+        \State $y.\text{break\_prior} \gets y.\text{ancestor\_break\_priors}[y.\text{final\_token\_length}] * y.\text{final\_token\_prior}$
+        \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
+        \State $y.\text{unpushed\_break\_priors}[0] \gets y.\text{break\_prior}$
+    \EndIf
+    % TODO: think hard about how to properly set postZ
+    \If{$y.\text{ever\_parent\_of\_visible\_node}$ is \text{false}}
+        \State $y.\text{posterior\_Z} \gets y.\text{prior} * y.\text{likelihood}$
+    \Else
+        \State $\texttt{prior\_correction} \gets \texttt{y.\text{prior}} / \texttt{old\_prior}$
+        \State $\texttt{likelihood\_correction} \gets x.\text{unpushed\_likelihood}$
+        \State $y.\text{posterior\_Z} \gets y.\text{posterior\_Z} * \texttt{prior\_correction} * \texttt{likelihood\_correction}$
+    \EndIf
+    % TODO: think about when max descendant likelihoods is actually handled.
+    \If{\texttt{track\_mdlfta} is true and $y.\text{ever\_parent\_of\_visible\_node}$ is false}
+        \State TrackTokenDescendantMaxLikelihood($y$) Using algorithm \ref{alg:track-mdlfta}.
     \EndIf
 \EndFor
 \State $x.\text{unpushed\_likelihood} \gets 1$
+\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Track Token Descendant Max Likelihood}
+\label{alg:track-mdlfta}
+\begin{algorithmic}[1]
+\Require Node $x$
+\Require $x.\text{ever\_parent\_of\_visible\_node}$ is false
+\State $\texttt{new\_mdlfta} \gets \texttt{x}.\text{likelihood}$
+\For{i = 0 to max\_token\_length}
+    \If{$x.\text{unpushed\_llm\_results}[i]$ is not \text{None}}
+        \State $\texttt{node} \gets x$
+        \State $\texttt{dist\_to\_last\_token} \gets i$
+        \While{true}
+            \State $\texttt{old\_mdlfta} \gets \texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}]$
+            \If{$\texttt{old\_mdlfta} < \texttt{new\_mdlfta}$}
+                \State $\texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}] \gets \texttt{new\_mdlfta}$
+            \Else
+                \State break
+                \label{alg:track-mdlfta-break}
+            \EndIf
+            \If{$\texttt{dist\_to\_last\_token} = 0$}
+                \State $\texttt{dist\_to\_last\_token} \gets \texttt{node}.\text{final\_token\_length}$
+            \EndIf
+            \State $\texttt{node} \gets \texttt{node}.\text{parent}$
+        \EndWhile
+    \EndIf
+\EndFor
 \end{algorithmic}
 \end{algorithm}
 
@@ -233,25 +353,46 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 \end{algorithmic}
 \end{algorithm}
 
+\begin{definition}
+    We define the truncation of a token sequence, $\lfloor \mathbf{B} \rfloor_d$,
+    to be the longest token sequence prefix of $\mathbf{B}$, which has fewer than $d$ characters,
+    i.e., it is the longest $\mathbf{C}$ such that $|Literalize(\mathbf{C})| < d$.
+\end{definition}
 
+\begin{definition}
+    For a given character sequence, $S$, and
+    a given token sequence, $\mathbf{B}$,
+    (which are compatible with each other in the sense that $\mathbf{B} \leq S$),
+    we define the ``Chain Maximum Likelihood'' with respect to depth $d$,
+    to be the maximum likelihood of any descendant which is compatible
+    with both the character sequence and the token sequence up to depth $d$.
+    $$
+    ChainMaxLikelihood(S, \mathbf{B}, d) = \max_{
+        \substack{
+            Q \geq S[:d] \\
+            Tokenize(Q) \geq \lfloor \mathbf{B} \rfloor_d
+        }
+    } P(D \mid Q)
+    $$
+\end{definition}
 
-\subsection{Recalculate Posterior}
+\begin{theorem}
+\label{thm:chain-max-likelihood-decreasing}
+    For a given character sequence, $S$, and
+    a given token sequence, $\mathbf{B}$,
+    the Chain Maximum Likelihood is a descreasing function of the depth.
+\end{theorem}
 
-The posterior for a node \texttt{x} is calculated as,
-$$
-\texttt{x.posterior\_Z} = \texttt{x.prior} * \texttt{x.likelihood}
-$$
+\begin{proof}
+    The two conditions become more restrictive, i.e.,
+    \begin{align*}
+        Q \geq S[:d+1] &\implies Q \geq S[:d] \\
+        Tokenize(Q) \geq \lfloor \mathbf{B} \rfloor_{d+1} &\implies Tokenize(Q) \geq \lfloor \mathbf{B} \rfloor_d
+    \end{align*}
+\end{proof}
 
-while the prior is calculated as,
-$$
-\texttt{x.prior} = \sum_{i < \texttt{x.depth}} \texttt{x.ancestor\_break\_priors[i]} * \texttt{x.token\_fans[i]}
-$$
-
-and the break prior is calculated as,
-$$
-\texttt{x.break\_prior} = \texttt{x.ancestor\_break\_priors[x.final\_token\_length]} * \texttt{x.final\_token\_prior}
-$$
-
+Theorem \ref{thm:chain-max-likelihood-decreasing}
+is necessary to prove that breaking at line \ref{alg:track-mdlfta-break} in algorithm \ref{alg:track-mdlfta} is correct.
 
 \section{Lazy Updates}
 The purpose of an update is to assimilate a change to the likelihood or prior
@@ -280,42 +421,41 @@ The unnormalized posterior is a sum over one's children's unnormalized posterior
 
 How do we know when we have reached a valid update leafset?
 We assume that after receiving an update, \texttt{posterior\_Z},
-that is, $P_0(x | D)$,
+that is, $P_0(S | D)$,
 has been invalidated for every node in the trie. 
-We hope to derive $P_1(x | D)$, without summing over the children's posteriors,
+We hope to derive $P_1(S | D)$, without summing over the children's posteriors,
 $$
-P_1(x|D) = \sum_i P_1(x_i | D)
-$$
-.
+P_1(S|D) = \sum_i P_1(S_i | D)
+$$.
 
 In general if one term is reweighted, we will have to recalculate,
 but there are four cases in which we can avoid recalculation and descent:
 \begin{enumerate}
-    \item The likelihood (and prior) of $x$ is known explicitly,
+    \item The likelihood (and prior) of $S$ is known explicitly,
     \begin{align}
-        P_1(x | D) &= P_1(x) P_1(D | x)
+        P_1(S | D) &= P_1(S) P_1(D | S)
     \end{align}
     \item Neither term (neither likelihood nor prior) changes.
     \begin{align}
-        P_1(x | D) &= P_0(x | D)
+        P_1(S | D) &= P_0(S | D)
     \end{align}
     \item The likelihoods change by a constant factor $l$, and the priors do not change.
     \begin{align}
-        P_1(x|D) 
-            &= \sum_i P_1(x_i | D) \notag \\
-            &= \sum_i P_1(x_i) P_1(D | x_i) \notag \\
-            &= \sum_i P_1(x_i) \big(l \cdot P_0(D | x_i)\big) \notag \\
-            &= l \sum_i P_0(x_i) P_0(D | x_i) \notag \\
-            &= l \cdot P_0(x | D)
+        P_1(S|D) 
+            &= \sum_i P_1(S_i | D) \notag \\
+            &= \sum_i P_1(S_i) P_1(D | S_i) \notag \\
+            &= \sum_i P_1(S_i) \big(l \cdot P_0(D | S_i)\big) \notag \\
+            &= l \sum_i P_0(S_i) P_0(D | S_i) \notag \\
+            &= l \cdot P_0(S | D)
     \end{align}
     \item The priors change by a constant factor $p$, and the likelihoods do not change,
     \begin{align}
-        P_1(x|D) 
-            &= \sum_i P_1(x_i | D) \notag \\
-            &= \sum_i P_1(x_i) P_0(D | x_i) \notag \\
-            &= \sum_i \big(p \cdot P_0(x_i)\big) P_0(D | x_i) \notag \\
-            &= p \sum_i P_0(x_i) P_0(D | x_i) \notag \\
-            &= p \cdot P_0(x | D)
+        P_1(S|D) 
+            &= \sum_i P_1(S_i | D) \notag \\
+            &= \sum_i P_1(S_i) P_0(D | S_i) \notag \\
+            &= \sum_i \big(p \cdot P_0(S_i)\big) P_0(D | S_i) \notag \\
+            &= p \sum_i P_0(S_i) P_0(D | S_i) \notag \\
+            &= p \cdot P_0(S | D)
     \end{align}
 \end{enumerate}
 In order to find the smallest prefix partition for the Up Propagation step,
@@ -406,31 +546,31 @@ $$
 
 
 \subsubsection{Maintaining maximum descendant likelihoods}
-For every node in our update leafset we increment not only the likelihood of the node, but all elements of the array,
+For every node in our update leafset we factor in the new likelihood not only to the likelihood of the given node, but also to all elements of the node's array
 \texttt{max\_descendant\_likelihood\_for\_token\_ancestor} as well as the scalar, \texttt{max\_token\_descendant\_likelihood}.
 when we visit a node during up propagation we immediately accumulate these quantities in the node's possible ancestors.
 
 \subsubsection{Possible Token Ancestors}
-A possible token ancestor of a character sequence, $x$, is a token sequence, $A$, such that there is some string $y$, such
-that $x$ is a prefix of $y$, $x \leq y$, and $A$ is a token sequence prefix of the full tokenization of $y$, and is the longest
-such prefix for which $A \leq x$. In other words, it is possible that the last token of $A$ is the last complete token in the tokenization of $y$ before
-the last character of $x$.
+A possible token ancestor of a character sequence, $S$, is a token sequence, $\mathbf{A}$, such that there is some string $Y$, such
+that $S$ is a prefix of $Y$, $S \leq Y$, and $\mathbf{A}$ is a token sequence prefix of the full tokenization of $Y$, and is the longest
+such prefix for which $\mathbf{A} \leq S$. In other words, it is possible that the last token of $\mathbf{A}$ is the last complete token in the tokenization of $Y$ before
+the last character of $S$.
 
-A necessary condition is that $(x - A)$ is a character sequence prefix of some token $t$.
-Designating the last token of $A$ as $s = A[-1]$, the necessary and sufficient condition
-is that there exists some token $t$ such that $(x - A)$ is a prefix of $t$, 
-and tokenizing the string formed by concatenating $s$ and $t$ yields exactly the two tokens $s$ and $t$ in order,
-i.e., \texttt{Tokenize}$(s + t) = [s, t]$.
+A necessary condition is that $(S - \mathbf{A})$ is a character sequence prefix of some token $\mathbf{t}$.
+Designating the last token of $\mathbf{A}$ as $\mathbf{s} = \mathbf{A}[-1]$, the necessary and sufficient condition
+is that there exists some token $\mathbf{t}$ such that $(S - \mathbf{A})$ is a prefix of $\mathbf{t}$, 
+and tokenizing the string formed by concatenating $\mathbf{s}$ and $\mathbf{t}$ yields exactly the two tokens $\mathbf{s}$ and $\mathbf{t}$ in order,
+i.e., \texttt{Tokenize}$(\mathbf{s} + \mathbf{t}) = [\mathbf{s}, \mathbf{t}]$.
 
-Evaluating this predicate for given $s$ and $(x - A)$ has resisted my attempts to find an efficient algorithm.
-However, it can be solved in $O(1)$ time by precomputing a lookup table for all possible pairs of tokens, $s$, and
-token prefixes, $(x - A)$. This table has size $O(V^2)$, where $V$ is the vocabulary size.
+Evaluating this predicate for given $\mathbf{s}$ and $(S - \mathbf{A})$ has resisted my attempts to find an efficient algorithm.
+However, it can be solved in $O(1)$ time by precomputing a lookup table for all possible pairs of tokens, $\mathbf{s}$, and
+token prefixes, $(S - \mathbf{A})$. This table has size $O(V^2)$, where $V$ is the vocabulary size.
 If the vocabulary size is $50,\!000$ and we require one bit of memory per entry, this amounts to only about $300$MB.
 
-Interestingly for a random choice of $s$ and $t$, the probability that $s + t$ tokenizes to $[s, t]$ is about $1/2$.
-Even knowing $s$ does not help very much: the conditional entropy is still about $0.6$ bits.
-This result holds when we restrict $t$ to tokens that are not prefixes of other tokens. Since a substantial
-fraction of the possible values for $(x - A)$ will be of this form, this indicates that we cannot effectively
+Interestingly for a random choice of $\mathbf{s}$ and $\mathbf{t}$, the probability that $\mathbf{s} + \mathbf{t}$ tokenizes to $[\mathbf{s}, \mathbf{t}]$ is about $1/2$.
+Even knowing $\mathbf{s}$ does not help very much: the conditional entropy is still about $0.6$ bits.
+This result holds when we restrict $\mathbf{t}$ to tokens that are not prefixes of other tokens. Since a substantial
+fraction of the possible values for $(S - \mathbf{A})$ will be of this form, this indicates that we cannot effectively
 make a compression of the lookup table.
 
 However, since this is only needed for the step of determining the most likely break nodes, which occurs on the server,
@@ -447,8 +587,8 @@ After receiving an ``LLM Result'' we must update the trie to reflect this refine
 the language model.
 
 \textbf{Step 1: Select initial frontier:}
-The ``LLM Result'' corresponds to a token sequence, $A$.
-We choose the corresponding character sequence, $a$, in the bayesian trie as our initial frontier.
+The ``LLM Result'' corresponds to a token sequence, $\mathbf{A}$.
+We choose the corresponding character sequence, $S$, in the bayesian trie as our initial frontier.
 
 \textbf{Step 2: Down Propagation:}
 We descend from the initial frontier via valid descent until we reach a valid update leafset.
@@ -457,10 +597,10 @@ node is necessary, if and only if the node satisfies one of the following two ca
 \begin{itemize}
     \item \textbf{Valid Likelihood}: The node has never been a parent to a visible node, i.e., it has a valid likelihood.
     \item \textbf{Space Character}: The node is a space character. Formally, the condition is that there exists
-    some token following upon $A$ which every possible suffix of our node $x$, must contain, i.e.,
-    we require that $x$ satisfy,
+    some token following upon $\mathbf{A}$ which every possible suffix of our node $S$, must contain, i.e.,
+    we require that $S$ satisfy,
     $$
-    \exists B, B>A, |B|=|A|+1, \forall y \geq x, B < Tokenize(y)
+    \exists \mathbf{B}, \mathbf{B}>\mathbf{A}, |\mathbf{B}|=|\mathbf{A}|+1, \forall Y \geq S, \mathbf{B} < Tokenize(Y)
     $$
     but in practice we implement this by recognizing that this condition is always true of the space
     character and rarely true otherwise.
@@ -472,29 +612,29 @@ two cases above it satisfies.
 If it has a valid likelihood, then the likelihood and prior are known 
 explicitly (case 1 above) and we can set the \texttt{post\_Z} to,
 $$
-x.\text{post\_Z} = x.\text{prior} * x.\text{likelihood}
+S.\text{post\_Z} = S.\text{prior} * S.\text{likelihood}
 $$
 If it is a space character, then we know that this node's prior and the priors of all
-its descendants must pass through the same token sequence, $B > A$.
-For this node and for all descendants $y$, we have,
+its descendants must pass through the same token sequence, $\mathbf{B} > \mathbf{A}$.
+For this node and for all descendants $Y$, we have,
 $$
-P_1(y) = P_0(y) * \frac{P_1(B|A)}{P_0(B|A)}
+P_1(Y) = P_0(Y) * \frac{P_1(\mathbf{B}|\mathbf{A})}{P_0(\mathbf{B}|\mathbf{A})}
 $$
 since this is the only factor in the product of conditional probabilities that has changed.
-We can determine the relevant predicted token as, $\texttt{shared\_token} = Tokenize(x)[|A|]$ and so the correction factor
+We can determine the relevant predicted token as, $\texttt{shared\_token} = Tokenize(S)[|\mathbf{A}|]$ and so the correction factor
 is,
 $$
-\texttt{correction\_factor} = \frac{P_1(B|A)}{P_0(B|A)} = \frac{\text{LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}
+\texttt{correction\_factor} = \frac{P_1(\mathbf{B}|\mathbf{A})}{P_0(\mathbf{B}|\mathbf{A})} = \frac{\text{LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}
 $$
 and we can set the \texttt{post\_Z} to,
 $$
-x.\text{post\_Z} = x.\text{post\_Z} * \texttt{correction\_factor}
+S.\text{post\_Z} = S.\text{post\_Z} * \texttt{correction\_factor}
 $$
 
 \textbf{Step 4: Up Propagation:}
 We ascend the trie, accumulating unnormalized posteriors of the parents as
 $$
-x.\text{post\_Z} = \sum_{y \in x.\text{children}} y.\text{post\_Z}
+S.\text{post\_Z} = \sum_{Y \in S.\text{children}} Y.\text{post\_Z}
 $$
 
 \textbf{Note Bene:} Why is descending to the space character necessary? After all,
@@ -506,9 +646,9 @@ The subtle fallacy in this thinking is that the \textit{likelihood of the node h
 Although we often think of the likelihood as being independent of the prior,
 this is only true for pure hypotheses. For a composite hypothesis, like this node we have,
 $$
-P(D | x) = \sum_i P(D | x_i) P(x_i | x)
+P(D | S) = \sum_i P(D | S_i) P(S_i | S)
 $$
-where $x_i$ are the children of $x$.
+where $S_i$ are the children of $S$.
 Since the weighting, i.e., the prior, has changed, so has the \textit{likelihood}
 of this node.
 Thus we do not satisfy case 4 above, because the likelihood has changed.
