@@ -100,7 +100,8 @@ We use two tricks to efficiently compute this sum:
 \end{itemize}
 
 \section{Fields of a Node}
-A node in the trie has the following fields:
+A node in the trie has the following fields.
+(Note: All array fields have length \texttt{max\_token\_length} (0-indexed) unless otherwise specified.)
 
 Constant Fields:
 \begin{itemize}
@@ -164,8 +165,8 @@ then we initialize its children.
 \begin{algorithmic}[1]
 \Require Node $x$
 \State $x.\text{unpushed\_likelihood} \gets 1$
-\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
-\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None} \quad \forall i$
+\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None} \quad \forall i$
 \For{each character $c$ in the alphabet}
     \State Create child node $y$ of $x$
     % constant fields
@@ -176,46 +177,27 @@ then we initialize its children.
     \State $y.\text{final\_token} \gets \mathbf{t}_k$
     \State $y.\text{final\_token\_length} \gets |\mathbf{t}_k|$
     \State $y.\text{ancestor\_final\_tokens}[0] \gets y.\text{final\_token}$
-    \State $\begin{aligned}[t]
-        y.\text{ancestor\_final\_tokens}[i] &\gets x.\text{ancestor\_final\_tokens}[i - 1] \\
-        &\quad \textbf{for } i = 1 \dots \text{max\_token\_length}
-    \end{aligned}$
-    \State $\begin{aligned}[t]
-        y.\text{possible\_token\_ancestors}[i] &\gets \\
-        &\quad \texttt{pta\_lut}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]]
-    \end{aligned}$
+    \State $y.\text{ancestor\_final\_tokens}[i] \gets x.\text{ancestor\_final\_tokens}[i - 1] \quad \forall i \ge 1$
+    \State $y.\text{possible\_token\_ancestors}[i] \gets \texttt{pta\_lut}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]] \quad \forall i$
     % mutable fields
     \State $y.\text{ever\_parent\_of\_visible\_node} \gets \text{false}$
     % prior
-    \State $\begin{aligned}[t]
-        y.\text{ancestor\_break\_priors}[i] &\gets x.\text{ancestor\_break\_priors}[i-1] \\
-        &\quad \textbf{for } i = 1 \dots \text{max\_token\_length}
-    \end{aligned}$
-    \State $y.\text{unpushed\_break\_priors}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
-    \State $y.\text{unpushed\_llm\_results}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+    \State $y.\text{ancestor\_break\_priors}[i] \gets x.\text{ancestor\_break\_priors}[i-1] \quad \forall i \ge 1$
+    \State $y.\text{unpushed\_break\_priors}[i] \gets \text{None} \quad \forall i$
+    \State $y.\text{unpushed\_llm\_results}[i] \gets \text{None} \quad \forall i$
     \State $y.\text{final\_token\_prior} \gets \texttt{llm\_results}[(y.\text{value}[:-y.\text{final\_token\_length}],\ y.\text{final\_token})]$
     \State $\begin{aligned}[t]
         y.\text{break\_prior} &\gets y.\text{ancestor\_break\_priors}[y.\text{final\_token\_length}] \\
         &\quad * y.\text{final\_token\_prior}
     \end{aligned}$
     \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
-    \State $\begin{aligned}[t]
-        y.\text{token\_fans}[i] &\gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \\
-        &\quad \textbf{for } i = 0 \dots \text{max\_token\_length}
-    \end{aligned}$
-    \State $\begin{aligned}[t]
-        y.\text{prior} &\gets \sum_{i < \text{max\_token\_length}} y.\text{ancestor\_break\_priors}[i] \\
-        &\quad * y.\text{token\_fans}[i]
-    \end{aligned}$
+    \State $y.\text{token\_fans}[i] \gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \quad \forall i$
+    \State $y.\text{prior} \gets \sum_i y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
     % likelihood
     \State $y.\text{likelihood} \gets x.\text{likelihood}$
     \State $y.\text{unpushed\_likelihood} \gets 1$
     \State $y.\text{max\_token\_descendant\_likelihood} \gets x.\text{likelihood}$
-    \State $\begin{aligned}[t]
-        y.\text{max\_token\_descendant\_likelihoods}[i] &\gets x.\text{likelihood} \\
-        &\quad \textbf{for } i = 0 \dots \text{max\_token\_length} \\
-        &\quad \textbf{if } y.\text{possible\_token\_ancestors}[i]
-    \end{aligned}$
+    \State $y.\text{max\_token\_descendant\_likelihoods}[i] \gets x.\text{likelihood} \quad \forall i \text{ s.t. } y.\text{possible\_token\_ancestors}[i]$
     % posterior
     \State $y.\text{posterior\_Z} \gets y.\text{prior} * y.\text{likelihood}$
 \EndFor
@@ -241,18 +223,17 @@ Let $x$ be our current node, and $y$ be a child of $x$.
     \EndIf
     %
     \State $y.\text{unpushed\_likelihood} \gets y.\text{unpushed\_likelihood} * x.\text{unpushed\_likelihood}$
-    \State $y.\text{unpushed\_llm\_results}[i] \gets x.\text{unpushed\_llm\_results}[i] \lor y.\text{unpushed\_llm\_results}[i]$
-    \State $y.\text{unpushed\_break\_priors}[i] \gets x.\text{unpushed\_break\_priors}[i] \mathbf{\,or\,} y.\text{unpushed\_break\_priors}[i]$
+    \State $y.\text{unpushed\_llm\_results}[i] \gets x.\text{unpushed\_llm\_results}[i] \lor y.\text{unpushed\_llm\_results}[i] \quad \forall i$
+    \State $y.\text{unpushed\_break\_priors}[i] \gets x.\text{unpushed\_break\_priors}[i] \lor y.\text{unpushed\_break\_priors}[i] \quad \forall i$
     % refresh token fans
-    \For{$i = 0$ \textbf{to} $\text{max\_token\_length}$}
-        \If{$x.\text{unpushed\_llm\_results}[i]$ is not \text{None}}
-            \State $y.\text{token\_fans}[i] \gets \text{LLM\_Results}[y.\text{value}[:-i]].\text{Fans}[y.\text{value}[-i:]]$
-        \EndIf
-    \EndFor
+    \State $\begin{aligned}[t]
+        y.\text{token\_fans}[i] &\gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \\
+        &\quad \forall i \text{ s.t. } x.\text{unpushed\_llm\_results}[i] \neq \text{None}
+    \end{aligned}$
     % refresh prior
     \State $\texttt{prior\_changed} \gets \left(\exists~i:~x.\text{unpushed\_break\_priors}[i] \neq \text{None}\right) \vee \left(\exists~i:~x.\text{unpushed\_llm\_results}[i] \neq \text{None}\right)$
     \If{$\texttt{prior\_changed}$}
-        \State $y.\text{prior} \gets \sum_{i < \text{max\_token\_length}} y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
+        \State $y.\text{prior} \gets \sum_i y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
     \EndIf
     % refresh final_token_prior
     \If{$x.\text{unpushed\_llm\_results}[x.\text{final\_token\_length}]$ is not \text{None}}
@@ -275,8 +256,8 @@ Let $x$ be our current node, and $y$ be a child of $x$.
     \EndIf
 \EndFor
 \State $x.\text{unpushed\_likelihood} \gets 1$
-\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
-\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None}$ for $i = 0$ .. $\text{max\_token\_length}$
+\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None} \quad \forall i$
+\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None} \quad \forall i$
 \end{algorithmic}
 \end{algorithm}
 
@@ -287,24 +268,22 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 \Require Node $x$
 \Require $x.\text{ever\_parent\_of\_visible\_node}$ is false
 \State $\texttt{new\_mdlfta} \gets \texttt{x}.\text{likelihood}$
-\For{i = 0 to max\_token\_length}
-    \If{$x.\text{unpushed\_llm\_results}[i]$ is not \text{None}}
-        \State $\texttt{node} \gets x$
-        \State $\texttt{dist\_to\_last\_token} \gets i$
-        \While{true}
-            \State $\texttt{old\_mdlfta} \gets \texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}]$
-            \If{$\texttt{old\_mdlfta} < \texttt{new\_mdlfta}$}
-                \State $\texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}] \gets \texttt{new\_mdlfta}$
-            \Else
-                \State break
-                \label{alg:track-mdlfta-break}
-            \EndIf
-            \If{$\texttt{dist\_to\_last\_token} = 0$}
-                \State $\texttt{dist\_to\_last\_token} \gets \texttt{node}.\text{final\_token\_length}$
-            \EndIf
-            \State $\texttt{node} \gets \texttt{node}.\text{parent}$
-        \EndWhile
-    \EndIf
+\For{each $i$ such that $x.\text{possible\_token\_ancestors}[i]$ is true}
+    \State $\texttt{node} \gets x$
+    \State $\texttt{dist\_to\_last\_token} \gets i$
+    \While{true}
+        \State $\texttt{old\_mdlfta} \gets \texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}]$
+        \If{$\texttt{old\_mdlfta} < \texttt{new\_mdlfta}$}
+            \State $\texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}] \gets \texttt{new\_mdlfta}$
+        \Else
+            \State break
+            \label{alg:track-mdlfta-break}
+        \EndIf
+        \If{$\texttt{dist\_to\_last\_token} = 0$}
+            \State $\texttt{dist\_to\_last\_token} \gets \texttt{node}.\text{final\_token\_length}$
+        \EndIf
+        \State $\texttt{node} \gets \texttt{node}.\text{parent}$
+    \EndWhile
 \EndFor
 \end{algorithmic}
 \end{algorithm}
@@ -636,6 +615,41 @@ We ascend the trie, accumulating unnormalized posteriors of the parents as
 $$
 S.\text{post\_Z} = \sum_{Y \in S.\text{children}} Y.\text{post\_Z}
 $$
+
+\begin{algorithm}[H]
+\caption{Prior Update}
+\label{alg:prior-update}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$, Node $S$ (corresponding to token sequence $\mathbf{A}$), $\text{New\_LLM\_Result}$, $\text{Old\_LLM\_Result}$
+\State Let $Q$ be a queue initialized with $S$
+\State Let $L$ be an empty list \Comment{Valid update leafset}
+\Comment{\textbf{Step 2: Down Propagation}}
+\While{$Q$ is not empty}
+    \State Pop node $x$ from $Q$
+    \State ValidDescent($B$, $x$) Using algorithm \ref{alg:valid-descent}.
+    \If{$x.\text{ever\_parent\_of\_visible\_node}$ is \text{false} $\lor$ $x.\text{letter}$ is a space character}
+        \State Add $x$ to $L$
+    \Else
+        \For{each child $y$ of $x$}
+            \State Push $y$ to $Q$
+        \EndFor
+    \EndIf
+\EndWhile
+\Comment{\textbf{Step 3: Fix Leafset}}
+\For{each node $x \in L$}
+    \If{$x.\text{ever\_parent\_of\_visible\_node}$ is \text{false}}
+        \State $x.\text{post\_Z} \gets x.\text{prior} * x.\text{likelihood}$
+    \Else \Comment{$x.\text{letter}$ is a space character}
+        \State $\texttt{shared\_token} \gets Tokenize(x.\text{value})[|\mathbf{A}|]$
+        \State $\texttt{correction\_factor} \gets \frac{\text{New\_LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}$
+        \State $x.\text{post\_Z} \gets x.\text{post\_Z} * \texttt{correction\_factor}$
+    \EndIf
+\EndFor
+\Comment{\textbf{Step 4: Up Propagation}}
+\State Let $V$ be the subgraph of $B$ formed by the paths from the root to every node in $L$
+\State UpPropagation($B$, $V$) Using algorithm \ref{alg:up-propagation}.
+\end{algorithmic}
+\end{algorithm}
 
 \textbf{Note Bene:} Why is descending to the space character necessary? After all,
 if we know exactly how a node's prior has changed, and we know that its likelihood has not changed,
