@@ -23,7 +23,460 @@ posterior probabilities by dividing by the root node's unnormalized posterior pr
 
 The posterior probabilities are derived from the prior probabilities and the likelihoods.
 In Dotter, both are subject to updates. The likelihood is updated as we receive signals from the user
-and the prior is updates as our language model refines our predictions.
+and the prior is updated as our language model refines our predictions.
+
+Our analysis has five parts:
+\begin{enumerate}
+    \item We assume a character-based prior model, present algorithms for lazy
+    calculation of the unnormalized posteriors, and prove their correctness.
+    \item We discuss implementation details with regard to tracking the likelihoods.
+    \item We discuss how to adapt the algorithms for a token-based prior model.
+    \item We discuss how to track the maximum descendant likelihoods of token sequences.
+    \item We present the full algorithms.
+\end{enumerate}
+
+\textit{Note: } It is helpful to make three kinds of distinctions: (1) between sets and their elements,
+(2) between sequences and their elements, and (3) between characters and tokens. We will choose to 
+use uppercase letters for sets, the vector notataion for sequences, and bold font for tokens.
+For example, $\mathbf{\vec{A}}$ would represent a set of token sequences while $a$ would represent a character.
+
+\section{Lazy Posterior Calculation: The Core Algorithms}
+
+\begin{definition}[Alphabet]
+An alphabet is a finite set.
+\end{definition}
+
+\begin{definition}[Character]
+A character is an element of an alphabet.
+\end{definition}
+
+\begin{definition}[String]
+A string is a sequence of characters.
+\end{definition}
+
+\begin{definition}[Substring]
+We use the notation $s[i:j]$ to represent the subsequence of characters of $s$ from index $i$ to index $j-1$.
+We also allow the notation $s[:-k]$ to represent the subsequence of characters of $s$ from index 0 to index $|s|-k-1$.
+\end{definition}
+
+\begin{definition}[String Inequality]
+We say that a string $s$ is a prefix of a string $t$, and write this as $s \leq t$, if and only if there exists an integer $k$ such that $s = t[0:k]$.
+\end{definition}
+
+\begin{definition}[Properly Terminated String]
+A string $h$ is properly terminated if and only if $h[i]=\text{\textquotesingle}\blacksquare\text{\textquotesingle} \iff i=|h|-1$.
+An unterminated string is one that does not contain the stop character.
+An ``at most properly terminated string'' is one that is either properly terminated or unterminated.
+\end{definition}
+
+Throughout this chapter, we will let $\mathcal{A}$ denote our alphabet which must include at least
+the two special characters: space ($\text{\textquotesingle}\;\text{\textquotesingle}$) and stop ($\text{\textquotesingle}\blacksquare\text{\textquotesingle}$); the set of all strings over
+this alphabet will be denoted $S$, and the subset of all properly terminated strings will be denoted
+$H$, where if $h \in H$.
+
+\begin{definition}[Prefix Code]
+    A prefix code is a set of strings such that no string is a prefix of another string in the set, i.e.,
+    A set $C$ is a prefix code if and only if,
+    $$
+    \not\exists c_1, c_2 \in C, c_1 < c_2
+    $$
+\end{definition}
+
+\begin{definition}[Complete Prefix Code]
+    A complete prefix code, $C$, is a prefix code that covers the entire tree, i.e.,
+    $$
+    \forall x \in S, \exists c \in C, x \leq c \lor c \leq x
+    $$
+\end{definition}
+
+\begin{definition}[Sibling]
+    Two strings $s_1$ and $s_2$ are siblings if and only if $s_1 \neq s_2$ and $s_1[:-1] = s_2[:-1]$.
+\end{definition}
+
+\begin{definition}[Complete Sibling Prefix Code]
+    A complete sibling prefix code is a complete prefix code that is closed under the 
+    sibling relation, i.e.,
+    if $s_1, s_2 \in S$ are siblings, then $s_1 \in C \iff s_2 \in C$.
+\end{definition}
+
+\begin{proposition}
+    The set of all properly terminated strings, $H$, is a complete prefix code.
+\end{proposition}
+\begin{proof}
+    We first show that $H$ is a prefix code.
+    We proceed by contradiction.
+    Suppose there exist $h_1, h_2 \in H$ such that $h_1 < h_2$.
+    Because $h_1$ is a strict prefix of $h_2$, it must be that $|h_1| < |h_2|$.
+    Furthermore, the characters of $h_2$ must perfectly match $h_1$ up to index $|h_1|-1$. 
+    Thus, 
+    $$
+    h_2[|h_1|-1] = h_1[|h_1|-1].
+    $$
+    Because $h_1 \in H$, it is properly terminated, meaning its final character is the stop character: $h_1[|h_1|-1] = \text{\textquotesingle}\blacksquare\text{\textquotesingle}$.
+    Therefore, $h_2[|h_1|-1] = \text{\textquotesingle}\blacksquare\text{\textquotesingle}$.
+    However, because $h_2 \in H$, the stop character can only appear at its final index $|h_2|-1$. This implies:
+    $$
+    |h_1|-1 = |h_2|-1 \implies |h_1| = |h_2|,
+    $$
+    which contradicts the strict prefix requirement $|h_1| < |h_2|$. Thus, no such pair $h_1, h_2$ can exist, and $H$ is a prefix code.
+
+
+    We now show that $H$ is a complete prefix code.
+    Let $x \in S$ be any string.
+    We show this by cases constructively:
+    \begin{enumerate}[label=(\alph*)]
+        \item If $\text{\textquotesingle}\blacksquare\text{\textquotesingle}$ is in $x$,
+        then let $i$ be the index of its first occurrence. Then $x[:i+1] \in H$
+        and $x[:i+1] \leq x$.
+        \item If $\text{\textquotesingle}\blacksquare\text{\textquotesingle}$ is not in $x$,
+        then $x+\text{\textquotesingle}\blacksquare\text{\textquotesingle} \in H$
+        and $x < x+\text{\textquotesingle}\blacksquare\text{\textquotesingle}$.
+    \end{enumerate}
+\end{proof}
+
+\begin{definition}[Likelihood Function]
+    A likelihood function is a mapping from properly terminated strings to non-negative real numbers,
+    $L_n : H \to \mathbb{R}^+$.
+\end{definition}
+
+\begin{definition}[Prior Function]
+\label{def:prior-function}
+    A prior function is a mapping from properly terminated strings to non-negative real numbers,
+    $P_m : H \to \mathbb{R}^+$,
+    satisfying
+    $$
+    \sum_{h \in H} P_m(h) = 1
+    $$
+\end{definition}
+
+\begin{definition}[Branch Prior Function]
+    We define the branch prior function, $P^{branch}_m(x)$, of an at most properly terminated string $x$,
+    as,
+    $$
+    P^{branch}_m(x) = \sum_{\substack{h \in H \\ h \geq x}} P_m(h)
+    $$
+\end{definition}
+\textit{Terminology Note: } The branch prior function corresponds to our usual notion of a prior over
+string prefixes, but we choose to name it explicitly as ``branch prior'' and to restrict our definition of the domain of
+a ``prior function'' to properly terminated strings,
+excluding their prefixes. We make this choice to keep a close correspondence
+between the definitions of prior and likelihood functions.
+
+\textit{Note: } In our algorithm, we will assume oracular access to the branch prior function.
+
+\begin{definition}[Likelihood Sequence]
+\label{def:likelihood-sequence}
+    A likelihood sequence is a sequence of likelihood functions,
+    $\{L_n\}$ where $\forall h, L_0(h) = 1$.
+\end{definition}
+
+\begin{definition}[Prior Sequence]
+    A prior sequence is a sequence of prior functions $\{P_n\}$.
+\end{definition}
+
+\begin{definition}[Delta Digest]
+    A delta digest is a prefix code and a mapping from that prefix code to non-negative real numbers, $(C, \Delta)$.
+    So,
+    $$
+    \Delta : C \to \mathbb{R}^+
+    $$
+\end{definition}
+
+\begin{definition}[Prefix Code Truncation]
+    The truncation of a string $x$ under a prefix code $C$ refers to the
+    element $c \in C$ such that $c \leq x$.
+    If no such element exists, then the truncation is undefined.
+    We denote the truncation of $x$ under $C$ as $\lfloor x \rfloor_C$.
+\end{definition}
+
+\begin{definition}[Likelihood Delta Digest Sequence]
+    The likelihood delta digest sequence corresponding to a likelihood sequence $\{L_n\}$ is a sequence of delta digests $\{(C^L_n, \Delta^L_n)\}$,
+    that satisfies:
+    $$
+    \forall h \in H, L_n(h) = L_{n-1}(h) \Delta^L_n(\lfloor h \rfloor_{C^L_n})
+    $$
+\end{definition}
+
+\begin{definition}[Prior Delta Digest Sequence]
+    This is defined identically,
+    i.e.,
+    the prior delta digest sequence corresponding to a prior sequence $\{P_n\}$ is a sequence of delta digests $\{(C^P_n, \Delta^P_n)\}$,
+    that satisfies:
+    $$
+    \forall h \in H, P_n(h) = P_{n-1}(h) \Delta^P_n(\lfloor h \rfloor_{C^P_n})
+    $$
+\end{definition}
+
+\begin{definition}[Unnormalized Posterior Function]
+    The unnormalized posterior function is a mapping
+    from at most properly terminated strings to non-negative real numbers given by
+    $$
+    Z_{n,m}(x) = \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h)
+    $$
+\end{definition}
+
+\begin{proposition}
+    Without any likelihood updates, the unnormalized posterior of the root node is 1:
+    \begin{align*}
+        Z_{0,m}(\text{\textquotesingle}\text{\textquotesingle}) &= \sum_{\substack{h \in H \\ h \geq \text{\textquotesingle}\text{\textquotesingle}}} L_0(h) P_m(h) \notag \\
+        &= \sum_{h \in H} L_0(h) P_m(h) \notag \\
+        &= \sum_{h \in H} 1 \cdot P_m(h) && \text{(by definition \ref{def:likelihood-sequence})} \\
+        &= 1 && \text{(by definition \ref{def:prior-function})} \notag
+    \end{align*}
+\end{proposition}
+
+\begin{lemma}
+\label{lemma:unterminated-posterior-summation}
+    if $x$ is an unterminated string, then
+    $$
+    Z_{n,m}(x) = \sum_{a \in \mathcal{A}} Z_{n,m}(x+a)
+    $$
+\end{lemma}
+\begin{proof}
+    By definition,
+    $$
+    Z_{n,m}(x) = \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h).
+    $$
+    Since $x$ is an unterminated string, it does not contain the stop character. Because all strings in $H$ are properly terminated and therefore end with the stop character, $x \notin H$. Thus, any properly terminated string $h \in H$ that has $x$ as a prefix must be strictly longer than $x$ ($|h| > |x|$).
+
+    Therefore, the character in $h$ immediately following the prefix $x$ must be some character $a \in \mathcal{A}$. We can partition the set of strings $\{h \in H \mid h \geq x\}$ into mutually disjoint subsets based on this next character $a$:
+    $$
+    \{h \in H \mid h \geq x\} = \bigcup_{a \in \mathcal{A}} \{h \in H \mid h \geq x+a\}.
+    $$
+    Because these subsets are disjoint, we can split the summation over them:
+    \begin{align*}
+        Z_{n,m}(x) &= \sum_{a \in \mathcal{A}} \sum_{\substack{h \in H \\ h \geq x+a}} L_n(h) P_m(h) \\
+        &= \sum_{a \in \mathcal{A}} Z_{n,m}(x+a).
+    \end{align*}
+\end{proof}
+
+We may now introduce the datastructure at the core of Dotter, the Bayesian Trie.
+The Bayesian Trie maintains a calculation of the unnormalized posterior probability
+while allowing for the lazy application of likelihood and prior updates.
+
+\begin{definition}[Bayesian Trie Node]
+    A Bayesian trie node $x$ associated with a string $s \in S$ is a data structure containing the tuple $(k, l, Z)$, accessed via fields:
+    \begin{itemize}
+        \item $x.k \in \mathbb{N}$, the ``likelihood time'' of the node.
+        \item $x.l \in \mathbb{N}$, the ``prior time'' of the node.
+        \item $x.Z \in \mathbb{R}^+$, a computed quantity which should be equal to the unnormalized posterior of the node evaluated at those times, i.e., $x.Z = Z_{x.k, x.l}(s)$.
+    \end{itemize}
+\end{definition}
+
+\begin{definition}[Valid Node]
+    A node, $x$, is called valid at time ($n$, $m$) if it lies beyond the envelope (i.e., the delta's complete prefix code),
+    of every likelihood or prior update that has occurred since the node's time, i.e.,
+    \begin{align*}
+        &\not\exists i, c^L \in C^L_i \text{ such that } c^L > x \text{ and } k < i \leq n \\
+        &\not\exists j, c^P \in C^P_j \text{ such that } c^P > x \text{ and } l < j \leq m
+    \end{align*}
+\end{definition}
+
+\begin{definition}[Bayesian Trie]
+    A Bayesian Trie is a trie of Bayesian trie nodes
+    along with a global tuple describing the current time,
+    $(N, M)$.
+\end{definition}
+
+\begin{definition}[Valid Bayesian Trie]
+    A Bayesian Trie is called valid, if all of its nodes are valid
+    for the trie's global current time, $(N, M)$.
+\end{definition}
+
+\begin{definition}[Node Correctness]
+    A node is ``correct'' if it correctly calculates the unnormalized posterior,
+    $$
+    x.Z = Z_{x.k, x.l}(x)
+    $$
+\end{definition}
+
+\begin{definition}[Bayesian Trie Correctness]
+    The Bayesian trie is ``correct'' if all of its nodes are correct.
+\end{definition}
+
+We may now give the likelihood update algorithm.
+
+\begin{algorithm}[H]
+\caption{Likelihood Update}
+\label{alg:likelihood-update}
+\begin{algorithmic}[1]
+\Require $n$, the time of the likelihood update.
+\Require $trie.N = n - 1$
+\Require $(C^L_n, \Delta^L_n)$, the likelihood delta digest at time $n$.
+\State Run valid descent until reaching all nodes of $C^L_n$.
+\label{alg:likelihood-update-valid-descent}
+\For{each node $x$ in $C^L_n$}
+    \State $x.Z \gets x.Z \cdot \Delta^L_n(x)$
+    \label{alg:likelihood-update-recalc-frontier}
+    \State $x.k \gets n$
+\EndFor
+\For{each node $x$ strictly within the envelop of $C^L_n$, proceeding in reverse topological order}
+    \State $x.Z \gets \sum_{y \in x.\text{children}} y.\text{Z}$
+    \label{alg:likelihood-update-recalc-up-propagation}
+    \State $x.k \gets n$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\begin{theorem}[Valid Likelihood Updates]
+    The validity of a Bayesian Trie is preserved by likelihood updates.
+\end{theorem}
+\begin{proof}
+    This is simple. We visit a node $x$, if and only if it was in the envelope of $C^L_n$.
+    If $x$ was within the envelope, then it was visited and its time was updated to $x.k = n$,
+    which is necessarily valid with respect to likelihood updates since there have not 
+    been any updates after the current time.
+    If $x$ was not within the envelope, this implies that $\not\exists c^L \in C^L_n \text{ such that } c^L > x$,
+    which implies that the validity condition for $x$ is still satisfied.
+    Validity with respect to prior updates is unaffected.
+\end{proof}
+
+\begin{theorem}[Correct Likelihood Updates]
+    The likelihood update preserves the correctness of the Bayesian trie.
+\end{theorem}
+\begin{proof}
+    We prove this by induction on the trie.
+    We first note that step \ref{alg:likelihood-update-valid-descent} preserves the correctness of the trie
+    and guarantees that all nodes within the envelope of $C^L_n$ have time $(n-1, m)$.
+    We then proceed to the induction:
+
+    \textbf{Base Case: } if $x \in C$ then,
+    \begin{align*}
+        Z_{(n, m)} &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h) \\
+        &= \sum_{\substack{h \in H \\ h \geq x}} L_{n-1}(h) P_m(h) \cdot \Delta^L_n(x) \\
+        &= Z_{(n-1, m)}(x) \cdot \Delta^L_n(x) \\
+    \end{align*}
+    which is accomplished by step \ref{alg:likelihood-update-recalc-frontier}.
+
+    \textbf{Inductive Step: } otherwise, $x$ is strictly within the envelope of $C^L_n$.
+    Because we process nodes in reverse topological order, this implies
+    that all of the children of $x$ have already been processed and correctly
+    express the value of $Z_{n, m}$.
+    So step \ref{alg:likelihood-update-recalc-up-propagation} 
+    is correct by lemma \ref{lemma:unterminated-posterior-summation}.
+\end{proof}
+
+\begin{definition}[Cumulative Likelihood Update Frontier]
+    The cumulative likelihood update frontier, $C_n^\Phi$, is the complete
+    prefix code given by the maximal subset of
+    $$
+    \bigcup_{i=0}^{n} C^L_i
+    $$
+    This represents the furthest reach of any likelihood update.
+\end{definition}
+
+\begin{lemma}[Eventually Constant Likelihoods]
+\label{lemma:eventually-constant-likelihoods}
+    Given a cumulative likelihood update frontier, $F$,
+    and a given node in that frontier, $f$,
+    the likelihoods of all properly terminated strings
+    descended from that node are constant, i.e.,
+    $$
+    \forall h \in H, h \geq f, L_n(h) = \prod_{1\leq i \leq n} \Delta^L_i(\lfloor f \rfloor_{C^L_i})
+    $$
+\end{lemma}
+\begin{proof}
+    Recall that $L_0(h) = 1$. By definition of the likelihood sequence, 
+    $$
+    L_n(h) = \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor h \rfloor_{C^L_i}).
+    $$
+    We must show that $\lfloor h \rfloor_{C^L_i} = \lfloor f \rfloor_{C^L_i}$ for all $1\leq i \leq n$.
+    
+    Because $F$ is the minimal elements (maximal subset) of $\bigcup_{i=0}^{n} C^L_i$, any element $f \in F$ is a descendant of or equal to some sequence of elements in each $C^L_i$. In other words, for every $i \in \{1, \dots, n\}$, there exists some $c_i \in C^L_i$ such that $c_i \leq f$. Because $c_i$ is a prefix of $f$, it is exactly the truncation of $f$ under $C^L_i$, so $c_i = \lfloor f \rfloor_{C^L_i}$.
+
+    By hypothesis, $h \geq f$. Since the prefix relation is transitive, $c_i \leq f$ and $f \leq h$ imply $c_i \leq h$. Because $C^L_i$ is a prefix code, $c_i$ is the unique element in $C^L_i$ that is a prefix of $h$. 
+    Therefore, $\lfloor h \rfloor_{C^L_i} = c_i = \lfloor f \rfloor_{C^L_i}$.
+    Substituting this into the product yields the result.
+\end{proof}
+
+\begin{definition}[Prior Update Frontier]
+    Let the prior update frontier, $F^U_{n,m}$, be the minimal subset of
+    the union of $C^P_m$ and $C_n^\Phi$.
+\end{definition}
+
+We can now state the prior update algorithm.
+Recall that we assume oracular access to the branch prior function, $P^{branch}_m(x)$.
+
+\begin{algorithm}[H]
+\caption{Prior Update}
+\label{alg:prior-update}
+\begin{algorithmic}[1]
+\Require $m$, the time of the prior update.
+\Require $trie.M = m - 1$
+\Require $(C^P_m, \Delta^P_m)$, the prior delta digest at time $m$.
+\State Run valid descent until reaching all nodes of $C^P_m$.
+\label{alg:prior-update-valid-descent}
+\For{each node $x$ in $F^U_{n,m}$}
+    \If{$x \in C^\Phi_n$}
+        \State $x.Z \gets P^{branch}_m(x) \prod_i \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
+        \label{alg:prior-update-recalc-frontier-phi}
+    \Else
+    \Comment{$x$ is in $C^P_m$}
+        \State $x.Z \gets x.Z \cdot \Delta^P_m(x)$
+        \label{alg:prior-update-recalc-frontier-p}
+    \EndIf
+    \State $x.l \gets m$
+\EndFor
+\For{each node $x$ strictly within the envelop of $F^U_{n,m}$, proceeding in reverse topological order}
+    \State $x.Z \gets \sum_{y \in x.\text{children}} y.\text{Z}$
+    \label{alg:prior-update-recalc-up-propagation}
+    \State $x.l \gets m$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\begin{theorem}[Valid Prior Updates]
+    The validity of a Bayesian trie is preserved by prior updates.
+\end{theorem}
+\begin{proof}
+    This follows reasoning identical to the likelihood update. We visit a node $x$ if and only if it was within the envelope of $F^U_{n,m}$.
+    If $x$ was within the envelope, then it was visited and its time was updated to $x.l = m$,
+    which is necessarily valid with respect to prior updates since there have not been any prior updates after the current time $m$.
+    If $x$ was not within the envelope, this implies that $\not\exists c^P \in F^U_{n,m}$ such that $c^P > x$. Since $F^U_{n,m}$ is the minimal subset of $C^P_m \cup C^\Phi_n$, its envelope contains the envelope of $C^P_m$. Thus, $\not\exists c^P \in C^P_m$ such that $c^P > x$, which implies that the validity condition for $x$ is still satisfied.
+    Validity with respect to likelihood updates is completely unaffected by prior updates.
+\end{proof}
+
+\begin{theorem}[Correct Prior Updates]
+    The prior update preserves the correctness of the Bayesian trie.
+\end{theorem}
+\begin{proof}
+    We prove this by induction on the trie.
+    We first note that step \ref{alg:prior-update-valid-descent} preserves the correctness of the trie
+    and guarantees that all nodes within the envelope of $F^U_{n,m}$ have been expanded to time $(n, m-1)$.
+    We then proceed to the induction:
+
+    \textbf{Base Case: } We have two cases for a node $x \in F^U_{n,m}$:
+    If $x \in C^P_m$, then by definition of the prior delta digest:
+    \begin{align*}
+        Z_{(n, m)}(x) &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h) \\
+        &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_{m-1}(h) \cdot \Delta^P_m(x) \\
+        &= Z_{(n, m-1)}(x) \cdot \Delta^P_m(x)
+    \end{align*}
+    which is exactly accomplished by step \ref{alg:prior-update-recalc-frontier-p}.
+
+    If $x \in C^\Phi_n$, then we know that for all properly terminated descendants $h \geq x$, the likelihood is constant by Lemma \ref{lemma:eventually-constant-likelihoods}, i.e., $L_n(h) = \prod_i \Delta^L_i(\lfloor x \rfloor_{C^L_i})$. Because the likelihood is independent of the specific descendant $h$, we can factor it out of the summation:
+    \begin{align*}
+        Z_{(n, m)}(x) &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h) \\
+        &= \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \sum_{\substack{h \in H \\ h \geq x}} P_m(h) \\
+        &= \left( \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \right) \cdot P^{branch}_m(x)
+    \end{align*}
+    which is accomplished by step \ref{alg:prior-update-recalc-frontier-phi}.
+
+    \textbf{Inductive Step: } Otherwise, $x$ is strictly within the envelope of $F^U_{n,m}$.
+    Because we process nodes in reverse topological order, this implies
+    that all of the children of $x$ have already been processed and correctly
+    express the value of $Z_{n, m}(y)$ for each child $y$.
+    So step \ref{alg:prior-update-recalc-up-propagation} 
+    is correct by lemma \ref{lemma:unterminated-posterior-summation}.
+\end{proof}
+
+
+
+
+
+
+
+\section{Old Stuff}
 
 We will define the notion of a \emph{valid trie} and prove that it is invariant under the legal operations.
 
@@ -112,7 +565,7 @@ Constant Fields:
     \item \texttt{final\_token}: \textbf{str} --- the token to which this node belongs, if this node is the last character of a token.
     \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
     \item \texttt{ancestor\_final\_tokens}: \textbf{list of strs} --- the $i$-th ancestor final token is the final token of the $i$-th ancestor.
-     (In implementation, this can be an array of the ancestor final token lengths, and we may slice into our value to dervie the final token.)
+     (In implementation, this can be an array of the ancestor final token lengths, and we may slice into our value to derive the final token.)
     \item \texttt{possible\_token\_ancestors}: \textbf{list of bool} --- a list of flags indicating whether the $i$-th ancestor
     could possibly be a token ancestor of this node. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
 \end{itemize}
@@ -147,7 +600,6 @@ Mutable Fields:
     \item \texttt{unpushed\_likelihood}: \textbf{float} --- likelihood that has not been accumulated to descendant nodes.
     \item \texttt{max\_descendant\_likelihood\_for\_token\_ancestor}: \textbf{list of floats} --- the $i$-th element is the 
     maximum (valid) likelihood of any descendant of this node which could also have this node's $i$-th ancestor as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
-    \item \texttt{max\_token\_descendant\_likelihood}: \textbf{float} --- the maximum (valid) likelihood of any descendant of this node which could also have this node as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
 \end{itemize}
 
 
@@ -178,7 +630,6 @@ then we initialize its children.
     \State $y.\text{final\_token\_length} \gets |\mathbf{t}_k|$
     \State $y.\text{ancestor\_final\_tokens}[0] \gets y.\text{final\_token}$
     \State $y.\text{ancestor\_final\_tokens}[i] \gets x.\text{ancestor\_final\_tokens}[i - 1] \quad \forall i \ge 1$
-    \State $y.\text{possible\_token\_ancestors}[i] \gets \texttt{pta\_lut}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]] \quad \forall i$
     % mutable fields
     \State $y.\text{ever\_parent\_of\_visible\_node} \gets \text{false}$
     % prior
@@ -195,9 +646,20 @@ then we initialize its children.
     \State $y.\text{prior} \gets \sum_i y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
     % likelihood
     \State $y.\text{likelihood} \gets x.\text{likelihood}$
+    \If{\texttt{track\_mdlfta}}
+        \State $y.\text{possible\_token\_ancestors}[i] \gets \texttt{pta\_lut}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]] \quad \forall i$
+
+        \Comment{This correctly sets $y.\text{possible\_token\_ancestors}[0]$ to true.}
+        \State $\begin{aligned}[t]
+            &y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets \\
+            &\quad \begin{cases} 
+                x.\text{likelihood} & \text{if } y.\text{possible\_token\_ancestors}[i] \\ 
+                0 & \text{otherwise} 
+            \end{cases} \quad \forall i
+        \end{aligned}$
+        \State $TrackMDLFTA(y)$ Using algorithm \ref{alg:track-mdlfta}.
+    \EndIf
     \State $y.\text{unpushed\_likelihood} \gets 1$
-    \State $y.\text{max\_token\_descendant\_likelihood} \gets x.\text{likelihood}$
-    \State $y.\text{max\_token\_descendant\_likelihoods}[i] \gets x.\text{likelihood} \quad \forall i \text{ s.t. } y.\text{possible\_token\_ancestors}[i]$
     % posterior
     \State $y.\text{posterior\_Z} \gets y.\text{prior} * y.\text{likelihood}$
 \EndFor
@@ -217,14 +679,14 @@ Let $x$ be our current node, and $y$ be a child of $x$.
     % save initial values
     \State $\texttt{old\_prior} \gets y.\text{prior}$
 
-    \If{$y.\text{ever\_parent\_of\_visible\_node} \text{is false}$}
+    \If{$y.\text{ever\_parent\_of\_visible\_node}$ is \text{false}}
         \State $\texttt{old\_likelihood} \gets y.\text{likelihood}$
-        \State $y.\text{likelihood} \gets y.\text{likelihood} * x.\text{unpushed\_likelihood}$
+        \State $y.\text{likelihood} \mathrel{*=} x.\text{unpushed\_likelihood}$
     \EndIf
     %
-    \State $y.\text{unpushed\_likelihood} \gets y.\text{unpushed\_likelihood} * x.\text{unpushed\_likelihood}$
-    \State $y.\text{unpushed\_llm\_results}[i] \gets x.\text{unpushed\_llm\_results}[i] \lor y.\text{unpushed\_llm\_results}[i] \quad \forall i$
-    \State $y.\text{unpushed\_break\_priors}[i] \gets x.\text{unpushed\_break\_priors}[i] \lor y.\text{unpushed\_break\_priors}[i] \quad \forall i$
+    \State $y.\text{unpushed\_likelihood} \mathrel{*=} x.\text{unpushed\_likelihood}$
+    \State $y.\text{unpushed\_llm\_results}[i] \mathrel{\lor=} x.\text{unpushed\_llm\_results}[i] \quad \forall i$
+    \State $y.\text{unpushed\_break\_priors}[i] \mathrel{\lor=} x.\text{unpushed\_break\_priors}[i] \quad \forall i$
     % refresh token fans
     \State $\begin{aligned}[t]
         y.\text{token\_fans}[i] &\gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \\
@@ -248,11 +710,18 @@ Let $x$ be our current node, and $y$ be a child of $x$.
     \Else
         \State $\texttt{prior\_correction} \gets \texttt{y.\text{prior}} / \texttt{old\_prior}$
         \State $\texttt{likelihood\_correction} \gets x.\text{unpushed\_likelihood}$
-        \State $y.\text{posterior\_Z} \gets y.\text{posterior\_Z} * \texttt{prior\_correction} * \texttt{likelihood\_correction}$
+        \State $y.\text{posterior\_Z} \mathrel{*=} \texttt{prior\_correction} * \texttt{likelihood\_correction}$
     \EndIf
     % TODO: think about when max descendant likelihoods is actually handled.
     \If{\texttt{track\_mdlfta} is true and $y.\text{ever\_parent\_of\_visible\_node}$ is false}
-        \State TrackTokenDescendantMaxLikelihood($y$) Using algorithm \ref{alg:track-mdlfta}.
+        \State $\begin{aligned}[t]
+            &y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets \\
+            &\quad \begin{cases} 
+                y.\text{likelihood} & \text{if } y.\text{possible\_token\_ancestors}[i] \\ 
+                0 & \text{otherwise} 
+            \end{cases} \quad \forall i
+        \end{aligned}$
+        \State $TrackMDLFTA(y)$ Using algorithm \ref{alg:track-mdlfta}.
     \EndIf
 \EndFor
 \State $x.\text{unpushed\_likelihood} \gets 1$
@@ -266,9 +735,9 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 \label{alg:track-mdlfta}
 \begin{algorithmic}[1]
 \Require Node $x$
-\Require $x.\text{ever\_parent\_of\_visible\_node}$ is false
-\State $\texttt{new\_mdlfta} \gets \texttt{x}.\text{likelihood}$
-\For{each $i$ such that $x.\text{possible\_token\_ancestors}[i]$ is true}
+\Require $x.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \text{ is already correct for all } i$
+\For{each $i < \texttt{max\_token\_length}$}
+    \State $\texttt{new\_mdlfta} \gets \texttt{x}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i]$
     \State $\texttt{node} \gets x$
     \State $\texttt{dist\_to\_last\_token} \gets i$
     \While{true}
@@ -282,7 +751,11 @@ Let $x$ be our current node, and $y$ be a child of $x$.
         \If{$\texttt{dist\_to\_last\_token} = 0$}
             \State $\texttt{dist\_to\_last\_token} \gets \texttt{node}.\text{final\_token\_length}$
         \EndIf
+        \State $\texttt{dist\_to\_last\_token} \mathrel{-=} 1$
         \State $\texttt{node} \gets \texttt{node}.\text{parent}$
+        \If{$\texttt{node}$ is \text{None}}
+            \State break
+        \EndIf
     \EndWhile
 \EndFor
 \end{algorithmic}
@@ -359,7 +832,7 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 \label{thm:chain-max-likelihood-decreasing}
     For a given character sequence, $S$, and
     a given token sequence, $\mathbf{B}$,
-    the Chain Maximum Likelihood is a descreasing function of the depth.
+    the Chain Maximum Likelihood is a decreasing function of the depth.
 \end{theorem}
 
 \begin{proof}
@@ -387,7 +860,7 @@ Each update must be performed in four phases:
     \item Select intial frontier: we choose a set of nodes from which to begin the algorithm.
     \item Down Propagation: 
     we descend the trie until we reach a ``valid update leafset'' of nodes, i.e., a set of nodes
-    which is a complete prefix partition and for which we can known the unnormalized posteriors of each node.
+    which is a complete prefix partition and for which we can know the unnormalized posteriors of each node.
     Efficiency demands that we recognize once we have reached a valid leafset and stop descending as early as possible.
     \item Fix Leafset: we fix the unnormalized posteriors
     of all the nodes in the valid update leafset.
@@ -404,8 +877,8 @@ that is, $P_0(S | D)$,
 has been invalidated for every node in the trie. 
 We hope to derive $P_1(S | D)$, without summing over the children's posteriors,
 $$
-P_1(S|D) = \sum_i P_1(S_i | D)
-$$.
+P_1(S|D) = \sum_i P_1(S_i | D).
+$$
 
 In general if one term is reweighted, we will have to recalculate,
 but there are four cases in which we can avoid recalculation and descent:
@@ -464,7 +937,7 @@ node in this set has a correctly calculated prior.)
 \textbf{Step 2: Down Propagation:}
 Our initially selected frontier is actually a valid update leafset,
 so no down propagation is necessary.
-Our initially selected frontier is a valid leafset because the 
+Our initially selected frontier is a valid leafset because
 it satisfies case 3 above:
 the likelihood of a given node in this set may not be known explicitly
 (since it may have been the parent to visible children at some time),
@@ -515,8 +988,12 @@ $$
 \For{each node $v \in V$}
     \State Set $b$ to be the node in the bayesian trie corresponding to $v$
     \If{$v$ is a leaf in $V$}
-        \State Set $b.\text{likelihood} \gets b.\text{likelihood} * v.\text{new\_likelihood}$
-        \State Set $b.\text{post\_Z} \gets b.\text{post\_Z} * v.\text{new\_likelihood}$
+        \State $b.\text{likelihood} \mathrel{*=} v.\text{new\_likelihood}$
+        \State $b.\text{post\_Z} \mathrel{*=} v.\text{new\_likelihood}$
+        \If{\texttt{track\_mdlfta}}
+            \State $b.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \mathrel{*=} v.\text{new\_likelihood} \quad \forall i$
+            \State $TrackMDLFTA(b)$ Using algorithm \ref{alg:track-mdlfta}.
+        \EndIf
     \EndIf
 \EndFor
 \State UpPropagation($B$, $V$) Using algorithm \ref{alg:up-propagation}.
@@ -642,7 +1119,7 @@ $$
     \Else \Comment{$x.\text{letter}$ is a space character}
         \State $\texttt{shared\_token} \gets Tokenize(x.\text{value})[|\mathbf{A}|]$
         \State $\texttt{correction\_factor} \gets \frac{\text{New\_LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}$
-        \State $x.\text{post\_Z} \gets x.\text{post\_Z} * \texttt{correction\_factor}$
+        \State $x.\text{post\_Z} \mathrel{*=} \texttt{correction\_factor}$
     \EndIf
 \EndFor
 \Comment{\textbf{Step 4: Up Propagation}}
