@@ -144,21 +144,19 @@
 \@writefile{lot}{\addvspace {10\p@ }}
 \newlabel{chap:trie}{{2}{6}{The Bayesian Trie}{chapter.2}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {2.1}Lazy Posterior Calculation: The Core Algorithms}{6}{section.2.1}\protected@file@percent }
-\newlabel{def:prior-function}{{2.12}{7}{Prior Function}{definition.2.12}{}}
-\newlabel{def:likelihood-sequence}{{2.14}{8}{Likelihood Sequence}{definition.2.14}{}}
-\newlabel{lemma:unterminated-posterior-summation}{{2.1}{8}{}{lemma.2.1}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Likelihood Update}}{10}{algorithm.1}\protected@file@percent }
-\newlabel{alg:likelihood-update}{{1}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
-\newlabel{alg:likelihood-update-valid-descent}{{1}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
-\newlabel{alg:likelihood-update-recalc-frontier}{{3}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
-\newlabel{alg:likelihood-update-recalc-up-propagation}{{6}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
-\newlabel{lemma:eventually-constant-likelihoods}{{2.2}{10}{Eventually Constant Likelihoods}{lemma.2.2}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Prior Update}}{11}{algorithm.2}\protected@file@percent }
-\newlabel{alg:prior-update}{{2}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
-\newlabel{alg:prior-update-valid-descent}{{1}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
-\newlabel{alg:prior-update-recalc-frontier-phi}{{4}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
-\newlabel{alg:prior-update-recalc-frontier-p}{{6}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
-\newlabel{alg:prior-update-recalc-up-propagation}{{9}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
+\newlabel{def:prior-function}{{2.14}{8}{Prior Function}{definition.2.14}{}}
+\newlabel{def:branch-prior-function}{{2.15}{8}{Branch Prior Function}{definition.2.15}{}}
+\newlabel{def:likelihood-sequence}{{2.16}{8}{Likelihood Sequence}{definition.2.16}{}}
+\newlabel{lemma:eventually-constant-likelihoods}{{2.1}{8}{Eventually Constant Likelihoods}{lemma.2.1}{}}
+\newlabel{lemma:posterior-equals-sum-of-children}{{2.2}{9}{Posterior Equals Sum of Children}{lemma.2.2}{}}
+\newlabel{lemma:current-nodes-are-valid}{{2.3}{10}{Current Nodes are Valid}{lemma.2.3}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Advance Node Time}}{10}{algorithm.1}\protected@file@percent }
+\newlabel{alg:advance-node-time}{{1}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
+\newlabel{alg:advance-node-time-constant-likelihood}{{2}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
+\newlabel{alg:advance-node-time-no-reweighting}{{4}{10}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.1}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Advance Trie Time}}{11}{algorithm.2}\protected@file@percent }
+\newlabel{alg:advance-trie-time}{{2}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
+\newlabel{alg:advance-trie-time-recalc-up-propagation}{{6}{11}{Lazy Posterior Calculation: The Core Algorithms}{algorithm.2}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {2.2}Old Stuff}{12}{section.2.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2.3}Token Paths}{12}{section.2.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2.4}Global Variables}{13}{section.2.4}\protected@file@percent }
@@ -177,7 +175,7 @@
 \newlabel{alg:ensure-rooted-subgraph}{{7}{17}{Valid Descent}{algorithm.7}{}}
 \@writefile{loa}{\contentsline {algorithm}{\numberline {8}{\ignorespaces Up Propagation}}{17}{algorithm.8}\protected@file@percent }
 \newlabel{alg:up-propagation}{{8}{17}{Valid Descent}{algorithm.8}{}}
-\newlabel{thm:chain-max-likelihood-decreasing}{{2.7}{18}{}{theorem.2.6.7}{}}
+\newlabel{thm:chain-max-likelihood-decreasing}{{2.5}{18}{}{theorem.2.6.5}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {2.7}Lazy Updates}{18}{section.2.7}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2.8}Likelihood Update}{19}{section.2.8}\protected@file@percent }
 \newlabel{sec:likelihood-update}{{2.8}{19}{Likelihood Update}{section.2.8}{}}

@@ -89,14 +89,37 @@ $H$, where if $h \in H$.
     $$
 \end{definition}
 
-\begin{definition}[Sibling]
-    Two strings $s_1$ and $s_2$ are siblings if and only if $s_1 \neq s_2$ and $s_1[:-1] = s_2[:-1]$.
+\begin{definition}[Refinement]
+    A prefix code, $A$, is a refinement of a prefix code, $B$,
+    if every element of $A$ is an extension of some element of $B$, i.e.,
+    $$
+    \forall a \in A, \exists b \in B, a \geq b
+    $$
+    If this is the case, we write $A \geq B$.
 \end{definition}
 
-\begin{definition}[Complete Sibling Prefix Code]
-    A complete sibling prefix code is a complete prefix code that is closed under the 
-    sibling relation, i.e.,
-    if $s_1, s_2 \in S$ are siblings, then $s_1 \in C \iff s_2 \in C$.
+Refinement is a partial order over complete prefix codes.
+These prefix codes form a lattice, so we may define the meet
+and join of two prefix codes.
+
+\begin{definition}[Meet]
+    The meet of two prefix codes, $A$ and $B$, is the greatest lower bound of $A$ and $B$, i.e.,
+    i.e.,
+    it is the set of minimal elements of their intersection.
+    We write this as $A \wedge B$.
+\end{definition}
+
+\begin{definition}[Join]
+    The join of two prefix codes, $A$ and $B$, is the least upper bound of $A$ and $B$, i.e.,
+    it is the set of maximal elements of their union.
+    We write this as $A \vee B$.
+\end{definition}
+
+\begin{definition}[Element Refinement]
+    We overload the comparison operators when the left hand side is a string
+    and the right hand side is a complete prefix code.
+    $x \leq C$ means that $x$ is a prefix of some element of $C$,
+    whereas $x > C$ means that $x$ is a proper suffix of some element of $C$.
 \end{definition}
 
 \begin{proposition}
@@ -150,6 +173,7 @@ $H$, where if $h \in H$.
 \end{definition}
 
 \begin{definition}[Branch Prior Function]
+\label{def:branch-prior-function}
     We define the branch prior function, $P^{branch}_m(x)$, of an at most properly terminated string $x$,
     as,
     $$
@@ -207,6 +231,30 @@ between the definitions of prior and likelihood functions.
     $$
 \end{definition}
 
+\begin{lemma}[Eventually Constant Likelihoods]
+\label{lemma:eventually-constant-likelihoods}
+    Given the cumulative likelihood update frontier, $\bigvee_{i=0}^N C^L_i$,
+    and a given node in that frontier, $f$,
+    the likelihoods of all properly terminated strings
+    descended from that node are constant, i.e.,
+    $$
+    \forall h \in H, h \geq f, L_n(h) = \prod_{1\leq i \leq n} \Delta^L_i(\lfloor f \rfloor_{C^L_i})
+    $$
+\end{lemma}
+\begin{proof}
+    Recall that $L_0(h) = 1$. By definition of the likelihood sequence, 
+    $$
+    L_n(h) = \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor h \rfloor_{C^L_i}).
+    $$
+    We must show that $\lfloor h \rfloor_{C^L_i} = \lfloor f \rfloor_{C^L_i}$ for all $1\leq i \leq n$.
+    
+    Any element $f \in \bigvee_{i=0}^N C^L_i$ is a descendant of or equal to an element in each $C^L_i$. In other words, for every $i \in \{1, \dots, n\}$, there exists some $c_i \in C^L_i$ such that $c_i \leq f$. Because $c_i$ is a prefix of $f$, it is exactly the truncation of $f$ under $C^L_i$, so $c_i = \lfloor f \rfloor_{C^L_i}$.
+
+    By hypothesis, $h \geq f$. Since the prefix relation is transitive, $c_i \leq f$ and $f \leq h$ imply $c_i \leq h$. Because $C^L_i$ is a prefix code, $c_i$ is the unique element in $C^L_i$ that is a prefix of $h$. 
+    Therefore, $\lfloor h \rfloor_{C^L_i} = c_i = \lfloor f \rfloor_{C^L_i}$.
+    Substituting this into the product yields the result.
+\end{proof}
+
 \begin{definition}[Unnormalized Posterior Function]
     The unnormalized posterior function is a mapping
     from at most properly terminated strings to non-negative real numbers given by
@@ -225,8 +273,8 @@ between the definitions of prior and likelihood functions.
     \end{align*}
 \end{proposition}
 
-\begin{lemma}
-\label{lemma:unterminated-posterior-summation}
+\begin{lemma}[Posterior Equals Sum of Children]
+\label{lemma:posterior-equals-sum-of-children}
     if $x$ is an unterminated string, then
     $$
     Z_{n,m}(x) = \sum_{a \in \mathcal{A}} Z_{n,m}(x+a)
@@ -255,22 +303,42 @@ The Bayesian Trie maintains a calculation of the unnormalized posterior probabil
 while allowing for the lazy application of likelihood and prior updates.
 
 \begin{definition}[Bayesian Trie Node]
-    A Bayesian trie node $x$ associated with a string $s \in S$ is a data structure containing the tuple $(k, l, Z)$, accessed via fields:
+    A Bayesian trie node $x$ associated with a string $s \in S$ is a data structure containing the tuple $(n, m, Z)$, accessed via fields:
     \begin{itemize}
-        \item $x.k \in \mathbb{N}$, the ``likelihood time'' of the node.
-        \item $x.l \in \mathbb{N}$, the ``prior time'' of the node.
-        \item $x.Z \in \mathbb{R}^+$, a computed quantity which should be equal to the unnormalized posterior of the node evaluated at those times, i.e., $x.Z = Z_{x.k, x.l}(s)$.
+        \item $x.n \in \mathbb{N}$, the ``likelihood time'' of the node.
+        \item $x.m \in \mathbb{N}$, the ``prior time'' of the node.
+        \item $x.Z \in \mathbb{R}^+$, a computed quantity which should be equal to the unnormalized posterior of the node evaluated at those times, i.e., $x.Z = Z_{x.n, x.m}(s)$.
     \end{itemize}
 \end{definition}
 
 \begin{definition}[Valid Node]
-    A node, $x$, is called valid at time ($n$, $m$) if it lies beyond the envelope (i.e., the delta's complete prefix code),
-    of every likelihood or prior update that has occurred since the node's time, i.e.,
-    \begin{align*}
-        &\not\exists i, c^L \in C^L_i \text{ such that } c^L > x \text{ and } k < i \leq n \\
-        &\not\exists j, c^P \in C^P_j \text{ such that } c^P > x \text{ and } l < j \leq m
-    \end{align*}
+    A node, $x$, is called valid at time ($N$, $M$)
+    if it satisfies one of the following two conditions:
+    \begin{enumerate}
+        \item \textbf{Constant Likelihood}: $x$ lies beyond
+        the cumulative likelihood update frontier, i.e.,
+        $x \geq \bigvee_{i=0}^N C^L_i$
+        \item \textbf{No Reweighting}:
+        The likelihood and the prior have changed by a constant factor
+        since the node's time, i.e.,
+        $x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$
+    \end{enumerate}
 \end{definition}
+
+\begin{lemma}[Current Nodes are Valid]
+\label{lemma:current-nodes-are-valid}
+    A node is always valid at its own time.
+    I.e.,
+    $(x.n, x.m) = (N, M)$ implies that $x$ is valid at time $(N, M)$.
+\end{lemma}
+\begin{proof}
+    Such a node satisfies the ``No Reweighting'' condition
+    of validity. Because $(x.n, x.m) = (N, M)$, the two 
+    joins are joins over empty sets and thus equal to the root node.
+    Hence,
+        $x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$
+    .
+\end{proof}
 
 \begin{definition}[Bayesian Trie]
     A Bayesian Trie is a trie of Bayesian trie nodes
@@ -286,7 +354,7 @@ while allowing for the lazy application of likelihood and prior updates.
 \begin{definition}[Node Correctness]
     A node is ``correct'' if it correctly calculates the unnormalized posterior,
     $$
-    x.Z = Z_{x.k, x.l}(x)
+    x.Z = Z_{x.n, x.m}(x)
     $$
 \end{definition}
 
@@ -294,218 +362,143 @@ while allowing for the lazy application of likelihood and prior updates.
     The Bayesian trie is ``correct'' if all of its nodes are correct.
 \end{definition}
 
-We may now give the likelihood update algorithm.
-
-\begin{algorithm}[H]
-\caption{Likelihood Update}
-\label{alg:likelihood-update}
-\begin{algorithmic}[1]
-\Require $n$, the time of the likelihood update.
-\Require $trie.N = n - 1$
-\Require $(C^L_n, \Delta^L_n)$, the likelihood delta digest at time $n$.
-\State Run valid descent until reaching all nodes of $C^L_n$.
-\label{alg:likelihood-update-valid-descent}
-\For{each node $x$ in $C^L_n$}
-    \State $x.Z \gets x.Z \cdot \Delta^L_n(x)$
-    \label{alg:likelihood-update-recalc-frontier}
-    \State $x.k \gets n$
-\EndFor
-\For{each node $x$ strictly within the envelop of $C^L_n$, proceeding in reverse topological order}
-    \State $x.Z \gets \sum_{y \in x.\text{children}} y.\text{Z}$
-    \label{alg:likelihood-update-recalc-up-propagation}
-    \State $x.k \gets n$
-\EndFor
-\end{algorithmic}
-\end{algorithm}
-
-\begin{theorem}[Valid Likelihood Updates]
-    The validity of a Bayesian Trie is preserved by likelihood updates.
-\end{theorem}
-\begin{proof}
-    This is simple. We visit a node $x$, if and only if it was in the envelope of $C^L_n$.
-    If $x$ was within the envelope, then it was visited and its time was updated to $x.k = n$,
-    which is necessarily valid with respect to likelihood updates since there have not 
-    been any updates after the current time.
-    If $x$ was not within the envelope, this implies that $\not\exists c^L \in C^L_n \text{ such that } c^L > x$,
-    which implies that the validity condition for $x$ is still satisfied.
-    Validity with respect to prior updates is unaffected.
-\end{proof}
-
-\begin{theorem}[Correct Likelihood Updates]
-    The likelihood update preserves the correctness of the Bayesian trie.
-\end{theorem}
-\begin{proof}
-    We prove this by induction on the trie.
-    We first note that step \ref{alg:likelihood-update-valid-descent} preserves the correctness of the trie
-    and guarantees that all nodes within the envelope of $C^L_n$ have time $(n-1, m)$.
-    We then proceed to the induction:
-
-    \textbf{Base Case: } if $x \in C$ then,
-    \begin{align*}
-        Z_{(n, m)} &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h) \\
-        &= \sum_{\substack{h \in H \\ h \geq x}} L_{n-1}(h) P_m(h) \cdot \Delta^L_n(x) \\
-        &= Z_{(n-1, m)}(x) \cdot \Delta^L_n(x) \\
-    \end{align*}
-    which is accomplished by step \ref{alg:likelihood-update-recalc-frontier}.
-
-    \textbf{Inductive Step: } otherwise, $x$ is strictly within the envelope of $C^L_n$.
-    Because we process nodes in reverse topological order, this implies
-    that all of the children of $x$ have already been processed and correctly
-    express the value of $Z_{n, m}$.
-    So step \ref{alg:likelihood-update-recalc-up-propagation} 
-    is correct by lemma \ref{lemma:unterminated-posterior-summation}.
-\end{proof}
-
-\begin{definition}[Cumulative Likelihood Update Frontier]
-    The cumulative likelihood update frontier, $C_n^\Phi$, is the complete
-    prefix code given by the maximal subset of
-    $$
-    \bigcup_{i=0}^{n} C^L_i
-    $$
-    This represents the furthest reach of any likelihood update.
-\end{definition}
-
-\begin{lemma}[Eventually Constant Likelihoods]
-\label{lemma:eventually-constant-likelihoods}
-    Given a cumulative likelihood update frontier, $F$,
-    and a given node in that frontier, $f$,
-    the likelihoods of all properly terminated strings
-    descended from that node are constant, i.e.,
-    $$
-    \forall h \in H, h \geq f, L_n(h) = \prod_{1\leq i \leq n} \Delta^L_i(\lfloor f \rfloor_{C^L_i})
-    $$
-\end{lemma}
-\begin{proof}
-    Recall that $L_0(h) = 1$. By definition of the likelihood sequence, 
-    $$
-    L_n(h) = \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor h \rfloor_{C^L_i}).
-    $$
-    We must show that $\lfloor h \rfloor_{C^L_i} = \lfloor f \rfloor_{C^L_i}$ for all $1\leq i \leq n$.
-    
-    Because $F$ is the minimal elements (maximal subset) of $\bigcup_{i=0}^{n} C^L_i$, any element $f \in F$ is a descendant of or equal to some sequence of elements in each $C^L_i$. In other words, for every $i \in \{1, \dots, n\}$, there exists some $c_i \in C^L_i$ such that $c_i \leq f$. Because $c_i$ is a prefix of $f$, it is exactly the truncation of $f$ under $C^L_i$, so $c_i = \lfloor f \rfloor_{C^L_i}$.
-
-    By hypothesis, $h \geq f$. Since the prefix relation is transitive, $c_i \leq f$ and $f \leq h$ imply $c_i \leq h$. Because $C^L_i$ is a prefix code, $c_i$ is the unique element in $C^L_i$ that is a prefix of $h$. 
-    Therefore, $\lfloor h \rfloor_{C^L_i} = c_i = \lfloor f \rfloor_{C^L_i}$.
-    Substituting this into the product yields the result.
-\end{proof}
-
-\begin{definition}[Prior Update Frontier]
-    Let the prior update frontier, $F^U_{n,m}$, be the minimal subset of
-    the union of $C^P_m$ and $C_n^\Phi$.
-\end{definition}
-
-We can now state the prior update algorithm.
+We may now give the algorithm to advance a node's time.
+This algorithm recalculates the unnormalized posterior
+of a valid node, $x$, to a new time, $(n', m')$.
 Recall that we assume oracular access to the branch prior function, $P^{branch}_m(x)$.
+\begin{algorithm}[H]
+\caption{Advance Node Time}
+\label{alg:advance-node-time}
+\begin{algorithmic}[1]
+\Require $x$, the node to update.
+\Require $(n, m)$, the node's current time.
+\Require $(n', m')$, the new time.
+\Require $(N, M)$, the trie's current time.
+\Require $x$ is valid at time $(N, M)$.
+\If{$x \geq \bigvee_{i=0}^N C^L_i$}
+    \State $x.Z \gets P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
+    \label{alg:advance-node-time-constant-likelihood}
+\Else
+    \Comment{$x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$}
+    \State $x.Z \gets x.Z \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i})$
+    \label{alg:advance-node-time-no-reweighting}
+\EndIf
+\State $x.n \gets n'$
+\State $x.m \gets m'$
+\end{algorithmic}
+\end{algorithm}
+
+We also provide for advancing the trie to a new global time.
 
 \begin{algorithm}[H]
-\caption{Prior Update}
-\label{alg:prior-update}
+\caption{Advance Trie Time}
+\label{alg:advance-trie-time}
 \begin{algorithmic}[1]
-\Require $m$, the time of the prior update.
-\Require $trie.M = m - 1$
-\Require $(C^P_m, \Delta^P_m)$, the prior delta digest at time $m$.
-\State Run valid descent until reaching all nodes of $C^P_m$.
-\label{alg:prior-update-valid-descent}
-\For{each node $x$ in $F^U_{n,m}$}
-    \If{$x \in C^\Phi_n$}
-        \State $x.Z \gets P^{branch}_m(x) \prod_i \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
-        \label{alg:prior-update-recalc-frontier-phi}
-    \Else
-    \Comment{$x$ is in $C^P_m$}
-        \State $x.Z \gets x.Z \cdot \Delta^P_m(x)$
-        \label{alg:prior-update-recalc-frontier-p}
-    \EndIf
-    \State $x.l \gets m$
-\EndFor
-\For{each node $x$ strictly within the envelop of $F^U_{n,m}$, proceeding in reverse topological order}
+\Require $(N, M)$, the trie's current time.
+\Require $(N', M')$, the new time.
+\State $trie.N \gets N'$
+\State $trie.M \gets M'$
+\State Select $F$, a complete prefix code
+such that $x \geq F$ implies $x$ is valid at time $(N', M')$.
+\State Run \texttt{AdvanceNodeTime} to update the time of
+each node in this frontier to $(N', M')$.
+\For{each node $x$ strictly within $F$, $x < F$, proceeding in reverse topological order}
     \State $x.Z \gets \sum_{y \in x.\text{children}} y.\text{Z}$
-    \label{alg:prior-update-recalc-up-propagation}
-    \State $x.l \gets m$
+    \label{alg:advance-trie-time-recalc-up-propagation}
+    \State $x.n \gets N'$
+    \State $x.m \gets M'$
 \EndFor
 \end{algorithmic}
 \end{algorithm}
 
-\begin{theorem}[Valid Prior Updates]
-    The validity of a Bayesian trie is preserved by prior updates.
+We now show that both algorithms preserve
+the validity of the trie and its correctness.
+
+\begin{theorem}[Advance Node Time Validity]
+    The \texttt{AdvanceNodeTime} algorithm preserves the validity of the node.
 \end{theorem}
 \begin{proof}
-    This follows reasoning identical to the likelihood update. We visit a node $x$ if and only if it was within the envelope of $F^U_{n,m}$.
-    If $x$ was within the envelope, then it was visited and its time was updated to $x.l = m$,
-    which is necessarily valid with respect to prior updates since there have not been any prior updates after the current time $m$.
-    If $x$ was not within the envelope, this implies that $\not\exists c^P \in F^U_{n,m}$ such that $c^P > x$. Since $F^U_{n,m}$ is the minimal subset of $C^P_m \cup C^\Phi_n$, its envelope contains the envelope of $C^P_m$. Thus, $\not\exists c^P \in C^P_m$ such that $c^P > x$, which implies that the validity condition for $x$ is still satisfied.
-    Validity with respect to likelihood updates is completely unaffected by prior updates.
+    The ``constant likelihood'' depends only on the global time,
+    so updating the node's time does not affect if this condition is satisfied.
+    The ``no reweighting'' condition is weakened by increasing the node's time.
+    I.e.,
+    $$
+    x \geq \bigvee_{i=n}^N C^L_i \implies x \geq \bigvee_{i=n'}^{N} C^L_i
+    $$
+    and,
+    $$
+    x \geq \bigvee_{i=m}^M C^P_i \implies x \geq \bigvee_{i=m'}^{M} C^P_i
+    $$
+    if $n' \geq n$.
 \end{proof}
 
-\begin{theorem}[Correct Prior Updates]
-    The prior update preserves the correctness of the Bayesian trie.
+\begin{theorem}[Advance Trie Time Correctness]
+    The \texttt{AdvanceTrieTime} algorithm preserves the correctness of the node.
 \end{theorem}
 \begin{proof}
-    We prove this by induction on the trie.
-    We first note that step \ref{alg:prior-update-valid-descent} preserves the correctness of the trie
-    and guarantees that all nodes within the envelope of $F^U_{n,m}$ have been expanded to time $(n, m-1)$.
-    We then proceed to the induction:
+    We show this for the two cases of valid nodes.
 
-    \textbf{Base Case: } We have two cases for a node $x \in F^U_{n,m}$:
-    If $x \in C^P_m$, then by definition of the prior delta digest:
+    \textbf{Constant Likelihood Case:} If $x$ satisfies,
+    $x \geq \bigvee_{i=0}^N C^L_i$, 
+    then,
     \begin{align*}
-        Z_{(n, m)}(x) &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h) \\
-        &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_{m-1}(h) \cdot \Delta^P_m(x) \\
-        &= Z_{(n, m-1)}(x) \cdot \Delta^P_m(x)
+    Z_{n',m'}(x) &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) L_{n'}(h) \\
+    &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) \prod_{i=1}^{n'} \Delta^L_i(\lfloor h \rfloor_{C^L_i}) \\
+    &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) && \text{by lemma \ref{lemma:eventually-constant-likelihoods}} \\
+    &= P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) && \text{by definition \ref{def:branch-prior-function}}
     \end{align*}
-    which is exactly accomplished by step \ref{alg:prior-update-recalc-frontier-p}.
+    which is accomplished by line \ref{alg:advance-node-time-constant-likelihood}.
 
-    If $x \in C^\Phi_n$, then we know that for all properly terminated descendants $h \geq x$, the likelihood is constant by Lemma \ref{lemma:eventually-constant-likelihoods}, i.e., $L_n(h) = \prod_i \Delta^L_i(\lfloor x \rfloor_{C^L_i})$. Because the likelihood is independent of the specific descendant $h$, we can factor it out of the summation:
+    \textbf{No Reweighting Case:} If $x$ satisfies,
+    $x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$,
+    then,
     \begin{align*}
-        Z_{(n, m)}(x) &= \sum_{\substack{h \in H \\ h \geq x}} L_n(h) P_m(h) \\
-        &= \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \sum_{\substack{h \in H \\ h \geq x}} P_m(h) \\
-        &= \left( \prod_{1 \leq i \leq n} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \right) \cdot P^{branch}_m(x)
+    Z_{n',m'}(x) &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) L_{n'}(h) \\
+    &= \sum_{\substack{h \in H \\ h \geq x}} \left( L_{n}(h) \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor h \rfloor_{C^L_i}) \right) \left( P_m(h) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor h \rfloor_{C^P_i}) \right) \\
+    &= \sum_{\substack{h \in H \\ h \geq x}} L_{n}(h) P_m(h) \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor h \rfloor_{C^L_i}) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor h \rfloor_{C^P_i}) \\
+    &= Z_{n,m}(x) \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i})
     \end{align*}
-    which is accomplished by step \ref{alg:prior-update-recalc-frontier-phi}.
-
-    \textbf{Inductive Step: } Otherwise, $x$ is strictly within the envelope of $F^U_{n,m}$.
-    Because we process nodes in reverse topological order, this implies
-    that all of the children of $x$ have already been processed and correctly
-    express the value of $Z_{n, m}(y)$ for each child $y$.
-    So step \ref{alg:prior-update-recalc-up-propagation} 
-    is correct by lemma \ref{lemma:unterminated-posterior-summation}.
+    which is accomplished by line \ref{alg:advance-trie-time-recalc-up-propagation}.
 \end{proof}
 
+\begin{theorem}[Advance Trie Time Validity]
+    We must show that after running \texttt{AdvanceTrieTime},
+    the trie is valid at its new time, $(N', M')$.
+\end{theorem}
+\begin{proof}
+    By assumption, if $x \geq F$, then $x$ is valid at the new time.
+    Otherwise, $x$ is strictly within $F$. All such nodes
+    are updated to have the new time $(x.n, x.m) = (N', M')$.
+    By lemma \ref{lemma:current-nodes-are-valid}, these nodes are valid at their new time.
+\end{proof}
 
+\begin{theorem}[Advance Trie Time Correctness]
+    The \texttt{AdvanceTrieTime} algorithm preserves the correctness of the trie.
+\end{theorem}
+\begin{proof}
+    We show this by induction on the trie.
+
+    We are concerned with nodes, $x \leq F$, since nodes
+    which are beyond the update boundary, $x > F$, are unaffected
+    by the algorithm.
+
+    At the start of the algorithm, all nodes are valid and correct.
+    
+    \textbf{Base Case: } If $x \in F$, the $x$ is valid and correct
+    and we have already shown that running \texttt{AdvanceNodeTime} on $x$ preserves its validity and correctness.
+
+    \textbf{Induction Step: } If $x < F$, then, because
+    we process nodes in reverse topological order, by the induction hypothesis,
+    all its immediate children are correct and have time $(N', M')$.
+    Thus line \ref{alg:advance-trie-time-recalc-up-propagation} recalculates the unnormalized posterior of $x$ correctly
+    by lemma \ref{lemma:posterior-equals-sum-of-children}.
+\end{proof}
 
 
 
 
 
 \section{Old Stuff}
-
-We will define the notion of a \emph{valid trie} and prove that it is invariant under the legal operations.
-
-\begin{definition}[Fresh]
-    A node in the trie is called \emph{fresh} if none of its parents
-    have non-empty ``unpushed'' fields. Otherwise, it is called \emph{stale}.
-\end{definition}
-
-\begin{definition}[Valid Trie]
-A trie is called \emph{valid} if the following conditions hold:
-\begin{enumerate}
-    \item \textbf{Posterior Correctness:} The posterior of every fresh node is correct, up to the normalizing constant $P(D)$.
-    \item \textbf{Unpushed Consistency:} For every node with ``unpushed'' fields, one of the following two conditions holds:
-    \begin{enumerate}
-        \item The node has a valid likelihood (i.e., it has never been a parent to a visible node).
-        \item All unpushed likelihoods and unpushed priors apply uniformly to all descendants of the node.
-    \end{enumerate}
-\end{enumerate}
-\end{definition}
-
-\begin{theorem}[Valid Descent]
-    If a trie is valid, then it remains valid after performing the valid descent algorithm.
-\end{theorem}
-
-\begin{theorem}[Valid Updates]
-    If a trie is valid, then it remains valid after performing a valid likelihood or prior update.
-\end{theorem}
-
-
 
 \section{Token Paths}
 In our notation, we use uppercase letters for sequences (either of letters or of tokens) and lowercase letters for individual elements. Furthermore, we use bold font for tokens (whether a single token or a sequence of tokens) to distinguish them from literal characters or strings.
