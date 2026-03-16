@@ -375,13 +375,12 @@ Recall that we assume oracular access to the branch prior function, $P^{branch}_
 \Require $(n', m')$, the new time.
 \Require $(N, M)$, the trie's current time.
 \Require $x$ is valid at time $(N, M)$.
-\If{$x \geq \bigvee_{i=1}^N C^L_i$}
-    \State $x.Z \gets P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
-    \label{alg:advance-node-time-constant-likelihood}
-\Else
-    \Comment{$x \geq \bigvee_{i=x.n+1}^N C^L_i$ and $x \geq \bigvee_{i=x.m+1}^M C^P_i$}
+\If{ $x \geq \bigvee_{i=x.n+1}^N C^L_i$ and $x \geq \bigvee_{i=x.m+1}^M C^P_i$}
     \State $x.Z \gets x.Z \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i})$
     \label{alg:advance-node-time-no-reweighting}
+\Else{ $x \geq \bigvee_{i=1}^N C^L_i$}
+    \State $x.Z \gets P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
+    \label{alg:advance-node-time-constant-likelihood}
 \EndIf
 \State $x.n \gets n'$
 \State $x.m \gets m'$
@@ -395,11 +394,12 @@ We also provide for advancing the trie to a new global time.
 \label{alg:advance-trie-time}
 \begin{algorithmic}[1]
 \Require $(N, M)$, the trie's current time.
+\Require $trie$ is valid at time $(N, M)$.
 \Require $(N', M')$, the new time.
 \State $trie.N \gets N'$
 \State $trie.M \gets M'$
-\State Select $F$, a complete prefix code
-such that $x \geq F$ implies $x$ is valid at time $(N', M')$.
+\State $F \gets \bigvee_{i=1}^{N'} C^L_i \wedge \left(\bigvee_{i=N+1}^{N'} C^L_i \vee \bigvee_{i=M+1}^{M'} C^P_i\right)$
+\Comment $x \geq F$ implies $x$ is valid at time $(N', M')$.
 \State Run \texttt{AdvanceNodeTime} to update the time of
 each node in this frontier to $(N', M')$.
 \For{each node $x$ strictly within $F$, $x < F$, proceeding in reverse topological order}
@@ -432,8 +432,8 @@ the validity of the trie and its correctness.
     if $n' \geq n$.
 \end{proof}
 
-\begin{theorem}[Advance Trie Time Correctness]
-    The \texttt{AdvanceTrieTime} algorithm preserves the correctness of the node.
+\begin{theorem}[Advance Node Time Correctness]
+    The \texttt{AdvanceNodeTime} algorithm preserves the correctness of the node.
 \end{theorem}
 \begin{proof}
     We show this for the two cases of valid nodes.
@@ -461,12 +461,36 @@ the validity of the trie and its correctness.
     which is accomplished by line \ref{alg:advance-trie-time-recalc-up-propagation}.
 \end{proof}
 
+\begin{lemma}[Frontier Calculation]
+\label{lemma:frontier-calculation}
+    If $F = \bigvee_{i=1}^{N'} C^L_i \wedge \left(\bigvee_{i=N+1}^{N'} C^L_i \vee \bigvee_{i=M+1}^{M'} C^P_i\right)$,
+    then $x \geq F$ and $x$ is valid at time $(N, M)$ imply $x$ is valid at time $(N', M')$.
+\end{lemma}
+\begin{proof}
+    If $x \geq F$, then either, $x \geq \bigvee_{i=1}^{N'} C^L_i$ or $x \geq \bigvee_{i=N+1}^{N'} C^L_i \vee \bigvee_{i=M+1}^{M'} C^P_i$.
+    The first case is exactly the same as the ``Constant Likelihood'' branch in the definition of validity at time $(N', M')$.
+    So we only need to consider the second case where $x \geq \bigvee_{i=N+1}^{N'} C^L_i \vee \bigvee_{i=M+1}^{M'} C^P_i$.
+
+    The other assumption, that $x$ is valid at time $(N, M)$, also has two cases: either,
+    $x \geq \bigvee_{i=1}^N C^L_i$ or $x \geq \bigvee_{i=x.n+1}^N C^L_i \vee \bigvee_{i=x.m+1}^M C^P_i$.
+
+    \textbf{Case 1: } If $x \geq \bigvee_{i=1}^N C^L_i$ and $x \geq \bigvee_{i=N+1}^{N'} C^L_i \vee \bigvee_{i=M+1}^{M'} C^P_i$,
+    then we may combine the two joins over the likelihood frontiers to write,
+    $x \geq \bigvee_{i=1}^{N'} C^L_i$, which is the ``Constant Likelihood'' branch
+    for validity at time $(N', M')$.
+
+    \textbf{Case 2: } If $x \geq \bigvee_{i=x.n+1}^N C^L_i \vee \bigvee_{i=x.m+1}^M C^P_i$ and $x \geq \bigvee_{i=N+1}^{N'} C^L_i \vee \bigvee_{i=M+1}^{M'} C^P_i$,
+    then we may combine the joins over the likelihood and prior frontiers to write,
+    $x \geq \bigvee_{i=x.n+1}^{N'} C^L_i \vee \bigvee_{i=x.m+1}^{M'} C^P_i$, which is the ``No Reweighting'' branch
+    for validity at time $(N', M')$.
+\end{proof}
+
 \begin{theorem}[Advance Trie Time Validity]
     We must show that after running \texttt{AdvanceTrieTime},
     the trie is valid at its new time, $(N', M')$.
 \end{theorem}
 \begin{proof}
-    By assumption, if $x \geq F$, then $x$ is valid at the new time.
+    By lemma \ref{lemma:frontier-calculation}, if $x \geq F$, then $x$ is valid at the new time.
     Otherwise, $x$ is strictly within $F$. All such nodes
     are updated to have the new time $(x.n, x.m) = (N', M')$.
     By lemma \ref{lemma:current-nodes-are-valid}, these nodes are valid at their new time.
@@ -493,6 +517,118 @@ the validity of the trie and its correctness.
     Thus line \ref{alg:advance-trie-time-recalc-up-propagation} recalculates the unnormalized posterior of $x$ correctly
     by lemma \ref{lemma:posterior-equals-sum-of-children}.
 \end{proof}
+
+
+
+\section{Likelihood Tracking}
+The preceding algorithm is correct, but we wish to avoid keeping all the
+$\Delta^L_i$ in memory globally and the cost of calculating truncations, $\lfloor x \rfloor_{C^L_i}$.
+To do so we introduce a field called ``unpushed likelihood'' which will be used 
+to track the product of likelihood deltas.
+Furthermore, we limit ourselves to handling a single likelihood update at a time.
+
+Formally, we define augmented nodes with an $x.l$ field, describining the unpushed likelihood.
+We define an augmented trie corresponding to these nodes.
+
+\begin{algorithm}[H]
+\caption{Single Likelihood Update}
+\label{alg:single-likelihood-update}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$
+\Require $B$ is valid at time $(N, M)$.
+\For{each node $x < C^L_{N+1}$ in topological order}
+    \State $y.l \gets y.l * x.l  \quad \forall y \in x.\text{children}$
+    \label{alg:single-likelihood-update-downprop-1}
+    \State $x.l \gets 1$
+    \label{alg:single-likelihood-update-downprop-2}
+\EndFor
+\Comment{For each $x \in C^L_{N+1}$, the product $\prod_{i=x.n+1}^{N} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$ is the unpushed likelihood, $x.l$.}
+\For{each node $x \in C^L_{N+1}$}
+    \State $x.l \gets x.l * \Delta^L_{N+1}(x)$
+    \label{alg:single-likelihood-update-create-unpushed-likelihood}
+\EndFor
+\State Run \texttt{AdvanceTrieTime} to the new time of $(N+1, M)$.
+\For{each node $x \in C^L_{N+1}$}
+    \State $y.l \gets y.l * x.l \quad \forall y \in x.\text{children}$
+    \label{alg:single-likelihood-update-final-downprop-1}
+    \State $x.l \gets 1$
+    \label{alg:single-likelihood-update-final-downprop-2}
+\EndFor
+\State $B.N \gets B.N+1$
+\end{algorithmic}
+\end{algorithm}
+
+We define our invariant, ``push correctness'':
+
+\begin{definition}[Push Correctness]
+\label{def:push-correctness}
+    We say that a Bayesian trie $B$ is push correct for time $(N, M)$ if,
+    for every node whose descendant likelihoods have changed by a constant factor,
+    that factor is equal to the product of the ``unpushed likelihood'' fields of all of its ancestors (including itself).
+    I.e.,
+    \[
+    \forall x,\, x \geq \bigvee_{i=x.n+1}^{N} C^L_i \implies \prod_{y \leq x} y.l = \prod_{i = x.n+1}^{N} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
+    \]
+\end{definition}
+
+\begin{theorem}[Single Likelihood Update Push Correctness]
+\label{theorem:single-likelihood-update-push-correctness}
+    The \texttt{SingleLikelihoodUpdate} algorithm preserves push correctness.
+\end{theorem}
+\begin{proof}
+    There are two cases to consider: $x \leq C^L_{N+1}$ and $x > C^L_{N+1}$.
+    For $x \leq C^L_{N+1}$, push correctness is trivially satisfied. 
+    By the end of the algorithm, such a node's local time has been updated to $x.n = N+1$ 
+    (during the call to \texttt{AdvanceTrieTime}), making the empty product on the right-hand side equal to 1. 
+    Correspondingly, its unpushed likelihood $x.l$ has been set to 1,
+    leaving the left-hand side product equal to 1.
+
+    If $x > C^L_{N+1}$, we rely on the inductive assumption that the trie was push correct
+    at the start of the algorithm.
+    In this case, lines~\ref{alg:single-likelihood-update-downprop-1} and~\ref{alg:single-likelihood-update-downprop-2}
+    do not affect the push correctness for these nodes since unpushed likelihood
+    is simply moved from one ancestor to another, leaving the total product $\prod_{y \leq x} y.l$ unchanged.
+    On line~\ref{alg:single-likelihood-update-create-unpushed-likelihood},
+    we transition from being correct for time $(N, M)$ to being correct for time $(N+1, M)$.
+    For every node $x > C^L_{N+1}$, we correctly multiply the factor $\Delta^L_{N+1}(\lfloor x \rfloor_{C^L_{N+1}})$ 
+    into the unpushed likelihood of the ancestor node in $C^L_{N+1}$.
+    Finally, on lines~\ref{alg:single-likelihood-update-final-downprop-1} and~\ref{alg:single-likelihood-update-final-downprop-2},
+    we once again merely redistribute the unpushed likelihood among ancestors without changing the total product.
+\end{proof}
+
+\begin{lemma}[Equivalence of Unpushed Likelihood]
+\label{lemma:equivalence-unpushed-likelihood}
+    Immediately before the call to \texttt{AdvanceTrieTime} in \texttt{SingleLikelihoodUpdate}, 
+    for every node $x \in C^L_{N+1}$, the value $x.l$ is exactly equal to the historical product 
+    of likelihood deltas:
+    \[
+    x.l = \prod_{i=x.n+1}^{N+1} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
+    \]
+\end{lemma}
+\begin{proof}
+    Before line~\ref{alg:single-likelihood-update-create-unpushed-likelihood}, the first loop has propagated all 
+    unpushed likelihoods down to the nodes in $C^L_{N+1}$. By the push correctness invariant for time $N$ 
+    (which applies since $x \in C^L_{N+1} \implies x \geq \bigvee_{i=x.n+1}^N C^L_i$), and because 
+    all proper ancestors $y < x$ have had their $y.l$ set to 1, the value of $x.l$ is exactly 
+    $\prod_{i=x.n+1}^N \Delta^L_i(\lfloor x \rfloor_{C^L_i})$. 
+    Line~\ref{alg:single-likelihood-update-create-unpushed-likelihood} then multiplies $x.l$ by 
+    $\Delta^L_{N+1}(\lfloor x \rfloor_{C^L_{N+1}})$, extending the product to $N+1$.
+\end{proof}
+
+\begin{corollary}[Correctness of Efficient AdvanceNodeTime]
+\label{corollary:efficient-advancenodetime}
+    In an efficient implementation of \texttt{AdvanceNodeTime} for a likelihood update, 
+    the calculation of the new posterior $x.Z$ for nodes $x \in C^L_{N+1}$ 
+    (line~\ref{alg:advance-node-time-no-reweighting} of Algorithm~\ref{alg:advance-node-time}) 
+    can replace the explicit product over historical deltas with a single multiplication by $x.l$:
+    \[
+    x.Z \gets x.Z \cdot x.l
+    \]
+    Because this substitution yields the exact same mathematical value for $x.Z$ by 
+    Lemma~\ref{lemma:equivalence-unpushed-likelihood}, this efficient $O(1)$ implementation 
+    trivially inherits the Validity and Correctness theorems proven for the abstract \texttt{AdvanceTrieTime}.
+\end{corollary}
+
 
 
 
