@@ -35,10 +35,6 @@ Our analysis has five parts:
     \item We present the full algorithms.
 \end{enumerate}
 
-\textit{Note: } It is helpful to make three kinds of distinctions: (1) between sets and their elements,
-(2) between sequences and their elements, and (3) between characters and tokens. We will choose to 
-use uppercase letters for sets, the vector notataion for sequences, and bold font for tokens.
-For example, $\mathbf{\vec{A}}$ would represent a set of token sequences while $a$ would represent a character.
 
 \section{Lazy Posterior Calculation: The Core Algorithms}
 
@@ -174,10 +170,10 @@ and join of two prefix codes.
 
 \begin{definition}[Branch Prior Function]
 \label{def:branch-prior-function}
-    We define the branch prior function, $P^{branch}_m(x)$, of an at most properly terminated string $x$,
+    We define the branch prior function, $P^{br}_m(x)$, of an at most properly terminated string $x$,
     as,
     $$
-    P^{branch}_m(x) = \sum_{\substack{h \in H \\ h \geq x}} P_m(h)
+    P^{br}_m(x) = \sum_{\substack{h \in H \\ h \geq x}} P_m(h)
     $$
 \end{definition}
 \textit{Terminology Note: } The branch prior function corresponds to our usual notion of a prior over
@@ -365,7 +361,7 @@ while allowing for the lazy application of likelihood and prior updates.
 We may now give the algorithm to advance a node's time.
 This algorithm recalculates the unnormalized posterior
 of a valid node, $x$, to a new time, $(n', m')$.
-Recall that we assume oracular access to the branch prior function, $P^{branch}_m(x)$.
+Recall that we assume oracular access to the branch prior function, $P^{br}_m(x)$.
 \begin{algorithm}[H]
 \caption{Advance Node Time}
 \label{alg:advance-node-time}
@@ -379,7 +375,7 @@ Recall that we assume oracular access to the branch prior function, $P^{branch}_
     \State $x.Z \gets x.Z \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i})$
     \label{alg:advance-node-time-no-reweighting}
 \Else{ $x \geq \bigvee_{i=1}^N C^L_i$}
-    \State $x.Z \gets P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
+    \State $x.Z \gets P^{br}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
     \label{alg:advance-node-time-constant-likelihood}
 \EndIf
 \State $x.n \gets n'$
@@ -445,7 +441,7 @@ the validity of the trie and its correctness.
     Z_{n',m'}(x) &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) L_{n'}(h) \\
     &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) \prod_{i=1}^{n'} \Delta^L_i(\lfloor h \rfloor_{C^L_i}) \\
     &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) && \text{by lemma \ref{lemma:eventually-constant-likelihoods}} \\
-    &= P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) && \text{by definition \ref{def:branch-prior-function}}
+    &= P^{br}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) && \text{by definition \ref{def:branch-prior-function}}
     \end{align*}
     which is accomplished by line \ref{alg:advance-node-time-constant-likelihood}.
 
@@ -630,14 +626,12 @@ We define our invariant, ``push correctness'':
 \end{corollary}
 
 
+\section{Character Priors from Token Models}
 
-
-
-
-\section{Old Stuff}
-
-\section{Token Paths}
-In our notation, we use uppercase letters for sequences (either of letters or of tokens) and lowercase letters for individual elements. Furthermore, we use bold font for tokens (whether a single token or a sequence of tokens) to distinguish them from literal characters or strings.
+\textit{Note: } It is helpful to make three kinds of distinctions: (1) between sets and their elements,
+(2) between sequences and their elements, and (3) between characters and tokens. We will choose to 
+use uppercase letters for sets, Greek letters for individual characters, and bold font for token sequences.
+For example, $\mathbf{A}$ would represent a set of token sequences while $\alpha$ would represent a character.
 
 Since Dotter uses a letter-by-letter trie, but language models return token probabilities,
 we face the task of converting a token model to a literal model.
@@ -655,10 +649,213 @@ We can see that a literal prefix can correspond to multiple
 token prefixes (empty string, \texttt{sci}, and \texttt{sc}), and that for a given token prefix, the literal prefix
 can be generated from multiple terminal tokens (\texttt{science}, \texttt{scientific}).
 
+Here we introduce a formalization of tokenization and a key property
+of byte-pair encoders.
+
+\begin{definition}[Token]
+    A token is a non-empty string.
+\end{definition}
+
+\begin{definition}[Token Set]
+    A token set is a set of tokens.
+    We will use the notation $\mathbf{\Lambda}$ to represent our token set.
+\end{definition}
+
+\begin{definition}[Stop Token]
+    We will require that our token set contain a token corresponding to the ``stop'' character,
+    $\text{\textquotesingle}\blacksquare\text{\textquotesingle}$.
+\end{definition}
+
+\begin{definition}[Properly Terminated Token Sequence]
+    A token sequence is properly terminated if and only if it ends with the stop token, with all
+    preceding tokens not being the stop token. I.e.,
+    \[
+    \forall i \quad (i = |\mathbf{a}| - 1 \iff \mathbf{a}[i] = \text{\textquotesingle}\blacksquare\text{\textquotesingle})
+    \]
+\end{definition}
+
+Analogously to the string case, we will use the notation $\mathbf{H}$ to
+represent the set of all properly terminated token sequences.
+
+\begin{definition}[Token Sequence]
+    A token sequence is a sequence of tokens.
+\end{definition}
+
+\begin{definition}[Literalization Function]
+    The literalization function, $T^{-1}$, maps a token sequence to a string, by concatenating its tokens.
+    I.e.,
+    $T^{-1}(\mathbf{a}) = Concat_{i < |\mathbf{a}|}(\mathbf{a}[i])$.
+\end{definition}
+
+\begin{definition}[Tokenization Function]
+    A tokenization function is a mapping from strings to token sequences,
+    $T: \mathcal{A}^* \to \mathbf{\Lambda}^*$,
+    that is inverted by literalization, i.e.,
+    $$
+    T^{-1}(T(x)) = x \quad \forall x \in \mathcal{A}^*
+    $$
+    (but the converse will not usually hold, i.e., different token sequences may correspond to the same string.)
+    We also require that the tokenization function maps
+    properly terminated strings to properly terminated token sequences,
+    $$
+    T: H \to \mathbf{H}
+    $$
+\end{definition}
+
+
+\begin{definition}[Token to Character Index Function]
+    The token to character index function is a utility function
+    mapping the index of a token within its token sequence
+    to the index of the first character of that token in the corresponding string.
+    $$
+    TokenToCharacterIndex(\mathbf{a}, i) = \sum_{j < i} |\mathbf{a}[j]|
+    $$
+\end{definition}
+
+\begin{proposition}[Monotonicity of Token to Character Index Function]
+    The token to character index function is strictly monotonic.
+\end{proposition}
+\begin{proof}
+    This follows from the requirement that tokens are non-empty.
+\end{proof}
+
+\begin{definition}[Character to Token Index Function]
+    The character to token index function, $CharToTokenIndex_T(x, j)$, is a utility function derived from the tokenization function, $T$,
+    mapping the index of a character in the string to the index of the token that contains that character.
+    I.e. it is the greatest value of $i$ that satisfies,
+    $$
+    TokenToCharacterIndex(T(x), i) \leq j
+    $$
+\end{definition}
+
+\begin{definition}[Break Point]
+    We refer to an index in a string as a ``break point'' if it is the first character of a token
+    with respect to our tokenization function. So $i$ is a break point for a string $x$ and
+    a tokenization function $T$ if there exists some $j$ such that $i = TokenToCharacterIndex(T(x), j)$.
+\end{definition}
+
+\begin{definition}[Boundary Sufficiency]
+    The boundary sufficiency property of a tokenization function states that
+    if $i_1, i_2$ are break points in a string $x$, then the tokenization within
+    the interval $[i_1, i_2)$ does not depend on characters outside this interval.
+    Formally, a tokenization function $T$ has boundary sufficiency if for all strings $x$
+    and break points $i_1 \le i_2$ of $x$, letting
+    $j_1 = CharToTokenIndex_T(x, i_1)$ and $j_2 = CharToTokenIndex_T(x, i_2)$, we have
+    $$
+    T(x[i_1:i_2]) = T(x)[j_1:j_2]
+    $$
+\end{definition}
+
+Henceforth, we will always assume that our tokenization function has boundary sufficiency.
+This is because all byte-pair encoders have this property.
+
+We can now formalize a token-based language model.
+
+\begin{definition}[Conditional Token Prior Function]
+    Our conditional token prior function tells us the conditional probability of a token
+    given a token sequence. It is a mapping
+    $$
+    \mathbf{P} : \mathbf{\Lambda}^* \times \mathbf{\Lambda} \to \mathbb{R}^+
+    $$
+    written as $\mathbf{P}(\mathbf{t} \mid \mathbf{a})$,
+    where,
+    $$
+    \forall \mathbf{a} \in \mathbf{\Lambda}^*, \sum_{\mathbf{t} \in \mathbf{\Lambda}} \mathbf{P}(\mathbf{t} \mid \mathbf{a}) = 1
+    $$
+\end{definition}
+
+\begin{definition}[Conditional Token Prior Function Sequence]
+    A conditional token prior function sequence is a sequence of conditional token prior functions,
+    $ \{ \mathbf{P}_n \} $.
+\end{definition}
+
+\begin{definition}[Token Branch Prior]
+    We refer to the prior probability of beginning with a given sequence of tokens as the,
+    ``token branch prior'', denoted $\mathbf{P}^{br}_n(\mathbf{a})$. It is defined as,
+    $$
+    \mathbf{P}^{br}_n(\mathbf{a}) = \prod_{i < |\mathbf{a}|} \mathbf{P}_n(\mathbf{a}[i] \; | \; \mathbf{a}[:i])
+    $$
+    Once again, we pedantically require calling this a ``branch prior'', to remind ourselves
+    that priors stricly only apply to properly terminated strings. Note however, that in the case
+    that $\mathbf{a}$ is properly terminated this is the true prior probability of the string (see below).
+\end{definition}
+
+Henceforth we will study prior function sequences that are derived from token
+prior functions by the relation,
+$$
+P_n(h) = \mathbf{P}^{br}_n(T(h))
+$$
+
+We can now state our first result
+
+\begin{theorem}[Token Prior Path Summation]
+    The branch prior of a string $a$, is the sum of the token branch priors of all
+    token sequences that pass through $a$.
+    $$
+    P^{br}(a)=
+    \begin{cases}
+        1, & a=\epsilon,\\[4pt]
+        \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<a}\mathbf{P}^{br}(\mathbf{b})
+        \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{P}(\mathbf{t}\mid\mathbf{b}), & a\neq\epsilon.
+    \end{cases}
+    $$
+\end{theorem}
+\begin{proof}
+    We prove the two cases separately.
+
+    If $a=\epsilon$, then by Definition~\ref{def:branch-prior-function},
+    $$
+    P^{br}(\epsilon)=\sum_{\substack{h\in H\\ h\ge \epsilon}}P(h)=\sum_{h\in H}P(h)=1.
+    $$
+
+    Now let $a\neq\epsilon$. Again from Definition~\ref{def:branch-prior-function},
+    $$
+    P^{br}(a)=\sum_{\substack{h\in H\\ h\ge a}}P(h).
+    $$
+
+    For each $h\ge a$, write $\mathbf{c}:=T(h)$. Since $T^{-1}(\mathbf{c})=h\ge a$,
+    there exists a unique smallest $j$ such that
+    $a\le T^{-1}(\mathbf{c}[:j+1])$.
+    Define $\mathbf{b}:=\mathbf{c}[:j]$ and $\mathbf{t}:=\mathbf{c}[j]$.
+    By minimality of $j$, we have
+    $$
+    T^{-1}(\mathbf{b})<a\le T^{-1}(\mathbf{b}+\mathbf{t}).
+    $$
+    So each $h\ge a$ determines a unique pair $(\mathbf{b},\mathbf{t})$ with those inequalities.
+
+    Grouping the sum over $h$ by these pairs gives
+    $$
+    P^{br}(a)=
+    \sum_{\substack{\mathbf{b}\in\mathbf{\Lambda}^*\\T^{-1}(\mathbf{b})<a}}
+    \sum_{\substack{\mathbf{t}\in\mathbf{\Lambda}\\a\le T^{-1}(\mathbf{b}+\mathbf{t})}}
+    \sum_{\substack{h\in H:\\ T(h)\text{ begins with }\mathbf{b}+\mathbf{t}}}
+    P(h).
+    $$
+
+    The innermost sum is exactly the prior probability of beginning with
+    $\mathbf{b}+\mathbf{t}$, namely
+    $\mathbf{P}^{br}(\mathbf{b}+\mathbf{t})$.
+    By the token branch prior definition,
+    $$
+    \mathbf{P}^{br}(\mathbf{b}+\mathbf{t})
+    =\mathbf{P}^{br}(\mathbf{b})\,\mathbf{P}(\mathbf{t}\mid\mathbf{b}).
+    $$
+    Substituting yields
+    $$
+    P^{br}(a)=
+    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<a}\mathbf{P}^{br}(\mathbf{b})
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{P}(\mathbf{t}\mid\mathbf{b}),
+    $$
+    as claimed.
+\end{proof}
+
+
+
+\section{Old stuff}
 Formally, to convert a token model to a literal model, we take the sum across 
 all compatible token sequences $\mathbf{B}$, and all compatible terminal tokens $\mathbf{t}$,
 $$
-P(S) = \sum_{\mathbf{B} < S} P(\mathbf{B}) \sum_{\mathbf{t},\, S \leq \mathbf{B}+\mathbf{t}} P(\mathbf{t} \mid \mathbf{B})
+P(S) = \sum_{\mathbf{B} < S} P(\mathbf{B}) \sum_{\mathbf{t},\, S \leq \mathbf{B}+\mathbf{t}} P()
 $$
 
 We use two tricks to efficiently compute this sum:
@@ -668,6 +865,10 @@ We use two tricks to efficiently compute this sum:
     \item We can preconvert the language model's output of logits to an array of \textit{cumulative} probabilities.
     This allows us to efficiently compute the alphabetical sum over compatible $\mathbf{t}$, by taking the difference between the cumulative probabilities of the start and end.
 \end{enumerate}
+
+
+
+
 
 \section{Global Variables}
 
