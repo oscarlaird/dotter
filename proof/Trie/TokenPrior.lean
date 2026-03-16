@@ -155,6 +155,9 @@ structure TokenPriorSetup (α : Type) [Alphabet α] [DecidableEq α] where
   T_nonempty      : ∀ h : H (α := α), TokenSeqNonempty (T h)
   T_seq_nonempty  : ∀ h : H (α := α), T h ≠ []
   cond            : TokenSeq α → TokenString α → NNReal
+  prefix_mass_summable : ∀ b : TokenSeq α,
+    Summable fun h : H (α := α) =>
+      if List.IsPrefix b (T h) then tokBranchPrior cond (T h) else 0
   prefix_mass     : ∀ b : TokenSeq α,
     (∑' h : H (α := α),
       if List.IsPrefix b (T h) then tokBranchPrior cond (T h) else 0)
@@ -204,7 +207,7 @@ instance (a : StringAlg α) (c : TokenSeq α) (j : ℕ) :
 /-- Existence of a crossing index for any h ≥ a with a ≠ []. -/
 lemma exists_crossing_index (S : TokenPriorSetup α)
     (a : StringAlg α) (h : H (α := α))
-    (ha : a ≠ []) (hpref : List.IsPrefix a h.val) :
+    (_ha : a ≠ []) (hpref : List.IsPrefix a h.val) :
     ∃ j, CrossesByIndex a (S.T h) j := by
   use (S.T h).length - 1
   unfold CrossesByIndex
@@ -387,56 +390,44 @@ private lemma crossing_eq_take (S : TokenPriorSetup α)
 -- ---------------------------------------------------------------
 
 /--
-**Token Prior Path Summation** (piecewise form).
+`ENNReal`-cast form of the token prior path summation theorem.
 
-For `a = []` (root):  `P^{br}(a) = 1`.
+For a nonempty literal prefix `a`, the string branch prior is obtained by
+summing over all token paths `(b, t)` whose next token `t` is the first one
+that makes the literalization cross `a`.
 
-For `a ≠ []` (non-root):
-$$
-P^{br}(a)=\sum_{\mathbf{b},\,T^{-1}(\mathbf{b}) < a}
-  P^{br}_{tok}(\mathbf{b})\,
-  \sum_{\mathbf{t},\, a \le T^{-1}(\mathbf{b+t})}
-  P(\mathbf{t}\mid\mathbf{b})
-$$
-
-The outer/inner sums are expressed as `tsum` over all token sequences /
-tokens with indicator conditions.  Only finitely many terms are non-zero
-for any fixed `a`.
+We state the result after coercing `NNReal` values to `ENNReal`; this is the
+most convenient codomain for the `tsum` reindexing used in the proof.
 -/
 theorem token_prior_path_summation (S : TokenPriorSetup α) :
     ∀ a : StringAlg α,
-      BranchPrior S.derivedPrior a =
+      ((BranchPrior S.derivedPrior a : NNReal) : ENNReal) =
         if a = [] then 1
         else ∑' (b : TokenSeq α) (t : TokenString α),
           if (IsStrictPrefix (literalizeTokenSeq b) a ∧
               List.IsPrefix a (literalizeTokenSeq (b ++ [t])))
-          then tokBranchPrior S.cond b * S.cond b t
+          then ((tokBranchPrior S.cond b * S.cond b t : NNReal) : ENNReal)
           else 0 := by
   intro a
   by_cases ha : a = []
-  · subst ha; simp [S.root_branch]
+  · subst ha
+    simp [S.root_branch]
   · simp only [ha, ite_false]
-    -- ================================================================
-    -- The proof lifts to ENNReal, uses tsum_comm, and casts back.
-    -- ================================================================
-    -- Abbreviation for crossing condition (does not depend on h)
     let cross (b : TokenSeq α) (t : TokenString α) : Prop :=
       IsStrictPrefix (literalizeTokenSeq b) a ∧
       List.IsPrefix a (literalizeTokenSeq (b ++ [t]))
-    -- The "joint indicator" in ENNReal
     let φ : H (α := α) → TokenSeq α → TokenString α → ENNReal :=
       fun hh b t =>
         if (cross b t ∧ List.IsPrefix (b ++ [t]) (S.T hh))
         then ↑(tokBranchPrior S.cond (S.T hh))
         else 0
-    -- ---- KEY LEMMA: ∀ h, LHS indicator = ∑' b t, φ h b t ----
     have key : ∀ hh : H (α := α),
         (if PrefixOfCode a {hh.val}
          then (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal) else 0)
-        = ∑' (b : TokenSeq α) (t : TokenString α), φ hh b t := by
+        = ∑' (b : TokenSeq α), ∑' (t : TokenString α), φ hh b t := by
       intro hh
       by_cases hpoc : PrefixOfCode a {hh.val}
-      · -- PrefixOfCode holds → exactly one (b,t) contributes
+      ·
         simp only [if_pos hpoc]
         obtain ⟨_, rfl, hpref⟩ := hpoc
         set j := S.firstCrossingIdx a hh ha hpref
@@ -450,15 +441,12 @@ theorem token_prior_path_summation (S : TokenPriorSetup α) :
         have hb0_eq : b0 = (S.T hh).take j := by
           rw [hb0_def, hbt_def, List.dropLast_eq_take, hbt_len]
           simp [List.take_take]
-        -- Crossing condition holds for (b0, t0)
         have hcross : cross b0 t0 := by
           exact ⟨by rw [hb0_eq]; exact firstCrossingIdx_strict S a hh ha hpref,
                  by rw [← hbt_split]; exact firstCrossingIdx_spec S a hh ha hpref⟩
         have hstart' : List.IsPrefix (b0 ++ [t0]) (S.T hh) := hbt_split ▸ List.take_prefix _ _
-        -- φ at (b0, t0) = P(hh)
         have hφ_val : φ hh b0 t0 = ↑(tokBranchPrior S.cond (S.T hh)) :=
           if_pos ⟨hcross, hstart'⟩
-        -- φ at all other (b, t) = 0
         have hφ_zero : ∀ b t, φ hh b t ≠ 0 → b = b0 ∧ t = t0 := by
           intro b t hne
           simp only [φ] at hne
@@ -466,19 +454,14 @@ theorem token_prior_path_summation (S : TokenPriorSetup α) :
           · next hcond =>
             obtain ⟨⟨hcs, hcp⟩, hst⟩ := hcond
             have h_eq := crossing_eq_take S a hh ha hpref b t hcs hcp hst
-            -- h_eq : b ++ [t] = (S.T hh).take (j + 1) = bt
             rw [← hbt_def] at h_eq
             rw [hbt_split] at h_eq
-            -- From h_eq : b ++ [t] = b0 ++ [t0], extract b = b0 and t = t0
             have h_last : t = t0 := by
               have := congr_arg List.getLast? h_eq; simp at this; exact this
             have h_first : b = b0 := by
               have := congr_arg List.dropLast h_eq; simp at this; exact this
             exact ⟨h_first, h_last⟩
           · exact absurd rfl hne
-        -- The tsum has a single nonzero term at (b0, t0)
-        symm
-        -- All terms with b ≠ b0 or t ≠ t0 are zero
         have hφ_eq : ∀ b t, φ hh b t = if b = b0 ∧ t = t0 then
             ↑(tokBranchPrior S.cond (S.T hh)) else 0 := by
           intro b t
@@ -487,30 +470,66 @@ theorem token_prior_path_summation (S : TokenPriorSetup α) :
           · rw [if_neg h_eq]
             by_contra hne
             exact h_eq (hφ_zero b t hne)
-        simp_rw [hφ_eq]
-        -- ∑' b, ∑' t, if b = b0 ∧ t = t0 then v else 0 = v
-        -- The inner tsum: for fixed b, ∑' t, if b = b0 ∧ t = t0 then v else 0
-        --   = if b = b0 then ∑' t, (if t = t0 then v else 0) else 0
-        --   = if b = b0 then v else 0
-        -- The outer tsum: ∑' b, if b = b0 then v else 0 = v
-        have h_inner : ∀ b, ∑' t, (if b = b0 ∧ t = t0 then
-            (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal) else 0)
-          = if b = b0 then ↑(tokBranchPrior S.cond (S.T hh)) else 0 := by
-          intro b
-          by_cases hb : b = b0
-          · subst hb; simp [tsum_ite_eq]
-          · simp [hb]
-        simp_rw [h_inner]
-        exact tsum_ite_eq b0 _
-      · -- ¬PrefixOfCode → all terms are 0
+        symm
+        calc
+          ∑' (b : TokenSeq α), ∑' (t : TokenString α), φ hh b t
+              = ∑' (b : TokenSeq α), ∑' (t : TokenString α),
+                  (if b = b0 ∧ t = t0 then
+                    (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal) else 0) := by
+                  apply tsum_congr
+                  intro b
+                  apply tsum_congr
+                  intro t
+                  rw [hφ_eq]
+          _ = ∑' (b : TokenSeq α), (if b = b0 then
+              (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal) else 0) := by
+                apply tsum_congr
+                intro b
+                by_cases hb : b = b0
+                · subst hb
+                  have hsingle :
+                      (∑' t : TokenString α,
+                        if t = t0
+                        then (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal)
+                        else 0)
+                        = ↑(tokBranchPrior S.cond (S.T hh)) := by
+                    exact tsum_ite_eq t0
+                      (fun _ : TokenString α =>
+                        (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal))
+                  simp [hsingle]
+                · have hzero : ∀ t : TokenString α,
+                      (if b = b0 ∧ t = t0
+                       then (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal)
+                       else 0) = 0 := by
+                      intro t
+                      simp [hb]
+                  simp [hb]
+          _ = ↑(tokBranchPrior S.cond (S.T hh)) := by
+                have hsingle :
+                    (∑' b : TokenSeq α,
+                      if b = b0
+                      then (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal)
+                      else 0)
+                      = ↑(tokBranchPrior S.cond (S.T hh)) := by
+                  exact tsum_ite_eq b0
+                    (fun _ : TokenSeq α =>
+                      (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal))
+                exact hsingle
+      ·
         simp only [if_neg hpoc]
         have : ∀ b t, φ hh b t = 0 := by
           intro b t; simp only [φ]
           split
           · next hcond => exact absurd (crossing_sound S a hh b t hcond.1.2 hcond.2) hpoc
           · rfl
-        simp [this]
-    -- ---- FACTOR LEMMA: ∀ b t, ∑' h, φ h b t = crossing ? tokBranchPrior(b++[t]) : 0 ----
+        have hsum_zero :
+            (∑' (b : TokenSeq α), ∑' (t : TokenString α), φ hh b t) = 0 := by
+          rw [ENNReal.tsum_eq_zero]
+          intro b
+          rw [ENNReal.tsum_eq_zero]
+          intro t
+          exact this b t
+        simp [hsum_zero]
     have factor : ∀ (b : TokenSeq α) (t : TokenString α),
         ∑' hh, φ hh b t =
           if cross b t
@@ -519,77 +538,133 @@ theorem token_prior_path_summation (S : TokenPriorSetup α) :
       intro b t
       by_cases hc : cross b t
       · simp only [if_pos hc]
-        have hφ_eq : ∀ hh : H (α := α), φ hh b t =
-            if List.IsPrefix (b ++ [t]) (S.T hh)
-            then ↑(tokBranchPrior S.cond (S.T hh)) else 0 := by
-          intro hh; simp only [φ, hc, true_and]
-        simp_rw [hφ_eq]
-        have h_pm := S.prefix_mass (b ++ [t])
-        -- Push cast inside tsum: ∑'ₕ (if .. then ↑v else 0) = ↑(∑'ₕ if .. then v else 0)
-        have h_cast_eq : ∀ hh : H (α := α),
-            (if (b ++ [t]) <+: S.T hh
-             then (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal) else 0)
-            = (↑(if (b ++ [t]) <+: S.T hh
-              then tokBranchPrior S.cond (S.T hh) else (0 : NNReal)) : ENNReal) := by
-          intro hh; split <;> simp
-        simp_rw [h_cast_eq]
-        -- ENNReal tsum always exists, so we can compute directly.
-        -- We want: ∑'ₕ (↑g(h) : ENNReal) = ↑(tokBranchPrior(b++[t]))
-        -- Since the ENNReal tsum = sup of partial sums, and h_pm gives the NNReal value,
-        -- we use the fact that if the ENNReal tsum is finite, it equals the NNReal tsum cast.
-        -- A cleaner approach: show the ENNReal tsum ≤ ↑(tokBranchPrior(b++[t]))
-        -- and ≥ ↑(tokBranchPrior(b++[t])).
-        -- Instead, use h_pm directly by rewriting through tsum.
-        have h_eq_nnreal : (∑' hh : H (α := α),
-            if (b ++ [t]) <+: S.T hh
-            then tokBranchPrior S.cond (S.T hh) else (0 : NNReal))
-          = tokBranchPrior S.cond (b ++ [t]) := h_pm
-        -- Now lift: ENNReal tsum = ↑(NNReal tsum) when summable
-        -- Use: the ENNReal tsum is always ≥ any partial sum, and ≤ ↑(NNReal total)
-        -- For the equality, we use ENNReal.tsum_coe_ne_top_iff_summable backwards
-        -- Actually simplest: use ENNReal.toNNReal_tsum and the fact that sum < ⊤
-        -- Or just note that for indicator functions on NNReal, summability is easy.
-        -- The function is ≤ 1 pointwise (since tokBranchPrior ≤ 1 by prefix_mass with b=[])
-        -- Actually let's just compute: ↑(∑' h, g h) = ∑' h, ↑(g h) when summable
-        -- Summability: follows from h_pm (if the tsum equals a finite value, f is summable)
-        sorry
+        calc
+          ∑' hh, φ hh b t
+              = ∑' hh : H (α := α),
+                  (if List.IsPrefix (b ++ [t]) (S.T hh)
+                   then ↑(tokBranchPrior S.cond (S.T hh))
+                   else 0) := by
+                      apply tsum_congr
+                      intro hh
+                      simp [φ, hc]
+          _ = ∑' hh : H (α := α),
+                ((if List.IsPrefix (b ++ [t]) (S.T hh)
+                  then tokBranchPrior S.cond (S.T hh)
+                  else (0 : NNReal)) : ENNReal) := by
+                    apply tsum_congr
+                    intro hh
+                    by_cases hp : List.IsPrefix (b ++ [t]) (S.T hh) <;> simp [hp]
+          _ = ↑(∑' hh : H (α := α),
+                if List.IsPrefix (b ++ [t]) (S.T hh)
+                then tokBranchPrior S.cond (S.T hh)
+                else (0 : NNReal)) := by
+                  have hcast :
+                      (∑' hh : H (α := α),
+                        ((if List.IsPrefix (b ++ [t]) (S.T hh)
+                          then tokBranchPrior S.cond (S.T hh)
+                          else (0 : NNReal)) : ENNReal))
+                        =
+                      ∑' hh : H (α := α),
+                        ↑(if List.IsPrefix (b ++ [t]) (S.T hh)
+                          then tokBranchPrior S.cond (S.T hh)
+                          else (0 : NNReal)) := by
+                    apply tsum_congr
+                    intro hh
+                    by_cases hp : List.IsPrefix (b ++ [t]) (S.T hh) <;> simp [hp]
+                  calc
+                    ∑' hh : H (α := α),
+                      ((if List.IsPrefix (b ++ [t]) (S.T hh)
+                        then tokBranchPrior S.cond (S.T hh)
+                        else (0 : NNReal)) : ENNReal)
+                        =
+                    ∑' hh : H (α := α),
+                      ↑(if List.IsPrefix (b ++ [t]) (S.T hh)
+                        then tokBranchPrior S.cond (S.T hh)
+                        else (0 : NNReal)) := hcast
+                    _ = ↑(∑' hh : H (α := α),
+                          if List.IsPrefix (b ++ [t]) (S.T hh)
+                          then tokBranchPrior S.cond (S.T hh)
+                          else (0 : NNReal)) := by
+                            simpa using (ENNReal.coe_tsum
+                              (S.prefix_mass_summable (b ++ [t]))).symm
+          _ = ↑(tokBranchPrior S.cond (b ++ [t])) := by
+                  rw [S.prefix_mass]
       · simp only [if_neg hc]
         have : ∀ hh, φ hh b t = 0 := by
           intro hh; simp only [φ]; split
           · next h => exact absurd h.1 hc
           · rfl
         simp [this]
-    -- ---- CHAIN THE EQUALITIES ----
-    -- Cast to ENNReal and use tsum_comm
-    suffices h_ennreal :
-        (↑(BranchPrior S.derivedPrior a) : ENNReal) =
-        ↑(∑' (b : TokenSeq α) (t : TokenString α),
-          if (IsStrictPrefix (literalizeTokenSeq b) a ∧
-              List.IsPrefix a (literalizeTokenSeq (b ++ [t])))
-          then tokBranchPrior S.cond b * S.cond b t
-          else 0) by
-      exact_mod_cast h_ennreal
-    -- Unfold BranchPrior and derivedPrior
-    simp only [BranchPrior, derivedPrior]
-    -- Step 1: Apply KEY LEMMA pointwise
-    conv_lhs => ext hh; rw [key hh]
-    -- Now LHS = ∑' hh, ∑' b, ∑' t, φ hh b t
-    -- Step 2: Swap h with (b, t) using ENNReal.tsum_comm
-    conv_lhs =>
-      rw [show (∑' hh, ∑' b, ∑' t, φ hh b t) = ∑' b, ∑' t, ∑' hh, φ hh b t from by
-        calc ∑' hh, ∑' b, ∑' t, φ hh b t
-            = ∑' b, ∑' hh, ∑' t, φ hh b t := ENNReal.tsum_comm
-          _ = ∑' b, ∑' t, ∑' hh, φ hh b t := by
-              congr 1; ext b; exact ENNReal.tsum_comm]
-    -- Step 3: Apply FACTOR LEMMA
-    conv_lhs => ext b; ext t; rw [factor b t]
-    -- Now = ∑' b t, if cross then ↑(tokBranchPrior(b++[t])) else 0
-    -- Step 4: Rewrite tokBranchPrior(b++[t]) = tokBranchPrior(b) * cond(b, t)
-    congr 1; ext b; congr 1; ext t
-    split
-    · next hc =>
-      push_cast; rw [tokBranchPrior_append_one]
-    · rfl
+    calc
+      ((BranchPrior S.derivedPrior a : NNReal) : ENNReal)
+          = ↑(∑' hh : H (α := α),
+              if PrefixOfCode a {hh.val}
+              then tokBranchPrior S.cond (S.T hh)
+              else 0) := by
+                simp [BranchPrior, derivedPrior]
+      _ = ∑' hh : H (α := α),
+            ((if PrefixOfCode a {hh.val}
+              then tokBranchPrior S.cond (S.T hh)
+              else 0 : NNReal) : ENNReal) := by
+              have hsum :
+                  Summable (fun hh : H (α := α) =>
+                    if PrefixOfCode a {hh.val}
+                    then tokBranchPrior S.cond (S.T hh)
+                    else 0) := by
+                have hroot : Summable (fun hh : H (α := α) =>
+                    tokBranchPrior S.cond (S.T hh)) := by
+                  simpa using S.prefix_mass_summable []
+                refine NNReal.summable_of_le
+                  (f := fun hh : H (α := α) => tokBranchPrior S.cond (S.T hh))
+                  (g := fun hh : H (α := α) =>
+                    if PrefixOfCode a {hh.val}
+                    then tokBranchPrior S.cond (S.T hh)
+                    else 0)
+                  ?_ hroot
+                · intro hh
+                  by_cases hp : PrefixOfCode a {hh.val}
+                  · simp [hp]
+                  · simp [hp]
+              exact ENNReal.coe_tsum hsum
+      _ = ∑' hh : H (α := α),
+            (if PrefixOfCode a {hh.val}
+             then (↑(tokBranchPrior S.cond (S.T hh)) : ENNReal)
+             else 0) := by
+              apply tsum_congr
+              intro hh
+              by_cases hp : PrefixOfCode a {hh.val} <;> simp [hp]
+      _ = ∑' hh : H (α := α), ∑' (b : TokenSeq α), ∑' (t : TokenString α), φ hh b t := by
+            apply tsum_congr
+            intro hh
+            rw [key hh]
+      _ = ∑' (b : TokenSeq α), ∑' (t : TokenString α), ∑' hh : H (α := α), φ hh b t := by
+            calc
+              ∑' hh : H (α := α), ∑' (b : TokenSeq α), ∑' (t : TokenString α), φ hh b t
+                  = ∑' (b : TokenSeq α), ∑' hh : H (α := α), ∑' (t : TokenString α), φ hh b t := by
+                      exact ENNReal.tsum_comm
+              _ = ∑' (b : TokenSeq α), ∑' (t : TokenString α), ∑' hh : H (α := α), φ hh b t := by
+                    apply tsum_congr
+                    intro b
+                    exact ENNReal.tsum_comm
+      _ = ∑' (b : TokenSeq α), ∑' (t : TokenString α),
+            if cross b t then ↑(tokBranchPrior S.cond (b ++ [t])) else 0 := by
+              apply tsum_congr
+              intro b
+              apply tsum_congr
+              intro t
+              rw [factor b t]
+      _ = ∑' (b : TokenSeq α) (t : TokenString α),
+            if (IsStrictPrefix (literalizeTokenSeq b) a ∧
+                List.IsPrefix a (literalizeTokenSeq (b ++ [t])))
+            then ((tokBranchPrior S.cond b * S.cond b t : NNReal) : ENNReal)
+            else 0 := by
+              apply tsum_congr
+              intro b
+              apply tsum_congr
+              intro t
+              by_cases hc : cross b t
+              · simp [cross, hc, tokBranchPrior_append_one]
+              · simp [cross, hc]
 
 end TokenPriorSetup
 end Trie
