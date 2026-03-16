@@ -1,6 +1,6 @@
-name = "demorgan"
+name = "trieproof"
 version = "0.1.0"
-defaultTargets = ["demorgan"]
+defaultTargets = ["trieproof"]
 
 [[require]]
 name = "mathlib"
@@ -8,8 +8,8 @@ git = "https://github.com/leanprover-community/mathlib4.git"
 rev = "v4.28.0"
 
 [[lean_lib]]
-name = "Demorgan"
+name = "Trie"
 
 [[lean_exe]]
-name = "demorgan"
+name = "trieproof"
 root = "Main"

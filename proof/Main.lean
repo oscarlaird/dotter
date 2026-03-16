@@ -1,4 +1,4 @@
-import Demorgan
+import Trie
 
 def main : IO Unit :=
-  IO.println "De Morgan's laws project — open Demorgan/Basic.lean to get started!"
+  IO.println "Trie proofs project — open Trie/Core.lean or Trie/LikelihoodTracking.lean."
