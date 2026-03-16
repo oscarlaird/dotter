@@ -119,7 +119,7 @@ and join of two prefix codes.
     We overload the comparison operators when the left hand side is a string
     and the right hand side is a complete prefix code.
     $x \leq C$ means that $x$ is a prefix of some element of $C$,
-    whereas $x > C$ means that $x$ is a proper suffix of some element of $C$.
+    whereas $x > C$ means that $x$ is a proper extension of some element of $C$.
 \end{definition}
 
 \begin{proposition}
@@ -233,12 +233,12 @@ between the definitions of prior and likelihood functions.
 
 \begin{lemma}[Eventually Constant Likelihoods]
 \label{lemma:eventually-constant-likelihoods}
-    Given the cumulative likelihood update frontier, $\bigvee_{i=0}^N C^L_i$,
+    Given the cumulative likelihood update frontier, $\bigvee_{i=1}^N C^L_i$,
     and a given node in that frontier, $f$,
     the likelihoods of all properly terminated strings
-    descended from that node are constant, i.e.,
+    descended from that node are constant with respect to the branch up to time $N$, i.e.,
     $$
-    \forall h \in H, h \geq f, L_n(h) = \prod_{1\leq i \leq n} \Delta^L_i(\lfloor f \rfloor_{C^L_i})
+    \forall n \leq N, \forall h \in H, h \geq f, L_n(h) = \prod_{1\leq i \leq n} \Delta^L_i(\lfloor f \rfloor_{C^L_i})
     $$
 \end{lemma}
 \begin{proof}
@@ -248,7 +248,7 @@ between the definitions of prior and likelihood functions.
     $$
     We must show that $\lfloor h \rfloor_{C^L_i} = \lfloor f \rfloor_{C^L_i}$ for all $1\leq i \leq n$.
     
-    Any element $f \in \bigvee_{i=0}^N C^L_i$ is a descendant of or equal to an element in each $C^L_i$. In other words, for every $i \in \{1, \dots, n\}$, there exists some $c_i \in C^L_i$ such that $c_i \leq f$. Because $c_i$ is a prefix of $f$, it is exactly the truncation of $f$ under $C^L_i$, so $c_i = \lfloor f \rfloor_{C^L_i}$.
+    Any element $f \in \bigvee_{i=1}^N C^L_i$ is a descendant of or equal to an element in each $C^L_i$. In other words, for every $i \in \{1, \dots, n\}$, there exists some $c_i \in C^L_i$ such that $c_i \leq f$. Because $c_i$ is a prefix of $f$, it is exactly the truncation of $f$ under $C^L_i$, so $c_i = \lfloor f \rfloor_{C^L_i}$.
 
     By hypothesis, $h \geq f$. Since the prefix relation is transitive, $c_i \leq f$ and $f \leq h$ imply $c_i \leq h$. Because $C^L_i$ is a prefix code, $c_i$ is the unique element in $C^L_i$ that is a prefix of $h$. 
     Therefore, $\lfloor h \rfloor_{C^L_i} = c_i = \lfloor f \rfloor_{C^L_i}$.
@@ -317,11 +317,11 @@ while allowing for the lazy application of likelihood and prior updates.
     \begin{enumerate}
         \item \textbf{Constant Likelihood}: $x$ lies beyond
         the cumulative likelihood update frontier, i.e.,
-        $x \geq \bigvee_{i=0}^N C^L_i$
+        $x \geq \bigvee_{i=1}^N C^L_i$
         \item \textbf{No Reweighting}:
         The likelihood and the prior have changed by a constant factor
         since the node's time, i.e.,
-        $x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$
+        $x \geq \bigvee_{i=x.n+1}^N C^L_i$ and $x \geq \bigvee_{i=x.m+1}^M C^P_i$
     \end{enumerate}
 \end{definition}
 
@@ -336,7 +336,7 @@ while allowing for the lazy application of likelihood and prior updates.
     of validity. Because $(x.n, x.m) = (N, M)$, the two 
     joins are joins over empty sets and thus equal to the root node.
     Hence,
-        $x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$
+        $x \geq \bigvee_{i=x.n+1}^N C^L_i$ and $x \geq \bigvee_{i=x.m+1}^M C^P_i$
     .
 \end{proof}
 
@@ -375,11 +375,11 @@ Recall that we assume oracular access to the branch prior function, $P^{branch}_
 \Require $(n', m')$, the new time.
 \Require $(N, M)$, the trie's current time.
 \Require $x$ is valid at time $(N, M)$.
-\If{$x \geq \bigvee_{i=0}^N C^L_i$}
+\If{$x \geq \bigvee_{i=1}^N C^L_i$}
     \State $x.Z \gets P^{branch}_{m'}(x) \prod_{i=1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$
     \label{alg:advance-node-time-constant-likelihood}
 \Else
-    \Comment{$x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$}
+    \Comment{$x \geq \bigvee_{i=x.n+1}^N C^L_i$ and $x \geq \bigvee_{i=x.m+1}^M C^P_i$}
     \State $x.Z \gets x.Z \prod_{i=x.n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \prod_{i=x.m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i})$
     \label{alg:advance-node-time-no-reweighting}
 \EndIf
@@ -423,11 +423,11 @@ the validity of the trie and its correctness.
     The ``no reweighting'' condition is weakened by increasing the node's time.
     I.e.,
     $$
-    x \geq \bigvee_{i=n}^N C^L_i \implies x \geq \bigvee_{i=n'}^{N} C^L_i
+    x \geq \bigvee_{i=n+1}^N C^L_i \implies x \geq \bigvee_{i=n'+1}^{N} C^L_i
     $$
     and,
     $$
-    x \geq \bigvee_{i=m}^M C^P_i \implies x \geq \bigvee_{i=m'}^{M} C^P_i
+    x \geq \bigvee_{i=m+1}^M C^P_i \implies x \geq \bigvee_{i=m'+1}^{M} C^P_i
     $$
     if $n' \geq n$.
 \end{proof}
@@ -439,7 +439,7 @@ the validity of the trie and its correctness.
     We show this for the two cases of valid nodes.
 
     \textbf{Constant Likelihood Case:} If $x$ satisfies,
-    $x \geq \bigvee_{i=0}^N C^L_i$, 
+    $x \geq \bigvee_{i=1}^N C^L_i$, 
     then,
     \begin{align*}
     Z_{n',m'}(x) &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) L_{n'}(h) \\
@@ -450,7 +450,7 @@ the validity of the trie and its correctness.
     which is accomplished by line \ref{alg:advance-node-time-constant-likelihood}.
 
     \textbf{No Reweighting Case:} If $x$ satisfies,
-    $x \geq \bigvee_{i=x.n}^N C^L_i$ and $x \geq \bigvee_{i=x.m}^M C^P_i$,
+    $x \geq \bigvee_{i=x.n+1}^N C^L_i$ and $x \geq \bigvee_{i=x.m+1}^M C^P_i$,
     then,
     \begin{align*}
     Z_{n',m'}(x) &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) L_{n'}(h) \\

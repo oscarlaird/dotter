@@ -1,0 +1,30 @@
+# Sharing Lean 4 and Mathlib Across Worktrees and Projects
+
+Lean 4's package manager, `lake`, is designed around reproducible builds. It mandates that **every project has its own `.lake/packages/` folder** containing the source code of its dependencies (like `mathlib`). 
+
+Why does `lake` enforce this? Because `mathlib` updates multiple times a day. If "Project A" and "Project B" shared the exact same physical `mathlib` git repository on disk, running `lake build` in Project A would check out commit `X`, which would instantly break Project B if it was expecting commit `Y`.
+
+## The "45-Minute Compile" vs "Fast Clone"
+To avoid the horrific 45+ minute compilation time of `mathlib` and massive disk space bloat, Lean uses **Reservoir / global caching**:
+1. **Source Code (Local):** `lake` clones the raw `.lean` text files locally into your project's `.lake/packages/mathlib`. This is relatively small (a few hundred MBs) and takes only seconds.
+2. **Build Artifacts (Global):** Instead of compiling that source code, `lake` queries a global cloud cache (Azure). It downloads the massive, pre-compiled binaries into a **global cache** in your home directory (e.g. `~/.cache/mathlib/` or `~/.lake/cache/`). It then unzips them into your local project's build folder.
+
+## Best Practices
+
+### 1. For entirely different projects
+Let `lake` clone the source code into each project's local `.lake/packages/mathlib`. Because your `elan` toolchain is globally configured to use the cloud cache, it will *not* compile mathlib from scratch. It will clone the text files, fetch the binaries from your global cache, and be ready in about 1-2 minutes.
+
+### 2. For Git Worktrees of the *same* project
+Because the main repo and its worktrees are the exact same project and use the exact same `lake-manifest.json` (meaning they want the exact same commit of `mathlib`), the absolute best practice is to **symlink the `.lake` directory** from your main repository into the worktree. 
+
+This shares both the source code and the unzipped binaries instantly, taking 0 seconds and 0 extra bytes.
+
+To set up a worktree:
+```bash
+# In the worktree's proof/ folder:
+rm -rf .lake
+ln -s /path/to/main/repo/proof/.lake .lake
+```
+
+### Warning
+Do not try to force Lean to use a shared source folder across *different* projects, as it goes against Lean's reproducible build architecture and will cause git-checkout conflicts between your projects.

@@ -182,17 +182,25 @@ theorem demorgan_or_prop (p q : Prop) :
 
 -- ex1: double negation cancels out
 theorem ex1_double_neg (a : Bool) : !!a = a := by
-  sorry
+  cases a <;> rfl
 
 -- ex2: AND is commutative
 theorem ex2_and_comm (a b : Bool) : (a && b) = (b && a) := by
-  sorry
+  cases a <;> cases b <;> rfl
 
 -- ex3: OR is commutative
 theorem ex3_or_comm (a b : Bool) : (a || b) = (b || a) := by
-  sorry
+  cases a <;> cases b <;> rfl
 
 -- ex4: De Morgan's AND law for Prop, proved without using demorgan_and_prop
 theorem ex4_demorgan_and_manual (p q : Prop) :
     ¬(p ∧ q) ↔ (¬p ∨ ¬q) := by
-  sorry
+  constructor
+  · intro h
+    by_cases hp : p
+    · right; intro hq; exact h ⟨hp, hq⟩
+    · left; exact hp
+  · intro h hpq
+    rcases h with hnp | hnq
+    · exact hnp hpq.1
+    · exact hnq hpq.2
