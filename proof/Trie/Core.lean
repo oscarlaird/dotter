@@ -679,7 +679,7 @@ noncomputable def AdvanceNodeTime {α : Type} [Alphabet α] [DecidableEq α] (x 
   (DL : LikelihoodDeltaDigestSeq L) (DP : PriorDeltaDigestSeq P)
   (h_valid : IsValidNode x n' m' DL DP) : BayesianTrieNode (α := α) :=
   let _inst : Decidable (IsBeyondFrontier x.val DL.seq 1 n') := Classical.dec _
-  if h_const : (IsBeyondFrontier x.val DL.seq 1 n' : Prop) then
+  if h_const : (IsBeyondFrontier x.val DL.seq 1 n') then
     let new_Z := BranchPrior (P m') x.val * ∏ i ∈ Finset.Icc 1 n', safe_Δ x.val (DL.seq i)
     { x with n := n', m := m', Z := new_Z }
   else
@@ -862,6 +862,47 @@ lemma beyond_frontier_glue {α : Type} [Alphabet α] [DecidableEq α] (x : Strin
   · exact h1 i h_start h_le
   · exact h2 i (by omega) h_end
 
+def IsBeyondNewFrontier {α : Type} [Alphabet α] [DecidableEq α] (x : StringAlg α) (N M N' M' : ℕ)
+  {L : LikelihoodSeq (α := α)} {P : PriorSeq (α := α)}
+  (DL : LikelihoodDeltaDigestSeq L) (DP : PriorDeltaDigestSeq P) : Prop :=
+  IsBeyondFrontier x DL.seq 1 N' ∨
+  (IsBeyondFrontier x DL.seq (N + 1) N' ∧ IsBeyondFrontier x DP.seq (M + 1) M')
+
+lemma frontier_calculation {α : Type} [Alphabet α] [DecidableEq α] {x : BayesianTrieNode (α := α)}
+  {N M N' M' : ℕ}
+  {L : LikelihoodSeq (α := α)} {P : PriorSeq (α := α)}
+  {DL : LikelihoodDeltaDigestSeq L} {DP : PriorDeltaDigestSeq P}
+  (h_beyond : IsBeyondNewFrontier x.val N M N' M' DL DP)
+  (h_valid : IsValidNode x N M DL DP) :
+  IsValidNode x N' M' DL DP := by
+  unfold IsBeyondNewFrontier at h_beyond
+  unfold IsValidNode at h_valid ⊢
+  rcases h_beyond with h_const | h_no_reweight
+  · left
+    exact h_const
+  · rcases h_valid with h_old_const | h_old_no_reweight
+    · left
+      exact beyond_frontier_glue x.val DL.seq 1 N N' h_old_const h_no_reweight.1
+    · right
+      constructor
+      · exact beyond_frontier_glue x.val DL.seq (x.n + 1) N N' h_old_no_reweight.1 h_no_reweight.1
+      · exact beyond_frontier_glue x.val DP.seq (x.m + 1) M M' h_old_no_reweight.2 h_no_reweight.2
+
+lemma beyond_new_frontier_extend {α : Type} [Alphabet α] [DecidableEq α] {x c : StringAlg α}
+  {N M N' M' : ℕ}
+  {L : LikelihoodSeq (α := α)} {P : PriorSeq (α := α)}
+  {DL : LikelihoodDeltaDigestSeq L} {DP : PriorDeltaDigestSeq P}
+  (hc : IsBeyondNewFrontier c N M N' M' DL DP) (h_ext : IsPrefix c x) :
+  IsBeyondNewFrontier x N M N' M' DL DP := by
+  unfold IsBeyondNewFrontier at hc ⊢
+  rcases hc with h_const | h_no_reweight
+  · left
+    exact beyond_frontier_extend x c DL.seq 1 N' h_const h_ext
+  · right
+    constructor
+    · exact beyond_frontier_extend x c DL.seq (N + 1) N' h_no_reweight.1 h_ext
+    · exact beyond_frontier_extend x c DP.seq (M + 1) M' h_no_reweight.2 h_ext
+
 /-- AdvanceTrieTime returns a new trie. We specify its properties. -/
 def AdvanceTrieTimeProp {α : Type} [Alphabet α] [Fintype α] [DecidableEq α]
   (old_trie : BayesianTrie (α := α)) (new_trie : BayesianTrie (α := α))
@@ -869,11 +910,17 @@ def AdvanceTrieTimeProp {α : Type} [Alphabet α] [Fintype α] [DecidableEq α]
   (N' M' : ℕ)
   {L : LikelihoodSeq (α := α)} {P : PriorSeq (α := α)}
   (DL : LikelihoodDeltaDigestSeq L) (DP : PriorDeltaDigestSeq P)
-  (h_F_valid : ∀ x ∈ F, IsValidNode (old_trie.nodes x) N' M' DL DP) : Prop :=
+  (h_old_valid : IsValidTrie old_trie DL DP)
+  (h_F_beyond : ∀ x ∈ F, IsBeyondNewFrontier x old_trie.N old_trie.M N' M' DL DP) : Prop :=
   new_trie.N = N' ∧
   new_trie.M = M' ∧
   -- nodes in frontier are advanced
-  (∀ x (hx : x ∈ F), new_trie.nodes x = AdvanceNodeTime (old_trie.nodes x) N' M' DL DP (h_F_valid x hx)) ∧
+  (∀ x (hx : x ∈ F), 
+    have h_beyond_val : IsBeyondNewFrontier (old_trie.nodes x).val old_trie.N old_trie.M N' M' DL DP := by
+      have h_val := old_trie.val_eq x
+      rw [h_val]
+      exact h_F_beyond x hx
+    new_trie.nodes x = AdvanceNodeTime (old_trie.nodes x) N' M' DL DP (frontier_calculation h_beyond_val (h_old_valid x))) ∧
   -- nodes beyond frontier are unchanged
   (∀ x, ProperExtensionOfCode x F → new_trie.nodes x = old_trie.nodes x) ∧
   -- nodes strictly within frontier update in reverse topological order (Z becomes sum of children)
@@ -888,10 +935,9 @@ lemma advance_trie_time_validity {α : Type} [Alphabet α] [Fintype α] [Decidab
   (N' M' : ℕ)
   {L : LikelihoodSeq (α := α)} {P : PriorSeq (α := α)}
   (DL : LikelihoodDeltaDigestSeq L) (DP : PriorDeltaDigestSeq P)
-  (h_F_valid : ∀ x ∈ F, IsValidNode (old_trie.nodes x) N' M' DL DP)
-  (h_prop : AdvanceTrieTimeProp old_trie new_trie F h_complete N' M' DL DP h_F_valid)
-  (_h_old_valid : IsValidTrie old_trie DL DP)
-  (h_ext_valid : ∀ x, ProperExtensionOfCode x F → IsValidNode (old_trie.nodes x) N' M' DL DP) :
+  (h_old_valid : IsValidTrie old_trie DL DP)
+  (h_F_beyond : ∀ x ∈ F, IsBeyondNewFrontier x old_trie.N old_trie.M N' M' DL DP)
+  (h_prop : AdvanceTrieTimeProp old_trie new_trie F h_complete N' M' DL DP h_old_valid h_F_beyond) :
   IsValidTrie new_trie DL DP := by
   unfold IsValidTrie
   intro x
@@ -910,17 +956,27 @@ lemma advance_trie_time_validity {α : Type} [Alphabet α] [Fintype α] [Decidab
   rcases h_cases with hx_F | hx_ext | hx_pref
   · -- x in F
     rw [h_F x hx_F]
-    exact advance_node_time_validity (h_F_valid x hx_F)
+    have h_beyond_val : IsBeyondNewFrontier (old_trie.nodes x).val old_trie.N old_trie.M N' M' DL DP := by
+      have h_val := old_trie.val_eq x
+      rw [h_val]
+      exact h_F_beyond x hx_F
+    exact advance_node_time_validity (frontier_calculation h_beyond_val (h_old_valid x))
   · -- x > F
     rw [h_ext x hx_ext]
-    exact h_ext_valid x hx_ext
+    rcases hx_ext with ⟨c, hc_in, h_c_pref⟩
+    have h_c_beyond := h_F_beyond c hc_in
+    have h_x_beyond := beyond_new_frontier_extend h_c_beyond h_c_pref.1
+    have h_x_beyond_val : IsBeyondNewFrontier (old_trie.nodes x).val old_trie.N old_trie.M N' M' DL DP := by
+      have h_val := old_trie.val_eq x
+      rw [h_val]
+      exact h_x_beyond
+    exact frontier_calculation h_x_beyond_val (h_old_valid x)
   · -- x < F
     have h_upd := h_pref x hx_pref
     unfold IsValidNode
     right
     constructor
     · rw [h_upd.1]
-      -- IsBeyondFrontier x DL.seq (N' + 1) N' is vacuously true
       intro i h_start h_end
       linarith
     · rw [h_upd.2.1]
@@ -933,8 +989,9 @@ lemma advance_trie_time_correctness {α : Type} [Alphabet α] [Fintype α] [Deci
   (N' M' : ℕ) (h_N_le : old_trie.N ≤ N') (h_M_le : old_trie.M ≤ M')
   {L : LikelihoodSeq (α := α)} {P : PriorSeq (α := α)}
   (DL : LikelihoodDeltaDigestSeq L) (DP : PriorDeltaDigestSeq P)
-  (h_F_valid : ∀ x ∈ F, IsValidNode (old_trie.nodes x) N' M' DL DP)
-  (h_prop : AdvanceTrieTimeProp old_trie new_trie F h_complete N' M' DL DP h_F_valid)
+  (h_old_valid : IsValidTrie old_trie DL DP)
+  (h_F_beyond : ∀ x ∈ F, IsBeyondNewFrontier x old_trie.N old_trie.M N' M' DL DP)
+  (h_prop : AdvanceTrieTimeProp old_trie new_trie F h_complete N' M' DL DP h_old_valid h_F_beyond)
   (h_old_n_le : ∀ x, (old_trie.nodes x).n ≤ old_trie.N)
   (h_old_m_le : ∀ x, (old_trie.nodes x).m ≤ old_trie.M)
   (h_old_correct : IsCorrectTrie old_trie L P)
@@ -942,9 +999,9 @@ lemma advance_trie_time_correctness {α : Type} [Alphabet α] [Fintype α] [Deci
     Summable (fun h : H (α := α) => if PrefixOfCode (x ++ [a]) {h.val} then L.seq N' h * (P M').fn h else (0:NNReal)))
   (h_not_term : ∀ x, (∃ c ∈ F, IsStrictPrefix x c) → ¬ ProperlyTerminated x)
   (h_children_correct : ∀ x, (∃ c ∈ F, IsStrictPrefix x c) → ∀ a : α,
-    (new_trie.nodes (x ++ [a])).n = N' ∧
-    (new_trie.nodes (x ++ [a])).m = M' ∧
-    IsCorrectNode (new_trie.nodes (x ++ [a])) L P) :
+    (new_trie.nodes (x ++ [a])).n = N'
+    ∧ (new_trie.nodes (x ++ [a])).m = M'
+    ∧ IsCorrectNode (new_trie.nodes (x ++ [a])) L P) :
   IsCorrectTrie new_trie L P := by
   unfold IsCorrectTrie
   intro x
@@ -962,14 +1019,12 @@ lemma advance_trie_time_correctness {α : Type} [Alphabet α] [Fintype α] [Deci
   · -- x in F
     have h_old_c := h_old_correct x
     have h_val : (old_trie.nodes x).val = x := old_trie.val_eq x
-    have h_n_le : (old_trie.nodes x).n ≤ N' := by
-      exact le_trans (h_old_n_le x) h_N_le
-    have h_m_le : (old_trie.nodes x).m ≤ M' := by
-      exact le_trans (h_old_m_le x) h_M_le
+    have h_n_le : (old_trie.nodes x).n ≤ N' := le_trans (h_old_n_le x) h_N_le
+    have h_m_le : (old_trie.nodes x).m ≤ M' := le_trans (h_old_m_le x) h_M_le
     rw [h_F x hx_F]
-    have h_corr := advance_node_time_correctness (h_F_valid x hx_F) h_old_c h_n_le h_m_le
-    -- advance_node_time_correctness requires h_n_le and h_m_le
-    exact h_corr
+    have h_beyond_val : IsBeyondNewFrontier (old_trie.nodes x).val old_trie.N old_trie.M N' M' DL DP := by
+      rw [h_val]; exact h_F_beyond x hx_F
+    exact advance_node_time_correctness (frontier_calculation h_beyond_val (h_old_valid x)) h_old_c h_n_le h_m_le
   · -- x > F
     rw [h_ext x hx_ext]
     exact h_old_correct x
