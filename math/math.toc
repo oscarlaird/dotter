@@ -8,15 +8,16 @@
 \contentsline {section}{\numberline {2.1}Lazy Posterior Calculation: The Core Algorithms}{6}{section.2.1}%
 \contentsline {section}{\numberline {2.2}Likelihood Tracking}{13}{section.2.2}%
 \contentsline {section}{\numberline {2.3}Character Priors from Token Models}{14}{section.2.3}%
-\contentsline {section}{\numberline {2.4}Old stuff}{17}{section.2.4}%
-\contentsline {section}{\numberline {2.5}Global Variables}{17}{section.2.5}%
-\contentsline {section}{\numberline {2.6}Fields of a Node}{17}{section.2.6}%
-\contentsline {section}{\numberline {2.7}Valid Descent}{18}{section.2.7}%
-\contentsline {section}{\numberline {2.8}Lazy Updates}{22}{section.2.8}%
-\contentsline {section}{\numberline {2.9}Likelihood Update}{23}{section.2.9}%
+\contentsline {section}{\numberline {2.4}Prior Tracking}{17}{section.2.4}%
+\contentsline {section}{\numberline {2.5}Old stuff}{17}{section.2.5}%
+\contentsline {section}{\numberline {2.6}Global Variables}{17}{section.2.6}%
+\contentsline {section}{\numberline {2.7}Fields of a Node}{17}{section.2.7}%
+\contentsline {section}{\numberline {2.8}Valid Descent}{18}{section.2.8}%
+\contentsline {section}{\numberline {2.9}Lazy Updates}{22}{section.2.9}%
+\contentsline {section}{\numberline {2.10}Likelihood Update}{23}{section.2.10}%
 \contentsline {subsubsection}{Maintaining maximum descendant likelihoods}{24}{section*.5}%
 \contentsline {subsubsection}{Possible Token Ancestors}{24}{section*.6}%
-\contentsline {section}{\numberline {2.10}Prior Update}{25}{section.2.10}%
+\contentsline {section}{\numberline {2.11}Prior Update}{25}{section.2.11}%
 \contentsline {chapter}{\numberline {3}Determine Visible Nodes}{28}{chapter.3}%
 \contentsline {section}{\numberline {3.1}Setting the Visibility Threshold}{28}{section.3.1}%
 \contentsline {section}{\numberline {3.2}Searching for Visible Nodes}{28}{section.3.2}%

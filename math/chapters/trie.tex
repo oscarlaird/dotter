@@ -789,6 +789,7 @@ $$
 We can now state our first result
 
 \begin{theorem}[Token Prior Path Summation]
+\label{theorem:token-prior-path-summation}
     The branch prior of a string $a$, is the sum of the token branch priors of all
     token sequences that pass through $a$.
     $$
@@ -848,6 +849,31 @@ We can now state our first result
     $$
     as claimed.
 \end{proof}
+
+\section{Prior Tracking}
+We now describe an algorithm to efficiently compute the branch prior.
+We first note that the product over prior deltas in line \ref{alg:advance-node-time-no-reweighting}
+of algorithm~\ref{alg:advance-node-time} can be expressed as a quotient of branch priors.
+
+\begin{lemma}[Prior Delta Quotient]
+    If $x \geq \bigvee_{i=x.m+1}^{m'} C^P_i$, then
+    $$
+    \prod_{i = x.m + 1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i}) = P^{br}_{m'}(x) / P^{br}_m(x)
+    $$
+\end{lemma}
+\begin{proof}
+    % TODO
+\end{proof}
+
+Thus if we have access to the branch prior function at valid nodes,
+then we can efficiently compute the prior-related terms in
+line~\ref{alg:advance-node-time-no-reweighting} and line~\ref{alg:advance-node-time-constant-likelihood}
+of algorithm~\ref{alg:advance-node-time}.
+The purpose of the prior tracking algorithm is to compute $\mathbf{P}^{br}_{M'}(x)$ for all
+valid nodes $x$ at prior time $M'$.
+We will assume that the inner sum in theorem~\ref{theorem:token-prior-path-summation}
+can be computed in $O(1)$ time.
+
 
 
 
