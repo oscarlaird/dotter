@@ -524,107 +524,142 @@ To do so we introduce a field called ``unpushed likelihood'' which will be used
 to track the product of likelihood deltas.
 Furthermore, we limit ourselves to handling a single likelihood update at a time.
 
-Formally, we define augmented nodes with an $x.l$ field, describining the unpushed likelihood.
-We define an augmented trie corresponding to these nodes.
+Formally, we define augmented nodes with an $x.l$ field, describining the unpushed likelihood,
+and an $x.n^{lt}$ field, denoting the local ``likelihood tracking time'' of the node.
+We define an augmented trie corresponding to these nodes,
+and augmented with an $N^{lt}$ field, denoting the global ``likelihood tracking time'' of the trie.
 
-\begin{algorithm}[H]
-\caption{Single Likelihood Update}
-\label{alg:single-likelihood-update}
-\begin{algorithmic}[1]
-\Require Bayesian Trie $B$
-\Require $B$ is valid at time $(N, M)$.
-\For{each node $x < C^L_{N+1}$ in topological order}
-    \State $y.l \gets y.l * x.l  \quad \forall y \in x.\text{children}$
-    \label{alg:single-likelihood-update-downprop-1}
-    \State $x.l \gets 1$
-    \label{alg:single-likelihood-update-downprop-2}
-\EndFor
-\Comment{For each $x \in C^L_{N+1}$, the product $\prod_{i=x.n+1}^{N} \Delta^L_i(\lfloor x \rfloor_{C^L_i})$ is the unpushed likelihood, $x.l$.}
-\For{each node $x \in C^L_{N+1}$}
-    \State $x.l \gets x.l * \Delta^L_{N+1}(x)$
-    \label{alg:single-likelihood-update-create-unpushed-likelihood}
-\EndFor
-\State Run \texttt{AdvanceTrieTime} to the new time of $(N+1, M)$.
-\For{each node $x \in C^L_{N+1}$}
-    \State $y.l \gets y.l * x.l \quad \forall y \in x.\text{children}$
-    \label{alg:single-likelihood-update-final-downprop-1}
-    \State $x.l \gets 1$
-    \label{alg:single-likelihood-update-final-downprop-2}
-\EndFor
-\State $B.N \gets B.N+1$
-\end{algorithmic}
-\end{algorithm}
+(Formally, these fields are independent of the global and local likelihood times
+of the used in the preceding section, altough when we put the algorithms together,
+they will be the same.)
 
 We define our invariant, ``push correctness'':
 
 \begin{definition}[Push Correctness]
 \label{def:push-correctness}
-    We say that a Bayesian trie $B$ is push correct for time $(N, M)$ if,
+    We say that a Bayesian trie $B$ is push correct for time $N^{lt}$ if,
     for every node whose descendant likelihoods have changed by a constant factor,
     that factor is equal to the product of the ``unpushed likelihood'' fields of all of its ancestors (including itself).
     I.e.,
     \[
-    \forall x,\, x \geq \bigvee_{i=x.n+1}^{N} C^L_i \implies \prod_{y \leq x} y.l = \prod_{i = x.n+1}^{N} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
+    \forall x,\, x \geq \bigvee_{i=x.n^{lt}+1}^{N^{lt}} C^L_i \implies \prod_{y \leq x} y.l = \prod_{i = x.n^{lt}+1}^{N^{lt}} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
     \]
 \end{definition}
 
-\begin{theorem}[Single Likelihood Update Push Correctness]
-\label{theorem:single-likelihood-update-push-correctness}
-    The \texttt{SingleLikelihoodUpdate} algorithm preserves push correctness.
+This is invariant under two very simple algorithms:
+\begin{algorithm}[H]
+\caption{Push Likelihood}
+\label{alg:push-likelihood}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$, Node $x$
+\Require $B$ is push correct for time $B.N^{lt}$.
+\Require $\not\exists a < x, a.l \neq 1$  \Comment{$x$ does not have ancestors with unpushed likelihood}
+\State $y.l \gets y.l * x.l  \quad \forall y \in x.\text{children}$
+\State $x.l \gets 1$
+\State $x.n^{lt} \gets B.N^{lt}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Apply Likelihood Delta}
+\label{alg:apply-likelihood-delta}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$, Node $x$
+\Require $B$ is push correct for time $B.N^{lt}$.
+\For{each node $x \in C^L_{B.N^{lt}+1}$}
+    \State $x.l \gets x.l * \Delta^L_{B.N^{lt}+1}(x)$
+\EndFor
+\State $B.N^{lt} \gets B.N^{lt}+1$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{theorem}[Push Likelihood Correctness]
+    Algorithm~\ref{alg:push-likelihood} preserves the push correctness of the trie.
 \end{theorem}
 \begin{proof}
-    There are two cases to consider: $x \leq C^L_{N+1}$ and $x > C^L_{N+1}$.
-    For $x \leq C^L_{N+1}$, push correctness is trivially satisfied. 
-    By the end of the algorithm, such a node's local time has been updated to $x.n = N+1$ 
-    (during the call to \texttt{AdvanceTrieTime}), making the empty product on the right-hand side equal to 1. 
-    Correspondingly, its unpushed likelihood $x.l$ has been set to 1,
-    leaving the left-hand side product equal to 1.
+    Let $N = B.N^{lt}$, and let $B'$ be the trie after the algorithm is applied.
+    We show that the defining equality of push correctness still holds for every node $z$.
 
-    If $x > C^L_{N+1}$, we rely on the inductive assumption that the trie was push correct
-    at the start of the algorithm.
-    In this case, lines~\ref{alg:single-likelihood-update-downprop-1} and~\ref{alg:single-likelihood-update-downprop-2}
-    do not affect the push correctness for these nodes since unpushed likelihood
-    is simply moved from one ancestor to another, leaving the total product $\prod_{y \leq x} y.l$ unchanged.
-    On line~\ref{alg:single-likelihood-update-create-unpushed-likelihood},
-    we transition from being correct for time $(N, M)$ to being correct for time $(N+1, M)$.
-    For every node $x > C^L_{N+1}$, we correctly multiply the factor $\Delta^L_{N+1}(\lfloor x \rfloor_{C^L_{N+1}})$ 
-    into the unpushed likelihood of the ancestor node in $C^L_{N+1}$.
-    Finally, on lines~\ref{alg:single-likelihood-update-final-downprop-1} and~\ref{alg:single-likelihood-update-final-downprop-2},
-    we once again merely redistribute the unpushed likelihood among ancestors without changing the total product.
+    First consider $z \neq x$.
+    If $z \not> x$, then none of the ancestors of $z$ are modified by the algorithm,
+    so $\prod_{y \leq z} y.l$ is unchanged.
+    If $z > x$, then the algorithm removes the factor $x.l$ from $x$ and multiplies it
+    into each child of $x$.
+    Along the ancestor chain of $z$, exactly one child of $x$ occurs, so the product
+    $\prod_{y \leq z} y.l$ is again unchanged.
+    In either subcase, $z.n^{lt}$ is unchanged and $B'.N^{lt}=N$, so the right-hand side
+    of Definition~\ref{def:push-correctness} is unchanged as well.
+    Since $B$ was push correct before the algorithm, the equality continues to hold for $z$ in $B'$.
+
+    Now consider $z = x$.
+    After the algorithm, $x.l = 1$ and $x.n^{lt} = N$.
+    By the precondition, every strict ancestor $a < x$ satisfies $a.l = 1$.
+    Therefore
+    \[
+    \prod_{y \leq x} y.l = 1.
+    \]
+    On the other hand, because $x.n^{lt} = B'.N^{lt} = N$, the product on the right-hand side
+    of Definition~\ref{def:push-correctness} is an empty product, hence also equal to $1$.
+    Thus the equality holds for $x$ as well.
+
+    Therefore $B'$ is push correct for time $N$.
 \end{proof}
 
-\begin{lemma}[Equivalence of Unpushed Likelihood]
-\label{lemma:equivalence-unpushed-likelihood}
-    Immediately before the call to \texttt{AdvanceTrieTime} in \texttt{SingleLikelihoodUpdate}, 
-    for every node $x \in C^L_{N+1}$, the value $x.l$ is exactly equal to the historical product 
-    of likelihood deltas:
-    \[
-    x.l = \prod_{i=x.n+1}^{N+1} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
-    \]
-\end{lemma}
+\begin{theorem}[Apply Likelihood Delta Correctness]
+    Algorithm~\ref{alg:apply-likelihood-delta} preserves the push correctness of the trie.
+\end{theorem}
 \begin{proof}
-    Before line~\ref{alg:single-likelihood-update-create-unpushed-likelihood}, the first loop has propagated all 
-    unpushed likelihoods down to the nodes in $C^L_{N+1}$. By the push correctness invariant for time $N$ 
-    (which applies since $x \in C^L_{N+1} \implies x \geq \bigvee_{i=x.n+1}^N C^L_i$), and because 
-    all proper ancestors $y < x$ have had their $y.l$ set to 1, the value of $x.l$ is exactly 
-    $\prod_{i=x.n+1}^N \Delta^L_i(\lfloor x \rfloor_{C^L_i})$. 
-    Line~\ref{alg:single-likelihood-update-create-unpushed-likelihood} then multiplies $x.l$ by 
-    $\Delta^L_{N+1}(\lfloor x \rfloor_{C^L_{N+1}})$, extending the product to $N+1$.
+    Let $N$ be the value of $B.N^{lt}$ before the algorithm, and let $B'$ be the trie after the algorithm.
+    Then $B'.N^{lt} = N+1$.
+
+    Fix a node $z$ such that
+    \[
+    z \geq \bigvee_{i=z.n^{lt}+1}^{N+1} C^L_i.
+    \]
+    We must show that
+    \[
+    \prod_{y \leq z} y.l
+    =
+    \prod_{i=z.n^{lt}+1}^{N+1} \Delta^L_i\bigl(\lfloor z \rfloor_{C^L_i}\bigr)
+    \]
+    holds in $B'$.
+
+    Since $z \geq \bigvee_{i=z.n^{lt}+1}^{N+1} C^L_i$, in particular $z \geq C^L_{N+1}$.
+    Hence $\lfloor z \rfloor_{C^L_{N+1}}$ is defined and is an ancestor of $z$.
+    Because $C^L_{N+1}$ is a prefix code, this is the unique node of $C^L_{N+1}$
+    on the ancestor chain of $z$.
+
+    The algorithm multiplies $u.l$ by $\Delta^L_{N+1}(u)$ for each $u \in C^L_{N+1}$.
+    Therefore, along the ancestor chain of $z$, exactly one factor is introduced, namely
+    \[
+    \Delta^L_{N+1}\bigl(\lfloor z \rfloor_{C^L_{N+1}}\bigr).
+    \]
+    So in $B'$ we have
+    \[
+    \prod_{y \leq z} y.l
+    =
+    \left(\prod_{y \leq z} y.l\right)_B
+    \Delta^L_{N+1}\bigl(\lfloor z \rfloor_{C^L_{N+1}}\bigr).
+    \]
+
+    Since $B$ was push correct for time $N$,
+    \[
+    \left(\prod_{y \leq z} y.l\right)_B
+    =
+    \prod_{i=z.n^{lt}+1}^{N} \Delta^L_i\bigl(\lfloor z \rfloor_{C^L_i}\bigr).
+    \]
+    Substituting gives
+    \[
+    \prod_{y \leq z} y.l
+    =
+    \left(\prod_{i=z.n^{lt}+1}^{N} \Delta^L_i\bigl(\lfloor z \rfloor_{C^L_i}\bigr)\right)
+    \Delta^L_{N+1}\bigl(\lfloor z \rfloor_{C^L_{N+1}}\bigr)
+    =
+    \prod_{i=z.n^{lt}+1}^{N+1} \Delta^L_i\bigl(\lfloor z \rfloor_{C^L_i}\bigr).
+    \]
+    This is exactly the required equality, so $B'$ is push correct for time $N+1$.
 \end{proof}
 
-\begin{corollary}[Correctness of Efficient AdvanceNodeTime]
-\label{corollary:efficient-advancenodetime}
-    In an efficient implementation of \texttt{AdvanceNodeTime} for a likelihood update, 
-    the calculation of the new posterior $x.Z$ for nodes $x \in C^L_{N+1}$ 
-    (line~\ref{alg:advance-node-time-no-reweighting} of Algorithm~\ref{alg:advance-node-time}) 
-    can replace the explicit product over historical deltas with a single multiplication by $x.l$:
-    \[
-    x.Z \gets x.Z \cdot x.l
-    \]
-    Because this substitution yields the exact same mathematical value for $x.Z$ by 
-    Lemma~\ref{lemma:equivalence-unpushed-likelihood}, this efficient $O(1)$ implementation 
-    trivially inherits the Validity and Correctness theorems proven for the abstract \texttt{AdvanceTrieTime}.
-\end{corollary}
 
 
 \section{Character Priors from Token Models}
@@ -762,6 +797,11 @@ We can now formalize a token-based language model.
     where,
     $$
     \forall \mathbf{a} \in \mathbf{\Lambda}^*, \sum_{\mathbf{t} \in \mathbf{\Lambda}} \mathbf{P}(\mathbf{t} \mid \mathbf{a}) = 1
+    $$
+    We also require that $\mathbf{P}$ only assigns non-zero probability to canonical tokenizations. 
+    That is, if appending a token $\mathbf{t}$ to a sequence $\mathbf{a}$ produces a sequence that is not the canonical tokenization of its literalization, the probability of that token must be zero:
+    $$
+    \mathbf{P}(\mathbf{t} \mid \mathbf{a}) = 0 \quad \text{if } T(T^{-1}(\mathbf{a}+\mathbf{t})) \neq \mathbf{a}+\mathbf{t}
     $$
 \end{definition}
 
@@ -930,153 +970,149 @@ We now formalize a finite dynamic program that does exactly this.
     \]
 \end{definition}
 
-\begin{definition}[Relevant Token Contexts]
-\label{def:relevant-token-contexts}
-    Let $F$ be a finite complete prefix code.
-    We define the set of token contexts relevant to $F$ by
-    \[
-    \mathcal{B}_F
-    :=
-    \left\{
-        \mathbf{b}\in\mathbf{\Lambda}^*
-        \;:\;
-        \exists x\in F,\ T^{-1}(\mathbf{b})<x
-    \right\}.
-    \]
-\end{definition}
+We provide two short algorithms to compute the priors.
+The essential thing is to know the ``token branch prior'', written $x.\mathbf{P}$,
+of the ancestors
+of a node before computing its branch prior, $x.P$.
+We augment nodes with times tracking when these calculations 
+are valid, $x.m^P$ and $x.m^\mathbf{P}$.
 
-\textit{Note: }
-Because tokens are non-empty and $F$ is finite, the set $\mathcal{B}_F$ is finite.
-Moreover it is prefix-closed: if $\mathbf{b}+\mathbf{t}\in\mathcal{B}_F$, then
-$\mathbf{b}\in\mathcal{B}_F$.
-Hence any ordering by nondecreasing token-sequence length is a topological order on
-the dependency graph of the recurrence below.
+Unlike our likelihood tracking, and our core algorithm, which both
+lazily reuse calculations across iterations, this section requires
+us to rerun the prior calculations from the root on each update.
+This makes the presentation simple.
 
 \begin{algorithm}[H]
-\caption{Prior Tracking on a Frontier}
-\label{alg:prior-tracking}
+\caption{Compute Token Branch Prior}
+\label{alg:compute-token-branch-prior}
 \begin{algorithmic}[1]
-\Require prior time $M$
-\Require finite complete prefix code $F$
-\State $\mathcal{B}_F \gets \{\mathbf{b}\in\mathbf{\Lambda}^* : \exists x\in F,\ T^{-1}(\mathbf{b})<x\}$
-\State $w(\epsilon) \gets 1$
-\For{each nonempty $\mathbf{c}\in\mathcal{B}_F$ in increasing order of $|\mathbf{c}|$}
-    \State write $\mathbf{c}=\mathbf{b}+\mathbf{t}$ with $\mathbf{t}\in\mathbf{\Lambda}$
-    \State $w(\mathbf{c}) \gets w(\mathbf{b})\,\mathbf{P}_M(\mathbf{t}\mid\mathbf{b})$
-    \label{alg:prior-tracking-dp}
-\EndFor
-\For{each $x \in F$}
-    \If{$x=\epsilon$}
-        \State $x.P \gets 1$
-    \Else
-        \State $x.P \gets
-        \sum_{\mathbf{b}\in\mathcal{B}_F,\,T^{-1}(\mathbf{b})<x}
-        w(\mathbf{b})\,\Phi_M(\mathbf{b},x)$
-        \label{alg:prior-tracking-sum}
-    \EndIf
-\EndFor
+\Require Bayesian Trie $B$, Node $x$, New Time $m$
+\Require $x = \epsilon$ or $(T^{-1}(T(x)[:-1])).m^\mathbf{P} = m$ \Comment{The token ancestor of $x$ already has the new time.}
+\If{$x = \epsilon$}
+    \State $x.\mathbf{P} \gets 1$
+\Else
+    \State $x.\mathbf{P} \gets (T^{-1}(T(x)[:-1])).\mathbf{P} * \mathbf{P}_m(T(x)[-1] \mid T(x)[:-1])$
+\EndIf
+\State $x.m^\mathbf{P} \gets m$
 \end{algorithmic}
 \end{algorithm}
 
-The first loop computes token branch priors for every relevant token context;
-the second loop converts them into character branch priors on the frontier.
-The key invariant is that the temporary weight $w(\mathbf{b})$ should equal
-the token branch prior $\mathbf{P}^{br}_M(\mathbf{b})$.
+\begin{algorithm}[H]
+\caption{Compute Branch Prior}
+\label{alg:compute-branch-prior}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$, Node $x$, New Time $m$
+\Require $(x[:i]).m^\mathbf{P} = m \quad \forall i < |x|$ \Comment{All string ancestors of $x$ already have calculated the token branch prior at the new time.}
+\State $x.P \gets \sum_{i=0}^{|x|-1} (x[:i]).\mathbf{P} * \Phi_m(T(x[:i]), x)$  \Comment{Theorem \ref{theorem:token-prior-path-summation}.}
+\State $x.m^P \gets m$
+\end{algorithmic}
+\end{algorithm}
 
-\begin{lemma}[Dynamic-Programming Invariant]
-\label{lemma:prior-tracking-dp-invariant}
-    After line~\ref{alg:prior-tracking-dp} has been executed for a context
-    $\mathbf{c}\in\mathcal{B}_F$, one has
-    \[
-    w(\mathbf{c})=\mathbf{P}^{br}_M(\mathbf{c}).
-    \]
-    Consequently, after the first loop terminates,
-    \[
-    w(\mathbf{b})=\mathbf{P}^{br}_M(\mathbf{b})
-    \qquad \forall \mathbf{b}\in\mathcal{B}_F.
-    \]
-\end{lemma}
-\begin{proof}
-    We induct on $|\mathbf{c}|$.
+We now show the correctness of these two algorithms.
 
-    For the base case $\mathbf{c}=\epsilon$, line 2 sets $w(\epsilon)=1$, and
-    by definition of token branch prior the empty product is also equal to 1.
-
-    For the induction step, let $\mathbf{c}=\mathbf{b}+\mathbf{t}$ be nonempty,
-    and assume $w(\mathbf{b})=\mathbf{P}^{br}_M(\mathbf{b})$.
-    Then line~\ref{alg:prior-tracking-dp} gives
-    \[
-    w(\mathbf{c})
-    =
-    w(\mathbf{b})\,\mathbf{P}_M(\mathbf{t}\mid\mathbf{b})
-    =
-    \mathbf{P}^{br}_M(\mathbf{b})\,\mathbf{P}_M(\mathbf{t}\mid\mathbf{b})
-    =
-    \mathbf{P}^{br}_M(\mathbf{c}),
-    \]
-    where the final equality is exactly the defining recurrence for
-    token branch prior.
-    This proves the claim.
-\end{proof}
-
-\begin{theorem}[Correctness of Prior Tracking]
-\label{theorem:prior-tracking-correctness}
-    Algorithm~\ref{alg:prior-tracking} computes the correct branch prior on the frontier:
-    for every $x \in F$,
-    \[
-    x.P = P^{br}_M(x).
-    \]
+\begin{theorem}[Compute Token Branch Prior Correctness]
+    Algorithm~\ref{alg:compute-token-branch-prior} correctly computes the token branch prior of a node.
 \end{theorem}
 \begin{proof}
-    Fix $x \in F$.
-    If $x=\epsilon$, then the algorithm sets $x.P=1$, which is equal to
-    $P^{br}_M(\epsilon)$ by theorem~\ref{theorem:token-prior-path-summation}.
-    So suppose henceforth that $x\neq\epsilon$.
+    We must show that after the algorithm runs,
+    \[
+    x.\mathbf{P} = \mathbf{P}^{br}_m(T(x)).
+    \]
+    There are two cases.
 
-    By lemma~\ref{lemma:prior-tracking-dp-invariant},
-    the first loop leaves us with
-    $w(\mathbf{b})=\mathbf{P}^{br}_M(\mathbf{b})$ for every relevant context $\mathbf{b}$.
-    Therefore line~\ref{alg:prior-tracking-sum} sets
+    If $x=\epsilon$, the algorithm sets $x.\mathbf{P}\gets 1$.
+    Also $T(\epsilon)=\epsilon$, so by Definition~\ref{def:token-branch-prior},
     \[
-    x.P
+    \mathbf{P}^{br}_m(T(x))
     =
-    \sum_{\mathbf{b}\in\mathcal{B}_F,\,T^{-1}(\mathbf{b})<x}
-    \mathbf{P}^{br}_M(\mathbf{b})\,\Phi_M(\mathbf{b},x).
-    \]
-    Expanding the definition of $\Phi_M$ gives
-    \[
-    x.P
+    \mathbf{P}^{br}_m(\epsilon)
     =
-    \sum_{\mathbf{b}\in\mathcal{B}_F,\,T^{-1}(\mathbf{b})<x}
-    \mathbf{P}^{br}_M(\mathbf{b})
-    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}
-    \mathbf{P}_M(\mathbf{t}\mid\mathbf{b}).
+    \prod_{i<0}\mathbf{P}_m(\epsilon[i]\mid \epsilon[:i])
+    =
+    1.
     \]
-    Any token sequence $\mathbf{b}$ with $T^{-1}(\mathbf{b}) \not< x$ contributes nothing
-    to the formula in theorem~\ref{theorem:token-prior-path-summation}, so restricting the
-    outer sum to $\mathcal{B}_F$ does not change its value.
-    Thus theorem~\ref{theorem:token-prior-path-summation} yields
+    Hence the stored value is correct.
+
+    Now suppose $x\neq \epsilon$.
+    By the precondition, the string node corresponding to the token ancestor, $T^{-1}(T(x)[:-1])$, already has time $m$,
+    so its stored value is correct:
     \[
-    x.P=P^{br}_M(x),
+    (T^{-1}(T(x)[:-1])).\mathbf{P}=\mathbf{P}^{br}_m(T(T^{-1}(T(x)[:-1]))).
     \]
-    proving correctness.
+    By boundary sufficiency, re-tokenizing this literalized prefix yields the same token sequence: $T(T^{-1}(T(x)[:-1])) = T(x)[:-1]$.
+    Thus,
+    \[
+    (T^{-1}(T(x)[:-1])).\mathbf{P}=\mathbf{P}^{br}_m(T(x)[:-1]).
+    \]
+    The algorithm then sets
+    \[
+    x.\mathbf{P}
+    \gets
+    (T^{-1}(T(x)[:-1])).\mathbf{P}\cdot \mathbf{P}_m(T(x)[-1]\mid T(x)[:-1]).
+    \]
+    Substituting the known ancestor value gives
+    \[
+    x.\mathbf{P}
+    =
+    \mathbf{P}^{br}_m(T(x)[:-1])\cdot \mathbf{P}_m(T(x)[-1]\mid T(x)[:-1]).
+    \]
+    But by Definition~\ref{def:token-branch-prior},
+    appending the final token multiplies the token branch prior by exactly this
+    conditional factor, so
+    \[
+    \mathbf{P}^{br}_m(T(x))
+    =
+    \mathbf{P}^{br}_m(T(x)[:-1])\cdot \mathbf{P}_m(T(x)[-1]\mid T(x)[:-1]).
+    \]
+    Therefore $x.\mathbf{P}=\mathbf{P}^{br}_m(T(x))$, as required.
+
+    Finally, the assignment $x.m^\mathbf{P}\gets m$ records exactly the time at
+    which this value is valid.
 \end{proof}
 
-When we update a node's prior time as in algorithm~\ref{alg:advance-node-time},
-we should first cache its current branch prior in a field such as
-$x.P_{old}=P^{br}_{x.m}(x)$.
-Then, before advancing the trie to prior time $M'$, we run
-algorithm~\ref{alg:prior-tracking} on the current valid frontier to populate
-$x.P=P^{br}_{M'}(x)$.
-If $x.P_{old}>0$, corollary~\ref{corollary:prior-delta-quotient} shows that
-\[
-\frac{x.P}{x.P_{old}}
-=
-\prod_{i=x.m+1}^{M'} \Delta^P_i(\lfloor x \rfloor_{C^P_i}),
-\]
-which is exactly the prior factor needed in
-line~\ref{alg:advance-node-time-no-reweighting} of
-algorithm~\ref{alg:advance-node-time}.
+\begin{theorem}[Compute Branch Prior Correctness]
+    Algorithm~\ref{alg:compute-branch-prior} correctly computes the branch prior of a node.
+\end{theorem}
+\begin{proof}
+    We must show that after the algorithm runs,
+    \[
+    x.P = P^{br}_m(x).
+    \]
+    By the precondition, every string ancestor $x[:i]$ has already had its
+    token branch prior computed at time $m$.
+    Equivalently, for every string prefix of $x$, the stored value
+    $(x[:i]).\mathbf{P}$ is equal to the token branch prior of its tokenization:
+    \[
+    (x[:i]).\mathbf{P}=\mathbf{P}^{br}_m(T(x[:i])).
+    \]
+
+    Now apply theorem~\ref{theorem:token-prior-path-summation} at prior time $m$.
+    It states that the branch prior of $x$ is the sum, over all token contexts
+    whose literalization is a strict prefix of $x$, of the token branch prior of
+    that context times the corresponding token fan:
+    \[
+    P^{br}_m(x)
+    =
+    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<x}
+    \mathbf{P}^{br}_m(\mathbf{b})\,\Phi_m(\mathbf{b},x).
+    \]
+    Because we only assign non-zero probability to canonical tokenizations, the relevant contexts $\mathbf{b}$ are exactly the tokenizations of the
+    string prefixes of $x$. That is, there is exactly one such valid $\mathbf{b}$ for each strict string prefix $x[:i]$, namely $\mathbf{b} = T(x[:i])$.
+    Replacing each
+    $\mathbf{P}^{br}_m(T(x[:i]))$ by the already-computed stored value
+    $(x[:i]).\mathbf{P}$ yields
+    \[
+    P^{br}_m(x)
+    =
+    \sum_{i=0}^{|x|-1} (x[:i]).\mathbf{P}\,\Phi_m(T(x[:i]),x).
+    \]
+    But this is exactly the value assigned to $x.P$ by the algorithm.
+    Therefore the algorithm correctly computes the branch prior of $x$.
+
+    Finally, the assignment $x.m^P\gets m$ records the time at which this branch
+    prior value is valid.
+\end{proof}
+
 
 Two implementation remarks are useful in practice:
 \begin{enumerate}
@@ -1093,8 +1129,9 @@ Two implementation remarks are useful in practice:
     $x\le T^{-1}(\mathbf{b+t})$.
 \end{enumerate}
 
+
 \section{Maximum Descendant Likelihood}
-Finally, we discuss how to track the maximum descendant likelihood for nodes.
+Finally, we discuss how to track the maximum token descendant likelihood for nodes.
 The quantity is not needed to compute posteriors and is orthogonal to the 
 preceding discussion. However, it will be helpful later for determining
 which token sequences should be evaluated by the language model.
@@ -1102,6 +1139,7 @@ which token sequences should be evaluated by the language model.
 
 
 
+\section{Old stuff}
 
 \section{Global Variables}
 
@@ -1337,37 +1375,6 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 \end{algorithmic}
 \end{algorithm}
 
-\begin{algorithm}[H]
-\caption{Ensure Rooted Subgraph}
-\label{alg:ensure-rooted-subgraph}
-\begin{algorithmic}[1]
-\Require Bayesian Trie $B$, and a trie $V$ which is a subgraph of $B$ sharing the root.
-\State Let $Q$ be a queue initialized with the root of $V$.
-\While{$Q$ is not empty}
-    \State Pop $v$ from $Q$
-    \State Let $b$ be the node in $B$ corresponding to $v$
-    \State ValidDescent($B$, $b$) Using algorithm \ref{alg:valid-descent}.
-    \For{each child $u$ of $v$ in $V$}
-        \State Push $u$ to $Q$
-    \EndFor
-\EndWhile
-\end{algorithmic}
-\end{algorithm}
-
-\begin{algorithm}[H]
-\caption{Up Propagation}
-\label{alg:up-propagation}
-\begin{algorithmic}[1]
-\Require Bayesian Trie $B$ and rooted subgraph $V$ of $B$.
-\State Sort the nodes in $V$ in reverse topological order.
-\For{each node $v$ in the reverse topological order}
-     \If{$v$ is not a leaf in $V$}
-        \State Set $v.\text{post\_Z} \gets \sum_{u \in v.\text{children}} u.\text{post\_Z}$
-    \EndIf
-\EndFor
-\end{algorithmic}
-\end{algorithm}
-
 \begin{definition}
     We define the truncation of a token sequence, $\lfloor \mathbf{B} \rfloor_d$,
     to be the longest token sequence prefix of $\mathbf{B}$, which has fewer than $d$ characters,
@@ -1409,116 +1416,7 @@ Let $x$ be our current node, and $y$ be a child of $x$.
 Theorem \ref{thm:chain-max-likelihood-decreasing}
 is necessary to prove that breaking at line \ref{alg:track-mdlfta-break} in algorithm \ref{alg:track-mdlfta} is correct.
 
-\section{Lazy Updates}
-The purpose of an update is to assimilate a change to the likelihood or prior
-so that the trie remains in a valid state, i.e., the trie will continue to 
-yield correct posterior probabilities if explored via the
-``valid descent'' algorithm.
-
-An important necessary condition for an update to be valid is that
-it correctly updates the unnormalized posterior probability of the root node.
-
-Each update must be performed in four phases:
-\begin{enumerate}
-    \item Select intial frontier: we choose a set of nodes from which to begin the algorithm.
-    \item Down Propagation: 
-    we descend the trie until we reach a ``valid update leafset'' of nodes, i.e., a set of nodes
-    which is a complete prefix partition and for which we can know the unnormalized posteriors of each node.
-    Efficiency demands that we recognize once we have reached a valid leafset and stop descending as early as possible.
-    \item Fix Leafset: we fix the unnormalized posteriors
-    of all the nodes in the valid update leafset.
-    \item Up Propagation: 
-    we ascend the trie, accumulating unnormalized posteriors
-\end{enumerate}
-
-The trick is to choose the smallest prefix partition for which we can truly calculate the unnormalized posteriors.
-The unnormalized posterior is a sum over one's children's unnormalized posteriors:
-
-How do we know when we have reached a valid update leafset?
-We assume that after receiving an update, \texttt{posterior\_Z},
-that is, $P_0(S | D)$,
-has been invalidated for every node in the trie. 
-We hope to derive $P_1(S | D)$, without summing over the children's posteriors,
-$$
-P_1(S|D) = \sum_i P_1(S_i | D).
-$$
-
-In general if one term is reweighted, we will have to recalculate,
-but there are four cases in which we can avoid recalculation and descent:
-\begin{enumerate}
-    \item The likelihood (and prior) of $S$ is known explicitly,
-    \begin{align}
-        P_1(S | D) &= P_1(S) P_1(D | S)
-    \end{align}
-    \item Neither term (neither likelihood nor prior) changes.
-    \begin{align}
-        P_1(S | D) &= P_0(S | D)
-    \end{align}
-    \item The likelihoods change by a constant factor $l$, and the priors do not change.
-    \begin{align}
-        P_1(S|D) 
-            &= \sum_i P_1(S_i | D) \notag \\
-            &= \sum_i P_1(S_i) P_1(D | S_i) \notag \\
-            &= \sum_i P_1(S_i) \big(l \cdot P_0(D | S_i)\big) \notag \\
-            &= l \sum_i P_0(S_i) P_0(D | S_i) \notag \\
-            &= l \cdot P_0(S | D)
-    \end{align}
-    \item The priors change by a constant factor $p$, and the likelihoods do not change,
-    \begin{align}
-        P_1(S|D) 
-            &= \sum_i P_1(S_i | D) \notag \\
-            &= \sum_i P_1(S_i) P_0(D | S_i) \notag \\
-            &= \sum_i \big(p \cdot P_0(S_i)\big) P_0(D | S_i) \notag \\
-            &= p \sum_i P_0(S_i) P_0(D | S_i) \notag \\
-            &= p \cdot P_0(S | D)
-    \end{align}
-\end{enumerate}
-In order to find the smallest prefix partition for the Up Propagation step,
-we consider the set of all nodes that satisfy any of these three cases and
-then take the minimal elements of this set (resulting in an antichain / frontier of the tree).
-
-
-
-
-% !TEX root = ../math.tex
 \section{Likelihood Update}
-\label{sec:likelihood-update}
-
-After receiving a likelihood result from the user interface, we must update the trie to increase the
-posterior probabilities of the nodes most likely indicated by the user's signal.
-
-\textbf{Step 1: Select initial frontier:}
-We choose the set
-of all nodes that were leaves in the visible trie,
-along with all invisible nodes that have a visible sibling.
-Equivalently, we are choosing the minimal elements of the set of nodes where
-every node has no visible children, i.e., has a valid likelihood for this observation, $D_i$.
-(We should descend from the root to gather these nodes to ensure that
-unpushed priors have been updated correctly, i.e., to ensure that every
-node in this set has a correctly calculated prior.)
-
-\textbf{Step 2: Down Propagation:}
-Our initially selected frontier is actually a valid update leafset,
-so no down propagation is necessary.
-Our initially selected frontier is a valid leafset because
-it satisfies case 3 above:
-the likelihood of a given node in this set may not be known explicitly
-(since it may have been the parent to visible children at some time),
-but we know how its implicit (true) likelihood has changed and we known that
-its prior has not changed.
-
-\textbf{Step 3: Fix Leafset:}
-We fix the unnormalized posteriors of all the nodes in the valid update leafset.
-We guarantee a valid unnormalized posterior by setting the \texttt{post\_Z} of each node to,
-$$
-x.\text{post\_Z} = x.\text{post\_Z} * \text{new\_likelihoods[x.value]}
-$$
-
-\textbf{Step 4: Up Propagation:}
-We ascend the trie, accumulating unnormalized posteriors of the parents as
-$$
-x.\text{post\_Z} = \sum_{y \in x.\text{children}} y.\text{post\_Z}
-$$
 
 \begin{algorithm}[H]
 \caption{Complete Visible Trie}
@@ -1540,34 +1438,6 @@ $$
 \Return $V$
 \end{algorithmic}
 \end{algorithm}
-
-\begin{algorithm}[H]
-\caption{Likelihood Update}
-\label{alg:likelihood-update}
-\begin{algorithmic}[1]
-\Require{Bayesian Trie $B$, trie of visible nodes, $V$, with likelihoods for latest observation.}
-\State $V \gets \text{CompleteVisibleTrie}(V)$ Using algorithm \ref{alg:complete-visible-trie}.
-\State EnsureRootedSubgraph($B$, $V$) Using algorithm \ref{alg:ensure-rooted-subgraph}.
-\For{each node $v \in V$}
-    \State Set $b$ to be the node in the bayesian trie corresponding to $v$
-    \If{$v$ is a leaf in $V$}
-        \State $b.\text{likelihood} \mathrel{*=} v.\text{new\_likelihood}$
-        \State $b.\text{post\_Z} \mathrel{*=} v.\text{new\_likelihood}$
-        \If{\texttt{track\_mdlfta}}
-            \State $b.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \mathrel{*=} v.\text{new\_likelihood} \quad \forall i$
-            \State $TrackMDLFTA(b)$ Using algorithm \ref{alg:track-mdlfta}.
-        \EndIf
-    \EndIf
-\EndFor
-\State UpPropagation($B$, $V$) Using algorithm \ref{alg:up-propagation}.
-\end{algorithmic}
-\end{algorithm}
-
-
-\subsubsection{Maintaining maximum descendant likelihoods}
-For every node in our update leafset we factor in the new likelihood not only to the likelihood of the given node, but also to all elements of the node's array
-\texttt{max\_descendant\_likelihood\_for\_token\_ancestor} as well as the scalar, \texttt{max\_token\_descendant\_likelihood}.
-when we visit a node during up propagation we immediately accumulate these quantities in the node's possible ancestors.
 
 \subsubsection{Possible Token Ancestors}
 A possible token ancestor of a character sequence, $S$, is a token sequence, $\mathbf{A}$, such that there is some string $Y$, such
@@ -1625,72 +1495,6 @@ node is necessary, if and only if the node satisfies one of the following two ca
     character and rarely true otherwise.
 \end{itemize}
 
-\textbf{Step 3: Fix Leafset:}
-How we fix the unnormalized posterior of an update leafset node depends on which of the 
-two cases above it satisfies.
-If it has a valid likelihood, then the likelihood and prior are known 
-explicitly (case 1 above) and we can set the \texttt{post\_Z} to,
-$$
-S.\text{post\_Z} = S.\text{prior} * S.\text{likelihood}
-$$
-If it is a space character, then we know that this node's prior and the priors of all
-its descendants must pass through the same token sequence, $\mathbf{B} > \mathbf{A}$.
-For this node and for all descendants $Y$, we have,
-$$
-P_1(Y) = P_0(Y) * \frac{P_1(\mathbf{B}|\mathbf{A})}{P_0(\mathbf{B}|\mathbf{A})}
-$$
-since this is the only factor in the product of conditional probabilities that has changed.
-We can determine the relevant predicted token as, $\texttt{shared\_token} = Tokenize(S)[|\mathbf{A}|]$ and so the correction factor
-is,
-$$
-\texttt{correction\_factor} = \frac{P_1(\mathbf{B}|\mathbf{A})}{P_0(\mathbf{B}|\mathbf{A})} = \frac{\text{LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}
-$$
-and we can set the \texttt{post\_Z} to,
-$$
-S.\text{post\_Z} = S.\text{post\_Z} * \texttt{correction\_factor}
-$$
-
-\textbf{Step 4: Up Propagation:}
-We ascend the trie, accumulating unnormalized posteriors of the parents as
-$$
-S.\text{post\_Z} = \sum_{Y \in S.\text{children}} Y.\text{post\_Z}
-$$
-
-\begin{algorithm}[H]
-\caption{Prior Update}
-\label{alg:prior-update}
-\begin{algorithmic}[1]
-\Require Bayesian Trie $B$, Node $S$ (corresponding to token sequence $\mathbf{A}$), $\text{New\_LLM\_Result}$, $\text{Old\_LLM\_Result}$
-\State Let $Q$ be a queue initialized with $S$
-\State Let $L$ be an empty list \Comment{Valid update leafset}
-\Comment{\textbf{Step 2: Down Propagation}}
-\While{$Q$ is not empty}
-    \State Pop node $x$ from $Q$
-    \State ValidDescent($B$, $x$) Using algorithm \ref{alg:valid-descent}.
-    \If{$x.\text{ever\_parent\_of\_visible\_node}$ is \text{false} $\lor$ $x.\text{letter}$ is a space character}
-        \State Add $x$ to $L$
-    \Else
-        \For{each child $y$ of $x$}
-            \State Push $y$ to $Q$
-        \EndFor
-    \EndIf
-\EndWhile
-\Comment{\textbf{Step 3: Fix Leafset}}
-\For{each node $x \in L$}
-    \If{$x.\text{ever\_parent\_of\_visible\_node}$ is \text{false}}
-        \State $x.\text{post\_Z} \gets x.\text{prior} * x.\text{likelihood}$
-    \Else \Comment{$x.\text{letter}$ is a space character}
-        \State $\texttt{shared\_token} \gets Tokenize(x.\text{value})[|\mathbf{A}|]$
-        \State $\texttt{correction\_factor} \gets \frac{\text{New\_LLM\_Result}[\texttt{shared\_token}]}{\text{Old\_LLM\_Result}[\texttt{shared\_token}]}$
-        \State $x.\text{post\_Z} \mathrel{*=} \texttt{correction\_factor}$
-    \EndIf
-\EndFor
-\Comment{\textbf{Step 4: Up Propagation}}
-\State Let $V$ be the subgraph of $B$ formed by the paths from the root to every node in $L$
-\State UpPropagation($B$, $V$) Using algorithm \ref{alg:up-propagation}.
-\end{algorithmic}
-\end{algorithm}
-
 \textbf{Note Bene:} Why is descending to the space character necessary? After all,
 if we know exactly how a node's prior has changed, and we know that its likelihood has not changed,
 then we should be able to correctly recalculate the unnormalized posterior, just as how 
@@ -1707,13 +1511,6 @@ Since the weighting, i.e., the prior, has changed, so has the \textit{likelihood
 of this node.
 Thus we do not satisfy case 4 above, because the likelihood has changed.
 
-
-\bigskip
-We update the posterior probabilities in two ways:
-\begin{enumerate}
-    \item \textbf{Likelihood updates}: when the user makes a gesture, the likelihoods of the prefixes are updated. This is a traditional update.
-    \item \textbf{Prior updates}: when the language model server returns new or better prior probabilities, we must recalculate the posteriors.
-\end{enumerate}
 
 \begin{table}[h]
 \centering
