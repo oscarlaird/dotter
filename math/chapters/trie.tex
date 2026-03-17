@@ -30,7 +30,8 @@ Our analysis has five parts:
     \item We assume a character-based prior model, present algorithms for lazy
     calculation of the unnormalized posteriors, and prove their correctness.
     \item We discuss implementation details with regard to tracking the likelihoods.
-    \item We discuss how to adapt the algorithms for a token-based prior model.
+    \item We discuss converting a token-based prior model to a character-based prior model.
+    \item We discuss how to calculate the branch prior for a node.
     \item We discuss how to track the maximum descendant likelihoods of token sequences.
     \item We present the full algorithms.
 \end{enumerate}
@@ -874,23 +875,48 @@ valid nodes $x$ at prior time $M'$.
 We will assume that the inner sum in theorem~\ref{theorem:token-prior-path-summation}
 can be computed in $O(1)$ time.
 
+\begin{algorithm}[H]
+\caption{Prior Tracking}
+\label{alg:prior-tracking}
+\begin{algorithmic}[1]
+\Require{$x$ \Comment{the node to update}}
+\Require{$M$ \Comment{the prior time for which to compute the branch prior}}
+\Require{$F$ \Comment{the complete prefix code on which to evaluate the branch priors}}
+\State $\epsilon.\text{tbp} \gets 1$
+\For{each $x < F$ in topological order}
+    \State $x.\text{tbp} \gets x.\text{token\_ancestor.tbp} * \mathbf{P}_{M'}(x.\text{final\_token} \mid T^{-1}(x.\text{token\_ancestor}.value))$
+\EndFor
+\For{each $x \in F$}
+    \State $
+    x.P \gets
+    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<x}\mathbf{P}^{br}(\mathbf{b})
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}\mathbf{P}(\mathbf{t}\mid\mathbf{b}),
+    $
+    \label{alg:prior-tracking-sum}
+\EndFor
+\end{algorithmic}
+\end{algorithm}
 
+When we update a node's prior time as we do in algorithm~\ref{alg:advance-node-time},
+we should snapshot the branch prior for that node in $x.P_{old}$, which represents $P^{br}_{x.m}(x)$.
+Then, before the next time we advance the trie time,
+we should run algorithm~\ref{alg:prior-tracking} first to populate $x.P$,
+which represents $P^{br}_{M'}(x)$. Their quotient tells us how the prior has changed.
 
-
-\section{Old stuff}
-Formally, to convert a token model to a literal model, we take the sum across 
-all compatible token sequences $\mathbf{B}$, and all compatible terminal tokens $\mathbf{t}$,
-$$
-P(S) = \sum_{\mathbf{B} < S} P(\mathbf{B}) \sum_{\mathbf{t},\, S \leq \mathbf{B}+\mathbf{t}} P()
-$$
-
-We use two tricks to efficiently compute this sum:
+We have two tricks to efficiently compute the sum in line~\ref{alg:prior-tracking-sum} of algorithm~\ref{alg:prior-tracking}:
 \begin{enumerate}
     \item We recognize that the eligible longest token prefixes correspond to the prefixes of the last word, since tokens never contain spaces in the middle of them.
     Additionally we can limit the values of $\mathbf{B}$ to at most 15 ancestor prefixes, since tokens are at most 15 characters long in our tokenizer.
     \item We can preconvert the language model's output of logits to an array of \textit{cumulative} probabilities.
-    This allows us to efficiently compute the alphabetical sum over compatible $\mathbf{t}$, by taking the difference between the cumulative probabilities of the start and end.
+    This allows us to efficiently compute the alphabetical sum over compatible $\mathbf{t}$, by taking the difference between the cumulative probabilities of the start and end of the 
+    alphabetical range of $\mathbf{t}$ defined by $x \leq T^{-1}(\mathbf{b+t})$.
 \end{enumerate}
+
+\section{Maximum Descendant Likelihood}
+Finally, we discuss how to track the maximum descendant likelihood for nodes.
+The quantity is not needed to compute posteriors and is orthogonal to the 
+preceding discussion. However, it will be helpful later for determining
+which token sequences should be evaluated by the language model.
 
 
 

@@ -23,20 +23,24 @@ structure AugBayesianTrie where
 def Prefixes (x : StringAlg α) : Finset (StringAlg α) :=
   x.inits.toFinset
 
+omit [Alphabet α] in
 lemma mem_Prefixes {x y : StringAlg α} :
   y ∈ Prefixes x ↔ IsPrefix y x := by
   unfold Prefixes IsPrefix
-  simpa using List.mem_inits
+  rw [List.mem_toFinset, List.mem_inits]
 
+omit [Alphabet α] in
 lemma self_mem_Prefixes (x : StringAlg α) :
   x ∈ Prefixes x := by
   exact mem_Prefixes.mpr ⟨[], by simp⟩
 
+omit [Alphabet α] in
 lemma prefix_length_le {x y : StringAlg α} (h : IsPrefix x y) :
   x.length ≤ y.length := by
   rcases h with ⟨z, rfl⟩
   simp
 
+omit [Alphabet α] in
 lemma prefix_eq_of_length_eq {x y : StringAlg α} (h : IsPrefix x y)
   (hlen : x.length = y.length) : x = y := by
   rcases h with ⟨z, rfl⟩
@@ -44,6 +48,7 @@ lemma prefix_eq_of_length_eq {x y : StringAlg α} (h : IsPrefix x y)
   subst z
   simp
 
+omit [Alphabet α] in
 lemma Prefixes_subset {x y : StringAlg α} (h : IsPrefix x y) :
   Prefixes x ⊆ Prefixes y := by
   intro z hz
@@ -84,16 +89,19 @@ def NextFrontier
 def IsChild (parent child : StringAlg α) : Prop :=
   ∃ a : α, child = parent ++ [a]
 
+omit [Alphabet α] in
 lemma child_has_prefix {parent child : StringAlg α} (h : IsChild parent child) :
   IsPrefix parent child := by
   rcases h with ⟨a, rfl⟩
   exact ⟨[a], by simp⟩
 
+omit [Alphabet α] [DecidableEq α] in
 lemma child_length {parent child : StringAlg α} (h : IsChild parent child) :
   child.length = parent.length + 1 := by
   rcases h with ⟨a, rfl⟩
   simp
 
+omit [Alphabet α] in
 lemma exists_child_prefix_of_strictPrefix {x y : StringAlg α}
   (hxy : IsStrictPrefix x y) :
   ∃ z, IsChild x z ∧ IsPrefix z y := by
@@ -110,6 +118,7 @@ lemma exists_child_prefix_of_strictPrefix {x y : StringAlg α}
       · exact ⟨a, rfl⟩
       · exact ⟨rest, by simp⟩
 
+omit [Alphabet α] in
 lemma child_prefix_unique {x c y z : StringAlg α}
   (hy : IsChild c y) (hz : IsChild c z)
   (hyx : IsPrefix y x) (hzx : IsPrefix z x) :
@@ -418,8 +427,7 @@ lemma frontier_factor_eq_historical_product
   (h_time : LikelihoodTimesBounded B)
   (h_valid : LikelihoodValidTrie DL B)
   (h_push : PushCorrect DL B)
-  {x : StringAlg α}
-  (hx : x ∈ NextFrontier B DL) :
+  {x : StringAlg α} :
   FrontierLikelihoodFactor B DL x
     = ∏ i ∈ Finset.Icc ((B.nodes x).n + 1) (B.N + 1), safe_Δ x (DL.seq i) := by
   have h_old := h_push x (h_valid x)
@@ -444,7 +452,6 @@ theorem singleLikelihoodUpdate_pushCorrectness
   {B : AugBayesianTrie (α := α)}
   {DL : LikelihoodDeltaDigestSeq L}
   (h_time : LikelihoodTimesBounded B)
-  (h_valid : LikelihoodValidTrie DL B)
   (h_push : PushCorrect DL B) :
   PushCorrect DL (SingleLikelihoodUpdate B DL) := by
   intro x h_new
@@ -455,9 +462,7 @@ theorem singleLikelihoodUpdate_pushCorrectness
         ∏ i ∈ Finset.Icc (((SingleLikelihoodUpdate B DL).nodes x).n + 1)
             (SingleLikelihoodUpdate B DL).N, safe_Δ x (DL.seq i) = 1 := by
       rw [singleLikelihoodUpdate_n_of_frontier B DL hx]
-      have h_empty : Finset.Icc (B.N + 2) (B.N + 1) = ∅ := by
-        exact Finset.Icc_eq_empty_of_lt (by omega)
-      simp [SingleLikelihoodUpdate, h_empty]
+      simp [SingleLikelihoodUpdate]
     rw [h_left, h_right]
   · have h_n_same : ((SingleLikelihoodUpdate B DL).nodes x).n = (B.nodes x).n :=
       singleLikelihoodUpdate_n_of_not_frontier B DL hx
@@ -666,7 +671,7 @@ lemma equivalence_unpushed_likelihood
   ((CreateUnpushedLikelihood B DL).nodes x).l
     = ∏ i ∈ Finset.Icc ((B.nodes x).n + 1) (B.N + 1), safe_Δ x (DL.seq i) := by
   rw [createUnpushedLikelihood_l_of_frontier B DL hx]
-  exact frontier_factor_eq_historical_product h_time h_valid h_push hx
+  exact frontier_factor_eq_historical_product h_time h_valid h_push
 
 /--
 Corollary used for efficient `AdvanceNodeTime` implementation:
