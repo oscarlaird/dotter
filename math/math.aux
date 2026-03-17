@@ -173,109 +173,116 @@
 \@writefile{toc}{\contentsline {section}{\numberline {2.3}Character Priors from Token Models}{14}{section.2.3}\protected@file@percent }
 \newlabel{theorem:token-prior-path-summation}{{2.6}{16}{Token Prior Path Summation}{theorem.2.3.6}{}}
 \@writefile{toc}{\contentsline {section}{\numberline {2.4}Prior Tracking}{17}{section.2.4}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {4}{\ignorespaces Prior Tracking}}{17}{algorithm.4}\protected@file@percent }
-\newlabel{alg:prior-tracking}{{4}{17}{Prior Tracking}{algorithm.4}{}}
-\newlabel{alg:prior-tracking-sum}{{5}{17}{Prior Tracking}{algorithm.4}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {2.5}Maximum Descendant Likelihood}{17}{section.2.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2.6}Global Variables}{17}{section.2.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2.7}Fields of a Node}{18}{section.2.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2.8}Valid Descent}{19}{section.2.8}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {5}{\ignorespaces Initialize Children}}{19}{algorithm.5}\protected@file@percent }
-\newlabel{alg:initialize-children}{{5}{19}{Valid Descent}{algorithm.5}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {6}{\ignorespaces Visit Node}}{20}{algorithm.6}\protected@file@percent }
-\newlabel{alg:visit-node}{{6}{20}{Valid Descent}{algorithm.6}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {7}{\ignorespaces Track Token Descendant Max Likelihood}}{21}{algorithm.7}\protected@file@percent }
-\newlabel{alg:track-mdlfta}{{7}{21}{Valid Descent}{algorithm.7}{}}
-\newlabel{alg:track-mdlfta-break}{{10}{21}{Valid Descent}{algorithm.7}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {8}{\ignorespaces Valid Descent}}{21}{algorithm.8}\protected@file@percent }
-\newlabel{alg:valid-descent}{{8}{21}{Valid Descent}{algorithm.8}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {9}{\ignorespaces Ensure Rooted Subgraph}}{21}{algorithm.9}\protected@file@percent }
-\newlabel{alg:ensure-rooted-subgraph}{{9}{21}{Valid Descent}{algorithm.9}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {10}{\ignorespaces Up Propagation}}{21}{algorithm.10}\protected@file@percent }
-\newlabel{alg:up-propagation}{{10}{21}{Valid Descent}{algorithm.10}{}}
-\newlabel{thm:chain-max-likelihood-decreasing}{{2.7}{22}{}{theorem.2.8.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {2.9}Lazy Updates}{22}{section.2.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2.10}Likelihood Update}{23}{section.2.10}\protected@file@percent }
-\newlabel{sec:likelihood-update}{{2.10}{23}{Likelihood Update}{section.2.10}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {11}{\ignorespaces Complete Visible Trie}}{24}{algorithm.11}\protected@file@percent }
-\newlabel{alg:complete-visible-trie}{{11}{24}{Likelihood Update}{algorithm.11}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {12}{\ignorespaces Likelihood Update}}{24}{algorithm.12}\protected@file@percent }
-\newlabel{alg:likelihood-update}{{12}{24}{Likelihood Update}{algorithm.12}{}}
-\@writefile{toc}{\contentsline {subsubsection}{Maintaining maximum descendant likelihoods}{24}{section*.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{Possible Token Ancestors}{24}{section*.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2.11}Prior Update}{25}{section.2.11}\protected@file@percent }
-\newlabel{sec:prior-update}{{2.11}{25}{Prior Update}{section.2.11}{}}
-\@writefile{loa}{\contentsline {algorithm}{\numberline {13}{\ignorespaces Prior Update}}{26}{algorithm.13}\protected@file@percent }
-\newlabel{alg:prior-update}{{13}{26}{Prior Update}{algorithm.13}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {2.1}{\ignorespaces Comparison of likelihood updates and prior updates.}}{27}{table.2.1}\protected@file@percent }
-\newlabel{tab:updates}{{2.1}{27}{Comparison of likelihood updates and prior updates}{table.2.1}{}}
-\@writefile{toc}{\contentsline {chapter}{\numberline {3}Determine Visible Nodes}{28}{chapter.3}\protected@file@percent }
+\newlabel{lemma:prior-delta-factorization}{{2.6}{17}{Prior Delta Factorization}{lemma.2.6}{}}
+\newlabel{corollary:prior-delta-quotient}{{2.2}{17}{Prior Delta Quotient}{corollary.2.2}{}}
+\newlabel{def:token-fan}{{2.44}{17}{Token Fan}{definition.2.44}{}}
+\newlabel{def:relevant-token-contexts}{{2.45}{18}{Relevant Token Contexts}{definition.2.45}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {4}{\ignorespaces Prior Tracking on a Frontier}}{18}{algorithm.4}\protected@file@percent }
+\newlabel{alg:prior-tracking}{{4}{18}{Prior Tracking}{algorithm.4}{}}
+\newlabel{alg:prior-tracking-dp}{{5}{18}{Prior Tracking}{algorithm.4}{}}
+\newlabel{alg:prior-tracking-sum}{{10}{18}{Prior Tracking}{algorithm.4}{}}
+\newlabel{lemma:prior-tracking-dp-invariant}{{2.7}{18}{Dynamic-Programming Invariant}{lemma.2.7}{}}
+\newlabel{theorem:prior-tracking-correctness}{{2.7}{18}{Correctness of Prior Tracking}{theorem.2.4.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2.5}Maximum Descendant Likelihood}{19}{section.2.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.6}Global Variables}{19}{section.2.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.7}Fields of a Node}{19}{section.2.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.8}Valid Descent}{20}{section.2.8}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {5}{\ignorespaces Initialize Children}}{21}{algorithm.5}\protected@file@percent }
+\newlabel{alg:initialize-children}{{5}{21}{Valid Descent}{algorithm.5}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {6}{\ignorespaces Visit Node}}{22}{algorithm.6}\protected@file@percent }
+\newlabel{alg:visit-node}{{6}{22}{Valid Descent}{algorithm.6}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {7}{\ignorespaces Track Token Descendant Max Likelihood}}{23}{algorithm.7}\protected@file@percent }
+\newlabel{alg:track-mdlfta}{{7}{23}{Valid Descent}{algorithm.7}{}}
+\newlabel{alg:track-mdlfta-break}{{10}{23}{Valid Descent}{algorithm.7}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {8}{\ignorespaces Valid Descent}}{23}{algorithm.8}\protected@file@percent }
+\newlabel{alg:valid-descent}{{8}{23}{Valid Descent}{algorithm.8}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {9}{\ignorespaces Ensure Rooted Subgraph}}{23}{algorithm.9}\protected@file@percent }
+\newlabel{alg:ensure-rooted-subgraph}{{9}{23}{Valid Descent}{algorithm.9}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {10}{\ignorespaces Up Propagation}}{23}{algorithm.10}\protected@file@percent }
+\newlabel{alg:up-propagation}{{10}{23}{Valid Descent}{algorithm.10}{}}
+\newlabel{thm:chain-max-likelihood-decreasing}{{2.8}{24}{}{theorem.2.8.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2.9}Lazy Updates}{24}{section.2.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.10}Likelihood Update}{25}{section.2.10}\protected@file@percent }
+\newlabel{sec:likelihood-update}{{2.10}{25}{Likelihood Update}{section.2.10}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {11}{\ignorespaces Complete Visible Trie}}{26}{algorithm.11}\protected@file@percent }
+\newlabel{alg:complete-visible-trie}{{11}{26}{Likelihood Update}{algorithm.11}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {12}{\ignorespaces Likelihood Update}}{26}{algorithm.12}\protected@file@percent }
+\newlabel{alg:likelihood-update}{{12}{26}{Likelihood Update}{algorithm.12}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Maintaining maximum descendant likelihoods}{26}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Possible Token Ancestors}{26}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.11}Prior Update}{27}{section.2.11}\protected@file@percent }
+\newlabel{sec:prior-update}{{2.11}{27}{Prior Update}{section.2.11}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {13}{\ignorespaces Prior Update}}{28}{algorithm.13}\protected@file@percent }
+\newlabel{alg:prior-update}{{13}{28}{Prior Update}{algorithm.13}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2.1}{\ignorespaces Comparison of likelihood updates and prior updates.}}{29}{table.2.1}\protected@file@percent }
+\newlabel{tab:updates}{{2.1}{29}{Comparison of likelihood updates and prior updates}{table.2.1}{}}
+\@writefile{toc}{\contentsline {chapter}{\numberline {3}Determine Visible Nodes}{30}{chapter.3}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:determine-visible-nodes}{{3}{28}{Determine Visible Nodes}{chapter.3}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {3.1}Setting the Visibility Threshold}{28}{section.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3.2}Searching for Visible Nodes}{28}{section.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {3.3}Responding to Likelihood Updates versus Prior Updates}{28}{section.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {4}Render Trie}{30}{chapter.4}\protected@file@percent }
+\newlabel{chap:determine-visible-nodes}{{3}{30}{Determine Visible Nodes}{chapter.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3.1}Setting the Visibility Threshold}{30}{section.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.2}Searching for Visible Nodes}{30}{section.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3.3}Responding to Likelihood Updates versus Prior Updates}{30}{section.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {4}Render Trie}{32}{chapter.4}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:render-trie}{{4}{30}{Render Trie}{chapter.4}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4.1}Embellishments}{30}{section.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.1}Branches of the Tree}{30}{subsection.4.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {5}Stimulus Optimization: Ideal Timer Placement}{31}{chapter.5}\protected@file@percent }
+\newlabel{chap:render-trie}{{4}{32}{Render Trie}{chapter.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4.1}Embellishments}{32}{section.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1.1}Branches of the Tree}{32}{subsection.4.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {5}Stimulus Optimization: Ideal Timer Placement}{33}{chapter.5}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:optimize-stimulus-parameters}{{5}{31}{Stimulus Optimization: Ideal Timer Placement}{chapter.5}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {5.1}The Continuous One Bit Channel}{31}{section.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1.1}Two Interpretations}{31}{subsection.5.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1.2}The Ideal Timing Distribution}{31}{subsection.5.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{A Geometric Intuition}{32}{section*.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5.2}Periodic Signals}{32}{section.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2.1}Random Scan Times}{32}{subsection.5.2.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2.2}Periodic signals}{32}{subsection.5.2.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2.3}Approximating A Uniform Distribution with a Gaussian Mixture}{32}{subsection.5.2.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{Two Heuristics}{33}{section*.8}\protected@file@percent }
+\newlabel{chap:optimize-stimulus-parameters}{{5}{33}{Stimulus Optimization: Ideal Timer Placement}{chapter.5}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5.1}The Continuous One Bit Channel}{33}{section.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1.1}Two Interpretations}{33}{subsection.5.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1.2}The Ideal Timing Distribution}{33}{subsection.5.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{A Geometric Intuition}{34}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.2}Periodic Signals}{34}{section.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2.1}Random Scan Times}{34}{subsection.5.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2.2}Periodic signals}{34}{subsection.5.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2.3}Approximating A Uniform Distribution with a Gaussian Mixture}{34}{subsection.5.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Two Heuristics}{35}{section*.8}\protected@file@percent }
 \citation{Kolchinsky_2017}
-\@writefile{toc}{\contentsline {subsubsection}{Approximations to the entropy based on pairwise distances}{34}{section*.9}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Gaussian Mixture Model with Rényi Entropy}{34}{section*.10}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Gaussian Mixture Model with Kolchinsky Objective}{34}{section*.11}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Von Mises Mixture Model with Rényi Entropy}{34}{section*.12}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Von Mises Mixture Model with Kolchinsky Objective}{34}{section*.13}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{34}{section*.14}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5.3}User Parameters}{35}{section.5.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3.1}The Likelihood Model}{35}{subsection.5.3.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3.2}Directional Statistics}{36}{subsection.5.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {6}Render Stimulus}{37}{chapter.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Approximations to the entropy based on pairwise distances}{36}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Gaussian Mixture Model with Rényi Entropy}{36}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Gaussian Mixture Model with Kolchinsky Objective}{36}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Von Mises Mixture Model with Rényi Entropy}{36}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Von Mises Mixture Model with Kolchinsky Objective}{36}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{36}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5.3}User Parameters}{37}{section.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3.1}The Likelihood Model}{37}{subsection.5.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3.2}Directional Statistics}{38}{subsection.5.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {6}Render Stimulus}{39}{chapter.6}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:render-stimulus}{{6}{37}{Render Stimulus}{chapter.6}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {6.1}Circular Timers}{37}{section.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {7}Detect Response}{38}{chapter.7}\protected@file@percent }
+\newlabel{chap:render-stimulus}{{6}{39}{Render Stimulus}{chapter.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6.1}Circular Timers}{39}{section.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {7}Detect Response}{40}{chapter.7}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:detect-response}{{7}{38}{Detect Response}{chapter.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {7.1}Blink Detection}{38}{section.7.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7.2}Keypress Detection}{38}{section.7.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {8}Determine Most Likely Break Nodes}{39}{chapter.8}\protected@file@percent }
+\newlabel{chap:detect-response}{{7}{40}{Detect Response}{chapter.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7.1}Blink Detection}{40}{section.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7.2}Keypress Detection}{40}{section.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {8}Determine Most Likely Break Nodes}{41}{chapter.8}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:determine-most-likely-break-nodes}{{8}{39}{Determine Most Likely Break Nodes}{chapter.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {8.1}An Upper Bound for the Likelihood of a Token Sequence}{39}{section.8.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {8.2}Descending the Token Trie}{40}{section.8.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {chapter}{\numberline {9}LLM Query}{41}{chapter.9}\protected@file@percent }
+\newlabel{chap:determine-most-likely-break-nodes}{{8}{41}{Determine Most Likely Break Nodes}{chapter.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8.1}An Upper Bound for the Likelihood of a Token Sequence}{41}{section.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8.2}Descending the Token Trie}{42}{section.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{\numberline {9}LLM Query}{43}{chapter.9}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:llm-query}{{9}{41}{LLM Query}{chapter.9}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {9.1}Maintaining a Key-Value Cache Trie}{41}{section.9.1}\protected@file@percent }
-\newlabel{sec:kv-cache-trie}{{9.1}{41}{Maintaining a Key-Value Cache Trie}{section.9.1}{}}
-\@writefile{toc}{\contentsline {chapter}{\numberline {10}Mastering Dotter}{42}{chapter.10}\protected@file@percent }
+\newlabel{chap:llm-query}{{9}{43}{LLM Query}{chapter.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9.1}Maintaining a Key-Value Cache Trie}{43}{section.9.1}\protected@file@percent }
+\newlabel{sec:kv-cache-trie}{{9.1}{43}{Maintaining a Key-Value Cache Trie}{section.9.1}{}}
+\@writefile{toc}{\contentsline {chapter}{\numberline {10}Mastering Dotter}{44}{chapter.10}\protected@file@percent }
 \@writefile{lof}{\addvspace {10\p@ }}
 \@writefile{lot}{\addvspace {10\p@ }}
-\newlabel{chap:practice}{{10}{42}{Mastering Dotter}{chapter.10}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {10.1}The Cost of Incorrect Signals}{42}{section.10.1}\protected@file@percent }
+\newlabel{chap:practice}{{10}{44}{Mastering Dotter}{chapter.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {10.1}The Cost of Incorrect Signals}{44}{section.10.1}\protected@file@percent }
 \bibstyle{plain}
 \bibdata{references}
-\@writefile{toc}{\contentsline {chapter}{Bibliography}{43}{section*.15}\protected@file@percent }
+\@writefile{toc}{\contentsline {chapter}{Bibliography}{45}{section*.15}\protected@file@percent }
 \bibcite{Kolchinsky_2017}{1}
 \bibcite{Ward2000Dasher}{2}
-\gdef \@abspage@last{45}
+\gdef \@abspage@last{47}

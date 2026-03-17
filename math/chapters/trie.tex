@@ -852,64 +852,245 @@ We can now state our first result
 \end{proof}
 
 \section{Prior Tracking}
-We now describe an algorithm to efficiently compute the branch prior.
-We first note that the product over prior deltas in line \ref{alg:advance-node-time-no-reweighting}
-of algorithm~\ref{alg:advance-node-time} can be expressed as a quotient of branch priors.
+We now replace the oracular access to the branch prior function with an explicit
+dynamic program over token contexts.
+The first observation is that the historical product of prior deltas appearing in
+line~\ref{alg:advance-node-time-no-reweighting} of algorithm~\ref{alg:advance-node-time}
+is itself a branch-prior ratio.
 
-\begin{lemma}[Prior Delta Quotient]
-    If $x \geq \bigvee_{i=x.m+1}^{m'} C^P_i$, then
-    $$
-    \prod_{i = x.m + 1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i}) = P^{br}_{m'}(x) / P^{br}_m(x)
-    $$
+\begin{lemma}[Prior Delta Factorization]
+\label{lemma:prior-delta-factorization}
+    Let $m \leq m'$ and let $x$ be an at most properly terminated string satisfying
+    $x \geq \bigvee_{i=m+1}^{m'} C^P_i$.
+    Then
+    \[
+    P^{br}_{m'}(x)
+    =
+    P^{br}_{m}(x)
+    \prod_{i=m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i}).
+    \]
 \end{lemma}
 \begin{proof}
-    % TODO
+    By the definition of a prior delta digest sequence,
+    \[
+    P_{m'}(h)
+    =
+    P_m(h)\prod_{i=m+1}^{m'}\Delta^P_i(\lfloor h \rfloor_{C^P_i})
+    \qquad \forall h \in H.
+    \]
+    Since $x \geq \bigvee_{i=m+1}^{m'} C^P_i$, the same argument as in
+    lemma~\ref{lemma:eventually-constant-likelihoods} shows that for every
+    $h \geq x$ and every $i \in \{m+1,\dots,m'\}$,
+    \[
+    \lfloor h \rfloor_{C^P_i}=\lfloor x \rfloor_{C^P_i}.
+    \]
+    Hence, for all $h \geq x$,
+    \[
+    P_{m'}(h)
+    =
+    P_m(h)\prod_{i=m+1}^{m'}\Delta^P_i(\lfloor x \rfloor_{C^P_i}).
+    \]
+    Summing over all properly terminated descendants of $x$ gives
+    \begin{align*}
+    P^{br}_{m'}(x)
+    &= \sum_{\substack{h \in H \\ h \geq x}} P_{m'}(h) \\
+    &= \sum_{\substack{h \in H \\ h \geq x}}
+    P_m(h)\prod_{i=m+1}^{m'}\Delta^P_i(\lfloor x \rfloor_{C^P_i}) \\
+    &= \left(\sum_{\substack{h \in H \\ h \geq x}} P_m(h)\right)
+    \prod_{i=m+1}^{m'}\Delta^P_i(\lfloor x \rfloor_{C^P_i}) \\
+    &= P^{br}_{m}(x)\prod_{i=m+1}^{m'}\Delta^P_i(\lfloor x \rfloor_{C^P_i}),
+    \end{align*}
+    as claimed.
 \end{proof}
 
-Thus if we have access to the branch prior function at valid nodes,
-then we can efficiently compute the prior-related terms in
-line~\ref{alg:advance-node-time-no-reweighting} and line~\ref{alg:advance-node-time-constant-likelihood}
-of algorithm~\ref{alg:advance-node-time}.
-The purpose of the prior tracking algorithm is to compute $\mathbf{P}^{br}_{M'}(x)$ for all
-valid nodes $x$ at prior time $M'$.
-We will assume that the inner sum in theorem~\ref{theorem:token-prior-path-summation}
-can be computed in $O(1)$ time.
+\begin{corollary}[Prior Delta Quotient]
+\label{corollary:prior-delta-quotient}
+    Under the hypotheses of lemma~\ref{lemma:prior-delta-factorization}, if
+    $P^{br}_{m}(x) > 0$, then
+    \[
+    \prod_{i=m+1}^{m'} \Delta^P_i(\lfloor x \rfloor_{C^P_i})
+    =
+    \frac{P^{br}_{m'}(x)}{P^{br}_{m}(x)}.
+    \]
+\end{corollary}
+
+Thus it suffices to compute $P^{br}_{M'}(x)$ on the valid frontier.
+We now formalize a finite dynamic program that does exactly this.
+
+\begin{definition}[Token Fan]
+\label{def:token-fan}
+    Let $m$ be a prior time, let $\mathbf{b} \in \mathbf{\Lambda}^*$ be a token sequence,
+    and let $x$ be an at most properly terminated string.
+    The token fan of $x$ from context $\mathbf{b}$ at time $m$ is
+    \[
+    \Phi_m(\mathbf{b}, x)
+    :=
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}
+    \mathbf{P}_m(\mathbf{t}\mid\mathbf{b}).
+    \]
+\end{definition}
+
+\begin{definition}[Relevant Token Contexts]
+\label{def:relevant-token-contexts}
+    Let $F$ be a finite complete prefix code.
+    We define the set of token contexts relevant to $F$ by
+    \[
+    \mathcal{B}_F
+    :=
+    \left\{
+        \mathbf{b}\in\mathbf{\Lambda}^*
+        \;:\;
+        \exists x\in F,\ T^{-1}(\mathbf{b})<x
+    \right\}.
+    \]
+\end{definition}
+
+\textit{Note: }
+Because tokens are non-empty and $F$ is finite, the set $\mathcal{B}_F$ is finite.
+Moreover it is prefix-closed: if $\mathbf{b}+\mathbf{t}\in\mathcal{B}_F$, then
+$\mathbf{b}\in\mathcal{B}_F$.
+Hence any ordering by nondecreasing token-sequence length is a topological order on
+the dependency graph of the recurrence below.
 
 \begin{algorithm}[H]
-\caption{Prior Tracking}
+\caption{Prior Tracking on a Frontier}
 \label{alg:prior-tracking}
 \begin{algorithmic}[1]
-\Require{$x$ \Comment{the node to update}}
-\Require{$M$ \Comment{the prior time for which to compute the branch prior}}
-\Require{$F$ \Comment{the complete prefix code on which to evaluate the branch priors}}
-\State $\epsilon.\text{tbp} \gets 1$
-\For{each $x < F$ in topological order}
-    \State $x.\text{tbp} \gets x.\text{token\_ancestor.tbp} * \mathbf{P}_{M'}(x.\text{final\_token} \mid T^{-1}(x.\text{token\_ancestor}.value))$
+\Require prior time $M$
+\Require finite complete prefix code $F$
+\State $\mathcal{B}_F \gets \{\mathbf{b}\in\mathbf{\Lambda}^* : \exists x\in F,\ T^{-1}(\mathbf{b})<x\}$
+\State $w(\epsilon) \gets 1$
+\For{each nonempty $\mathbf{c}\in\mathcal{B}_F$ in increasing order of $|\mathbf{c}|$}
+    \State write $\mathbf{c}=\mathbf{b}+\mathbf{t}$ with $\mathbf{t}\in\mathbf{\Lambda}$
+    \State $w(\mathbf{c}) \gets w(\mathbf{b})\,\mathbf{P}_M(\mathbf{t}\mid\mathbf{b})$
+    \label{alg:prior-tracking-dp}
 \EndFor
 \For{each $x \in F$}
-    \State $
-    x.P \gets
-    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<x}\mathbf{P}^{br}(\mathbf{b})
-    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}\mathbf{P}(\mathbf{t}\mid\mathbf{b}),
-    $
-    \label{alg:prior-tracking-sum}
+    \If{$x=\epsilon$}
+        \State $x.P \gets 1$
+    \Else
+        \State $x.P \gets
+        \sum_{\mathbf{b}\in\mathcal{B}_F,\,T^{-1}(\mathbf{b})<x}
+        w(\mathbf{b})\,\Phi_M(\mathbf{b},x)$
+        \label{alg:prior-tracking-sum}
+    \EndIf
 \EndFor
 \end{algorithmic}
 \end{algorithm}
 
-When we update a node's prior time as we do in algorithm~\ref{alg:advance-node-time},
-we should snapshot the branch prior for that node in $x.P_{old}$, which represents $P^{br}_{x.m}(x)$.
-Then, before the next time we advance the trie time,
-we should run algorithm~\ref{alg:prior-tracking} first to populate $x.P$,
-which represents $P^{br}_{M'}(x)$. Their quotient tells us how the prior has changed.
+The first loop computes token branch priors for every relevant token context;
+the second loop converts them into character branch priors on the frontier.
+The key invariant is that the temporary weight $w(\mathbf{b})$ should equal
+the token branch prior $\mathbf{P}^{br}_M(\mathbf{b})$.
 
-We have two tricks to efficiently compute the sum in line~\ref{alg:prior-tracking-sum} of algorithm~\ref{alg:prior-tracking}:
+\begin{lemma}[Dynamic-Programming Invariant]
+\label{lemma:prior-tracking-dp-invariant}
+    After line~\ref{alg:prior-tracking-dp} has been executed for a context
+    $\mathbf{c}\in\mathcal{B}_F$, one has
+    \[
+    w(\mathbf{c})=\mathbf{P}^{br}_M(\mathbf{c}).
+    \]
+    Consequently, after the first loop terminates,
+    \[
+    w(\mathbf{b})=\mathbf{P}^{br}_M(\mathbf{b})
+    \qquad \forall \mathbf{b}\in\mathcal{B}_F.
+    \]
+\end{lemma}
+\begin{proof}
+    We induct on $|\mathbf{c}|$.
+
+    For the base case $\mathbf{c}=\epsilon$, line 2 sets $w(\epsilon)=1$, and
+    by definition of token branch prior the empty product is also equal to 1.
+
+    For the induction step, let $\mathbf{c}=\mathbf{b}+\mathbf{t}$ be nonempty,
+    and assume $w(\mathbf{b})=\mathbf{P}^{br}_M(\mathbf{b})$.
+    Then line~\ref{alg:prior-tracking-dp} gives
+    \[
+    w(\mathbf{c})
+    =
+    w(\mathbf{b})\,\mathbf{P}_M(\mathbf{t}\mid\mathbf{b})
+    =
+    \mathbf{P}^{br}_M(\mathbf{b})\,\mathbf{P}_M(\mathbf{t}\mid\mathbf{b})
+    =
+    \mathbf{P}^{br}_M(\mathbf{c}),
+    \]
+    where the final equality is exactly the defining recurrence for
+    token branch prior.
+    This proves the claim.
+\end{proof}
+
+\begin{theorem}[Correctness of Prior Tracking]
+\label{theorem:prior-tracking-correctness}
+    Algorithm~\ref{alg:prior-tracking} computes the correct branch prior on the frontier:
+    for every $x \in F$,
+    \[
+    x.P = P^{br}_M(x).
+    \]
+\end{theorem}
+\begin{proof}
+    Fix $x \in F$.
+    If $x=\epsilon$, then the algorithm sets $x.P=1$, which is equal to
+    $P^{br}_M(\epsilon)$ by theorem~\ref{theorem:token-prior-path-summation}.
+    So suppose henceforth that $x\neq\epsilon$.
+
+    By lemma~\ref{lemma:prior-tracking-dp-invariant},
+    the first loop leaves us with
+    $w(\mathbf{b})=\mathbf{P}^{br}_M(\mathbf{b})$ for every relevant context $\mathbf{b}$.
+    Therefore line~\ref{alg:prior-tracking-sum} sets
+    \[
+    x.P
+    =
+    \sum_{\mathbf{b}\in\mathcal{B}_F,\,T^{-1}(\mathbf{b})<x}
+    \mathbf{P}^{br}_M(\mathbf{b})\,\Phi_M(\mathbf{b},x).
+    \]
+    Expanding the definition of $\Phi_M$ gives
+    \[
+    x.P
+    =
+    \sum_{\mathbf{b}\in\mathcal{B}_F,\,T^{-1}(\mathbf{b})<x}
+    \mathbf{P}^{br}_M(\mathbf{b})
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}
+    \mathbf{P}_M(\mathbf{t}\mid\mathbf{b}).
+    \]
+    Any token sequence $\mathbf{b}$ with $T^{-1}(\mathbf{b}) \not< x$ contributes nothing
+    to the formula in theorem~\ref{theorem:token-prior-path-summation}, so restricting the
+    outer sum to $\mathcal{B}_F$ does not change its value.
+    Thus theorem~\ref{theorem:token-prior-path-summation} yields
+    \[
+    x.P=P^{br}_M(x),
+    \]
+    proving correctness.
+\end{proof}
+
+When we update a node's prior time as in algorithm~\ref{alg:advance-node-time},
+we should first cache its current branch prior in a field such as
+$x.P_{old}=P^{br}_{x.m}(x)$.
+Then, before advancing the trie to prior time $M'$, we run
+algorithm~\ref{alg:prior-tracking} on the current valid frontier to populate
+$x.P=P^{br}_{M'}(x)$.
+If $x.P_{old}>0$, corollary~\ref{corollary:prior-delta-quotient} shows that
+\[
+\frac{x.P}{x.P_{old}}
+=
+\prod_{i=x.m+1}^{M'} \Delta^P_i(\lfloor x \rfloor_{C^P_i}),
+\]
+which is exactly the prior factor needed in
+line~\ref{alg:advance-node-time-no-reweighting} of
+algorithm~\ref{alg:advance-node-time}.
+
+Two implementation remarks are useful in practice:
 \begin{enumerate}
-    \item We recognize that the eligible longest token prefixes correspond to the prefixes of the last word, since tokens never contain spaces in the middle of them.
-    Additionally we can limit the values of $\mathbf{B}$ to at most 15 ancestor prefixes, since tokens are at most 15 characters long in our tokenizer.
-    \item We can preconvert the language model's output of logits to an array of \textit{cumulative} probabilities.
-    This allows us to efficiently compute the alphabetical sum over compatible $\mathbf{t}$, by taking the difference between the cumulative probabilities of the start and end of the 
-    alphabetical range of $\mathbf{t}$ defined by $x \leq T^{-1}(\mathbf{b+t})$.
+    \item The relevant contexts for a literal prefix $x$ are governed only by token
+    boundaries that can occur within the final token overlapping $x$.
+    When tokens cannot contain spaces internally, this means that only prefixes of the
+    final word need be considered.
+    For a tokenizer with maximum token length $L$, this limits the search to at most the
+    last $L$ characters.
+    \item If the vocabulary is stored in lexicographic order and the model output is
+    converted to cumulative probabilities, then the fan
+    $\Phi_M(\mathbf{b},x)$ can be obtained from a difference of cumulative sums over the
+    contiguous lexicographic range of tokens $\mathbf{t}$ satisfying
+    $x\le T^{-1}(\mathbf{b+t})$.
 \end{enumerate}
 
 \section{Maximum Descendant Likelihood}
