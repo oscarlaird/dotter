@@ -1,250 +1,302 @@
 import Trie.Core
-import Mathlib.Logic.Relation
 import Mathlib.Topology.Algebra.InfiniteSum.ENNReal
 
 namespace Trie
 
-open scoped BigOperators
-
-variable {α : Type} [DecidableEq α]
-
-/-- A token-ancestor tracking state is a trie node together with an array index. -/
-abbrev MDLState (α : Type) := StringAlg α × ℕ
+variable {α β : Type} [DecidableEq α] [DecidableEq β]
 
 /--
-When we move from a node to its parent, the same token-ancestor summary is represented
-by this shifted index. This is the abstract form of the update rule used by
-`TrackMDLFTA` in the chapter.
+Abstract interface for the "Maximum Descendant Likelihood" section.
+
+The chapter uses tokenization facts that are developed informally in the LaTeX.
+This structure makes every such fact explicit, so the Lean development has no
+hidden assumptions.
 -/
-def shiftIndex
-    (finalTokenLength : StringAlg α → ℕ)
-    (x : StringAlg α) (i : ℕ) : ℕ :=
-  if i = 0 then finalTokenLength x - 1 else i - 1
+structure MaxDescendantLikelihoodSetup (α β : Type) [DecidableEq α] [DecidableEq β] where
+  H : Set (StringAlg α)
+  likelihood : StringAlg α → ENNReal
+  tokens : StringAlg α → StringAlg β
+  Canonical : StringAlg β → Prop
+  decode : StringAlg β → StringAlg α
+  tokenPrefixOfString : StringAlg β → StringAlg α → Prop
+  tokenTrunc : StringAlg α → StringAlg β → StringAlg β
+  encodePrefix : StringAlg α → ℕ → StringAlg β
+  encodePrefix_canonical :
+    ∀ f i, Canonical (encodePrefix f i)
+  encodePrefix_prefix :
+    ∀ f i, i ≤ f.length → tokenPrefixOfString (encodePrefix f i) f
+  identical_token_string_forward :
+    ∀ {a h},
+      Canonical a →
+      IsPrefix (decode a) h →
+      IsPrefix a (tokens h) →
+      tokenTrunc (decode a) (tokens h) = a →
+      IsPrefix a (tokens h)
+  identical_token_string_backward :
+    ∀ {a h},
+      Canonical a →
+      IsPrefix a (tokens h) →
+      IsPrefix (decode a) h ∧
+        IsPrefix a (tokens h) ∧
+        tokenTrunc (decode a) (tokens h) = a
+  tokenTrunc_prefix_token :
+    ∀ x c, IsPrefix (tokenTrunc x c) c
+  tokenTrunc_prefix_string :
+    ∀ x c, tokenPrefixOfString (tokenTrunc x c) x
+  tokenTrunc_canonical :
+    ∀ x c, Canonical (tokenTrunc x c)
+  tokenTrunc_trans :
+    ∀ {x f c},
+      IsPrefix x f →
+      tokenTrunc x (tokenTrunc f c) = tokenTrunc x c
+  canonical_prefixes_iff :
+    ∀ {f b},
+      Canonical b →
+      (tokenPrefixOfString b f ↔ ∃ i ≤ f.length, encodePrefix f i = b)
 
-/-- One upward propagation step in the MDLFTA array. -/
-inductive MDLStep
-    (finalTokenLength : StringAlg α → ℕ) :
-    MDLState α → MDLState α → Prop where
-  | mk (parent : StringAlg α) (a : α) (i : ℕ) :
-      MDLStep finalTokenLength (parent ++ [a], i)
-        (parent, shiftIndex finalTokenLength (parent ++ [a]) i)
+namespace MaxDescendantLikelihoodSetup
 
-/-- Reachability by repeated upward propagation. -/
-abbrev MDLReach
-    (finalTokenLength : StringAlg α → ℕ) :
-    MDLState α → MDLState α → Prop :=
-  Relation.ReflTransGen (MDLStep finalTokenLength)
+variable (S : MaxDescendantLikelihoodSetup α β)
 
-/-- The subtype of states whose local contributions propagate to `s`. -/
-abbrev Reachers
-    (finalTokenLength : StringAlg α → ℕ)
-    (s : MDLState α) :=
-  {t : MDLState α // MDLReach finalTokenLength t s}
+/-- The strings contributing to `R(a, x)`. -/
+def admissible
+    (a : StringAlg β)
+    (x h : StringAlg α) : Prop :=
+  h ∈ S.H ∧
+    IsPrefix x h ∧
+    IsPrefix a (S.tokens h) ∧
+    S.tokenTrunc x (S.tokens h) = a
 
-/-- Exact MDLFTA quantity: supremum of all local contributions that reach the target state. -/
-def mdlContribSet
-    (finalTokenLength : StringAlg α → ℕ)
-    (score : MDLState α → ENNReal)
-    (s : MDLState α) : Set ENNReal :=
-  {r | ∃ t : Reachers finalTokenLength s, score t.1 = r}
-
-noncomputable def exactMDL
-    (finalTokenLength : StringAlg α → ℕ)
-    (score : MDLState α → ENNReal)
-    (s : MDLState α) : ENNReal :=
-  sSup (mdlContribSet finalTokenLength score s)
-
-/-- Updating exactly one local contribution by taking its maximum with `v`. -/
-def updateLocal
-    (score : MDLState α → ENNReal)
-    (s : MDLState α)
-    (v : ENNReal) : MDLState α → ENNReal :=
-  fun t => if t = s then max (score t) v else score t
+/-- The value set whose supremum is the double-path maximum likelihood. -/
+def doublePathValues
+    (a : StringAlg β)
+    (x : StringAlg α) : Set ENNReal :=
+  {r | ∃ h, S.admissible a x h ∧ S.likelihood h = r}
 
 /--
-Closed-form version of the single-source propagation algorithm:
-states on the propagation chain from `s` are updated by taking the max with `v`,
-all others are unchanged.
+`R(a, x)` is the maximum likelihood of a descendant whose tokenization extends `a`
+and truncates back to `a` at `x`. Empty maxima are interpreted as `0` via `sSup`.
 -/
-noncomputable def trackValue
-    (finalTokenLength : StringAlg α → ℕ)
-    (M : MDLState α → ENNReal)
-    (s : MDLState α)
-    (v : ENNReal) : MDLState α → ENNReal :=
-  by
-    classical
-    exact fun t => if MDLReach finalTokenLength s t then max (M t) v else M t
+noncomputable def R
+    (a : StringAlg β)
+    (x : StringAlg α) : ENNReal :=
+  sSup (S.doublePathValues a x)
 
-omit [DecidableEq α] in
-lemma exactMDL_mono_local
-    {finalTokenLength : StringAlg α → ℕ}
-    {score₁ score₂ : MDLState α → ENNReal}
-    (hmono : ∀ s, score₁ s ≤ score₂ s)
-    (t : MDLState α) :
-    exactMDL finalTokenLength score₁ t ≤ exactMDL finalTokenLength score₂ t := by
-  show sSup (mdlContribSet finalTokenLength score₁ t : Set ENNReal)
-      ≤ sSup (mdlContribSet finalTokenLength score₂ t : Set ENNReal)
-  refine sSup_le ?_
-  intro r hr
-  rcases hr with ⟨u, rfl⟩
-  have hmem : score₂ u.1 ∈ mdlContribSet finalTokenLength score₂ t := by
-    exact ⟨u, rfl⟩
-  exact le_trans (hmono u.1) (le_sSup hmem)
+/-- The special case `R(a, decode a)`. -/
+def tokenDescendantValues
+    (a : StringAlg β) : Set ENNReal :=
+  {r | ∃ h, h ∈ S.H ∧ IsPrefix a (S.tokens h) ∧ S.likelihood h = r}
 
-omit [DecidableEq α] in
-lemma exactMDL_ge_local
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s t : MDLState α}
-    (hst : MDLReach finalTokenLength s t) :
-    score s ≤ exactMDL finalTokenLength score t := by
-  show score s ≤ sSup (mdlContribSet finalTokenLength score t : Set ENNReal)
-  have hmem : score s ∈ mdlContribSet finalTokenLength score t := by
-    exact ⟨(⟨s, hst⟩ : Reachers finalTokenLength t), rfl⟩
-  exact le_sSup hmem
+/-- The frontier-indexed value set from the main theorem. -/
+def frontierValueSet
+    (F : Set (StringAlg α))
+    (a : StringAlg β)
+    (x : StringAlg α) : Set ENNReal :=
+  {r | ∃ f ∈ F, IsPrefix x f ∧
+      ∃ b, S.Canonical b ∧ IsPrefix a b ∧ S.tokenPrefixOfString b f ∧
+        S.tokenTrunc x b = a ∧ S.R b f = r}
 
-omit [DecidableEq α] in
-/-- Exact MDLFTA values are monotone upward along the propagation relation. -/
-theorem exactMDL_monotone_of_reach
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s t : MDLState α}
-    (hst : MDLReach finalTokenLength s t) :
-    exactMDL finalTokenLength score s ≤ exactMDL finalTokenLength score t := by
-  show sSup (mdlContribSet finalTokenLength score s : Set ENNReal)
-      ≤ sSup (mdlContribSet finalTokenLength score t : Set ENNReal)
-  refine sSup_le ?_
-  intro r hr
-  rcases hr with ⟨u, hu_eq⟩
-  rw [← hu_eq]
-  exact exactMDL_ge_local (Relation.ReflTransGen.trans u.2 hst)
+/-- The reindexed frontier value set, using string prefixes `f[:i]`. -/
+def frontierReindexedValueSet
+    (F : Set (StringAlg α))
+    (a : StringAlg β)
+    (x : StringAlg α) : Set ENNReal :=
+  {r | ∃ f ∈ F, IsPrefix x f ∧
+      ∃ i ≤ f.length,
+        S.tokenTrunc x (S.encodePrefix f i) = a ∧
+        S.R (S.encodePrefix f i) f = r}
 
-omit [DecidableEq α] in
-theorem exactMDL_monotone_of_step
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s t : MDLState α}
-    (hst : MDLStep finalTokenLength s t) :
-    exactMDL finalTokenLength score s ≤ exactMDL finalTokenLength score t := by
-  exact exactMDL_monotone_of_reach (Relation.ReflTransGen.single hst)
+/--
+The mathematical meaning of the MTDL up-propagation algorithm: the value stored at
+`(a, x)` after processing the frontier.
+-/
+def upPropagationValueSet
+    (F : Set (StringAlg α))
+    (Qfront : StringAlg β → StringAlg α → ENNReal)
+    (a : StringAlg β)
+    (x : StringAlg α) : Set ENNReal :=
+  {r | ∃ f ∈ F, IsPrefix x f ∧
+      ∃ i ≤ f.length,
+        S.tokenTrunc x (S.encodePrefix f i) = a ∧
+        Qfront (S.encodePrefix f i) f = r}
 
-lemma exactMDL_update_unaffected
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s t : MDLState α}
-    {v : ENNReal}
-    (hnot : ¬ MDLReach finalTokenLength s t) :
-    exactMDL finalTokenLength (updateLocal score s v) t
-      = exactMDL finalTokenLength score t := by
-  show sSup (mdlContribSet finalTokenLength (updateLocal score s v) t : Set ENNReal)
-      = sSup (mdlContribSet finalTokenLength score t : Set ENNReal)
+noncomputable def Q
+    (F : Set (StringAlg α))
+    (Qfront : StringAlg β → StringAlg α → ENNReal)
+    (a : StringAlg β)
+    (x : StringAlg α) : ENNReal :=
+  sSup (S.upPropagationValueSet F Qfront a x)
+
+lemma prefix_antisymm
+    {x y : StringAlg α}
+    (hxy : IsPrefix x y)
+    (hyx : IsPrefix y x) :
+    x = y := by
+  rcases hxy with ⟨u, rfl⟩
+  rcases hyx with ⟨v, hv⟩
+  have hsum : x.length + u.length + v.length = x.length := by
+    simpa [List.length_append, Nat.add_assoc] using congrArg List.length hv
+  have hsum' : x.length + (u.length + v.length) = x.length + 0 := by
+    simpa [Nat.add_assoc] using hsum
+  have huv : u.length + v.length = 0 := Nat.add_left_cancel hsum'
+  have hu_len : u.length = 0 := by omega
+  cases u with
+  | nil =>
+      simp
+  | cons a u =>
+      simp at hu_len
+
+/-- LaTeX lemma "Identical Token and String Prefixes". -/
+theorem identicalTokenAndStringPrefixes
+    {a : StringAlg β}
+    (ha : S.Canonical a) :
+    S.R a (S.decode a) = sSup (S.tokenDescendantValues a) := by
+  show sSup (S.doublePathValues a (S.decode a)) = sSup (S.tokenDescendantValues a)
+  apply congrArg sSup
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨h, hadm, hlh⟩
+    rcases hadm with ⟨hH, hxh, hatok, htrunc⟩
+    exact ⟨h, hH, S.identical_token_string_forward ha hxh hatok htrunc, hlh⟩
+  · intro hr
+    rcases hr with ⟨h, hH, hatok, hlh⟩
+    have hadm :
+        IsPrefix (S.decode a) h ∧
+          IsPrefix a (S.tokens h) ∧
+          S.tokenTrunc (S.decode a) (S.tokens h) = a :=
+      S.identical_token_string_backward ha hatok
+    exact ⟨h, ⟨hH, hadm.1, hadm.2.1, hadm.2.2⟩, hlh⟩
+
+/-- LaTeX theorem "Double Path Maximum Likelihood from the Frontier". -/
+theorem doublePathMaximumLikelihoodFromTheFrontier
+    {F : Set (StringAlg α)}
+    {a : StringAlg β}
+    {x : StringAlg α}
+    (hF : PrefixCode F)
+    (hxF : PrefixOfCode x F)
+    (hHF : Refinement S.H F) :
+    S.R a x = sSup (S.frontierValueSet F a x) := by
+  show sSup (S.doublePathValues a x) = sSup (S.frontierValueSet F a x)
   apply le_antisymm
   · refine sSup_le ?_
     intro r hr
-    rcases hr with ⟨u, hr_eq⟩
-    have hu_ne : u.1 ≠ s := by
-      intro h_eq
-      apply hnot
-      simpa [h_eq] using u.2
-    rw [show updateLocal score s v u.1 = score u.1 by simp [updateLocal, hu_ne]] at hr_eq
-    rw [← hr_eq]
-    have hmem : score u.1 ∈ mdlContribSet finalTokenLength score t := by
-      exact ⟨u, rfl⟩
-    exact le_sSup hmem
+    rcases hr with ⟨h, ⟨hH, hxh, hatok, htrunc⟩, hlh⟩
+    rcases hHF h hH with ⟨f, hfF, hfh⟩
+    rcases hxF with ⟨g, hgF, hxg⟩
+    have hfx_or_hxf : IsPrefix f x ∨ IsPrefix x f :=
+      prefix_or_prefix_of_prefix hfh hxh
+    have hxf : IsPrefix x f := by
+      rcases hfx_or_hxf with hfx | hxf
+      · by_cases h_eq : f = x
+        · subst h_eq
+          exact ⟨[], by simp⟩
+        · have hfg : IsPrefix f g := List.IsPrefix.trans hfx hxg
+          have hne : f ≠ g := by
+            intro hfg_eq
+            apply h_eq
+            exact prefix_antisymm hfx (hfg_eq ▸ hxg)
+          exact False.elim (hF f g hfF hgF ⟨hfg, hne⟩)
+      · exact hxf
+    let b := S.tokenTrunc f (S.tokens h)
+    have hbcanon : S.Canonical b := S.tokenTrunc_canonical f (S.tokens h)
+    have hbf : S.tokenPrefixOfString b f := S.tokenTrunc_prefix_string f (S.tokens h)
+    have hxa : S.tokenTrunc x b = a := by
+      dsimp [b]
+      rw [S.tokenTrunc_trans hxf]
+      exact htrunc
+    have hab : IsPrefix a b := by
+      have hb : IsPrefix (S.tokenTrunc x b) b := S.tokenTrunc_prefix_token x b
+      simpa [hxa] using hb
+    have hr_le : r ≤ S.R b f := by
+      rw [← hlh]
+      exact le_sSup ⟨h, ⟨hH, hfh, S.tokenTrunc_prefix_token f (S.tokens h), rfl⟩, rfl⟩
+    have hr_mem : S.R b f ∈ S.frontierValueSet F a x := by
+      refine ⟨f, hfF, hxf, b, hbcanon, hab, hbf, hxa, rfl⟩
+    exact le_trans hr_le (le_sSup hr_mem)
   · refine sSup_le ?_
     intro r hr
-    rcases hr with ⟨u, hr_eq⟩
+    rcases hr with ⟨f, hfF, hxf, b, hbcanon, hab, hbf, hxa, hr_eq⟩
     rw [← hr_eq]
-    have hu_ne : u.1 ≠ s := by
-      intro h_eq
-      apply hnot
-      simpa [h_eq] using u.2
-    have hsame : updateLocal score s v u.1 = score u.1 := by
-      simp [updateLocal, hu_ne]
-    rw [← hsame]
-    exact le_sSup ⟨u, rfl⟩
+    refine sSup_le ?_
+    intro s hs
+    rcases hs with ⟨h, ⟨hH, hfh, hbTok, hfb⟩, hlh⟩
+    rw [← hlh]
+    have hxa' : S.tokenTrunc x (S.tokens h) = a := by
+      calc
+        S.tokenTrunc x (S.tokens h)
+            = S.tokenTrunc x (S.tokenTrunc f (S.tokens h)) := by
+                symm
+                exact S.tokenTrunc_trans hxf
+        _ = S.tokenTrunc x b := by rw [hfb]
+        _ = a := hxa
+    exact le_sSup ⟨h, ⟨hH, List.IsPrefix.trans hxf hfh, List.IsPrefix.trans hab hbTok, hxa'⟩, rfl⟩
 
-lemma exactMDL_update_affected
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s t : MDLState α}
-    {v : ENNReal}
-    (hst : MDLReach finalTokenLength s t) :
-    exactMDL finalTokenLength (updateLocal score s v) t
-      = max (exactMDL finalTokenLength score t) v := by
-  show sSup (mdlContribSet finalTokenLength (updateLocal score s v) t : Set ENNReal)
-      = max (sSup (mdlContribSet finalTokenLength score t : Set ENNReal)) v
-  apply le_antisymm
-  · refine sSup_le ?_
-    intro r hr
-    rcases hr with ⟨u, hr_eq⟩
-    by_cases hu : u.1 = s
-    · have h_upd : updateLocal score s v u.1 = max (score s) v := by
-        simp [updateLocal, hu]
-      rw [h_upd] at hr_eq
-      rw [← hr_eq]
-      have h_old_le : score s ≤ sSup (mdlContribSet finalTokenLength score t : Set ENNReal) :=
-        exactMDL_ge_local hst
-      exact max_le_iff.mpr ⟨le_trans h_old_le (le_max_left _ _), le_max_right _ _⟩
-    · rw [show updateLocal score s v u.1 = score u.1 by simp [updateLocal, hu]] at hr_eq
-      rw [← hr_eq]
-      have hmem : score u.1 ∈ mdlContribSet finalTokenLength score t := by
-        exact ⟨u, rfl⟩
-      exact le_trans (le_sSup hmem) (le_max_left _ _)
-  · have h_old_le :
-        exactMDL finalTokenLength score t
-          ≤ exactMDL finalTokenLength (updateLocal score s v) t := by
-      refine exactMDL_mono_local ?_ t
-      intro u
-      by_cases hu : u = s
-      · simp [updateLocal, hu]
-      · simp [updateLocal, hu]
-    have h_v_le :
-        v ≤ exactMDL finalTokenLength (updateLocal score s v) t := by
-      have h_at_s :
-          updateLocal score s v s
-            ≤ exactMDL finalTokenLength (updateLocal score s v) t :=
-        exactMDL_ge_local hst
-      exact le_trans (by simp [updateLocal]) h_at_s
-    exact max_le_iff.mpr ⟨h_old_le, h_v_le⟩
+/-- LaTeX lemma "Canonical token prefixes of a string". -/
+theorem canonicalTokenPrefixesOfAString
+    {f : StringAlg α}
+    {b : StringAlg β} :
+    S.Canonical b ∧ S.tokenPrefixOfString b f
+      ↔ ∃ i ≤ f.length, S.encodePrefix f i = b := by
+  constructor
+  · intro h
+    exact (S.canonical_prefixes_iff h.1).mp h.2
+  · intro h
+    rcases h with ⟨i, hi, rfl⟩
+    exact ⟨S.encodePrefix_canonical f i, S.encodePrefix_prefix f i hi⟩
 
-/--
-Early stopping principle used by the implementation:
-if a state on the propagation chain already dominates the new value,
-then every state above it is unchanged by the update.
--/
-theorem exactMDL_update_stable_above
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s t u : MDLState α}
-    {v : ENNReal}
-    (hst : MDLReach finalTokenLength s t)
-    (htu : MDLReach finalTokenLength t u)
-    (hbound : v ≤ exactMDL finalTokenLength score t) :
-    exactMDL finalTokenLength (updateLocal score s v) u
-      = exactMDL finalTokenLength score u := by
-  have hsu : MDLReach finalTokenLength s u := Relation.ReflTransGen.trans hst htu
-  have hmono :
-      exactMDL finalTokenLength score t ≤ exactMDL finalTokenLength score u :=
-    exactMDL_monotone_of_reach htu
-  have hbound' : v ≤ exactMDL finalTokenLength score u := le_trans hbound hmono
-  rw [exactMDL_update_affected hsu, max_eq_left hbound']
+/-- LaTeX corollary "Double Path Maximum Likelihood from the Frontier, Reindexed". -/
+theorem doublePathMaximumLikelihoodFromTheFrontierReindexed
+    {F : Set (StringAlg α)}
+    {a : StringAlg β}
+    {x : StringAlg α}
+    (hF : PrefixCode F)
+    (hxF : PrefixOfCode x F)
+    (hHF : Refinement S.H F) :
+    S.R a x = sSup (S.frontierReindexedValueSet F a x) := by
+  rw [S.doublePathMaximumLikelihoodFromTheFrontier hF hxF hHF]
+  apply congrArg sSup
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨f, hfF, hxf, b, hbcanon, hab, hbf, hxa, hrb⟩
+    rcases (S.canonicalTokenPrefixesOfAString).mp ⟨hbcanon, hbf⟩ with ⟨i, hi, henc⟩
+    exact ⟨f, hfF, hxf, i, hi, henc ▸ hxa, henc ▸ hrb⟩
+  · intro hr
+    rcases hr with ⟨f, hfF, hxf, i, hi, hxa, hrb⟩
+    have hab : IsPrefix a (S.encodePrefix f i) := by
+      have hprefix : IsPrefix (S.tokenTrunc x (S.encodePrefix f i)) (S.encodePrefix f i) :=
+        S.tokenTrunc_prefix_token x (S.encodePrefix f i)
+      simpa [hxa] using hprefix
+    exact ⟨f, hfF, hxf, S.encodePrefix f i, S.encodePrefix_canonical f i, hab,
+      S.encodePrefix_prefix f i hi, hxa, hrb⟩
 
-/--
-The closed-form propagation update exactly matches the mathematically correct
-single-source update of the local contribution function.
--/
-theorem trackValue_matches_exact
-    {finalTokenLength : StringAlg α → ℕ}
-    {score : MDLState α → ENNReal}
-    {s : MDLState α}
-    {v : ENNReal} :
-    trackValue finalTokenLength (exactMDL finalTokenLength score) s v
-      =
-    exactMDL finalTokenLength (updateLocal score s v) := by
-  funext t
-  by_cases h : MDLReach finalTokenLength s t
-  · simp [trackValue, h, exactMDL_update_affected]
-  · simp [trackValue, h, exactMDL_update_unaffected]
+/-- LaTeX theorem "MTDL Up Propagation Correctness". -/
+theorem mtdlUpPropagationCorrectness
+    {F : Set (StringAlg α)}
+    {Qfront : StringAlg β → StringAlg α → ENNReal}
+    {a : StringAlg β}
+    {x : StringAlg α}
+    (hF : PrefixCode F)
+    (hxF : PrefixOfCode x F)
+    (hHF : Refinement S.H F)
+    (hfront :
+      ∀ f ∈ F, ∀ i ≤ f.length,
+        Qfront (S.encodePrefix f i) f = S.R (S.encodePrefix f i) f) :
+    S.Q F Qfront a x = S.R a x := by
+  rw [S.doublePathMaximumLikelihoodFromTheFrontierReindexed hF hxF hHF]
+  show sSup (S.upPropagationValueSet F Qfront a x) =
+      sSup (S.frontierReindexedValueSet F a x)
+  apply congrArg sSup
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨f, hfF, hxf, i, hi, hxa, hq⟩
+    exact ⟨f, hfF, hxf, i, hi, hxa, (hfront f hfF i hi).symm.trans hq⟩
+  · intro hr
+    rcases hr with ⟨f, hfF, hxf, i, hi, hxa, hq⟩
+    exact ⟨f, hfF, hxf, i, hi, hxa, (hfront f hfF i hi).trans hq⟩
+
+end MaxDescendantLikelihoodSetup
 
 end Trie

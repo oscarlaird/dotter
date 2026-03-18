@@ -59,18 +59,21 @@ def LikelihoodTimesBounded (B : LikelihoodTrackingTrie (α := α)) : Prop :=
   ∀ x, (B.nodes x).n_lt ≤ B.N_lt
 
 /--
-Push correctness:
-for nodes beyond the cumulative frontier from their local time to the current global time,
+Push correctness, together with the basic well-formedness condition that local likelihood
+times do not run ahead of the global likelihood time.
+
+For nodes beyond the cumulative frontier from their local time to the current global time,
 the ancestor product of unpushed likelihoods equals the corresponding product of deltas.
 -/
 def PushCorrect
     {L : LikelihoodSeq (α := α)}
     (DL : LikelihoodDeltaDigestSeq L)
     (B : LikelihoodTrackingTrie (α := α)) : Prop :=
-  ∀ x,
-    IsBeyondFrontier x DL.seq ((B.nodes x).n_lt + 1) B.N_lt →
-      AncestorLikelihoodProduct B x =
-        ∏ i ∈ Icc ((B.nodes x).n_lt + 1) B.N_lt, safe_Δ x (DL.seq i)
+  LikelihoodTimesBounded B ∧
+    ∀ x,
+      IsBeyondFrontier x DL.seq ((B.nodes x).n_lt + 1) B.N_lt →
+        AncestorLikelihoodProduct B x =
+          ∏ i ∈ Icc ((B.nodes x).n_lt + 1) B.N_lt, safe_Δ x (DL.seq i)
 
 /-- `x` has no strict ancestors carrying unpushed likelihood. -/
 def NoUnpushedAncestors
@@ -449,6 +452,7 @@ theorem pushLikelihood_preserves_pushCorrect
     (h_push : PushCorrect DL B)
     (h_anc : NoUnpushedAncestors B x) :
     PushCorrect DL (pushLikelihood B x) := by
+  refine ⟨pushLikelihood_preserves_timesBounded B h_push.1, ?_⟩
   intro z hz
   by_cases hz_eq : z = x
   · subst z
@@ -471,12 +475,12 @@ theorem pushLikelihood_preserves_pushCorrect
           AncestorLikelihoodProduct (pushLikelihood B x) z = AncestorLikelihoodProduct B z :=
           pushLikelihood_ancestorProduct_of_strictPrefix B ⟨hxz, fun h => hz_eq h.symm⟩
       rw [h_prod, hn]
-      simpa [pushLikelihood] using h_push z h_old
+      simpa [pushLikelihood] using h_push.2 z h_old
     · have h_prod :
           AncestorLikelihoodProduct (pushLikelihood B x) z = AncestorLikelihoodProduct B z :=
           pushLikelihood_ancestorProduct_of_not_prefix B hxz
       rw [h_prod, hn]
-      simpa [pushLikelihood] using h_push z h_old
+      simpa [pushLikelihood] using h_push.2 z h_old
 
 theorem applyLikelihoodDelta_preserves_timesBounded
     {L : LikelihoodSeq (α := α)}
@@ -492,9 +496,9 @@ theorem applyLikelihoodDelta_preserves_pushCorrect
     {L : LikelihoodSeq (α := α)}
     {DL : LikelihoodDeltaDigestSeq L}
     {B : LikelihoodTrackingTrie (α := α)}
-    (h_bound : LikelihoodTimesBounded B)
     (h_push : PushCorrect DL B) :
     PushCorrect DL (applyLikelihoodDelta B DL) := by
+  refine ⟨applyLikelihoodDelta_preserves_timesBounded B DL h_push.1, ?_⟩
   intro z hz
   classical
   have hn : ((applyLikelihoodDelta B DL).nodes z).n_lt = (B.nodes z).n_lt :=
@@ -505,7 +509,7 @@ theorem applyLikelihoodDelta_preserves_pushCorrect
     exact hz i (by simpa [hn] using hi_start)
       (Nat.le_trans hi_end (by simp [applyLikelihoodDelta]))
   have h_start_le : ((applyLikelihoodDelta B DL).nodes z).n_lt + 1 ≤ B.N_lt + 1 := by
-    simpa [hn] using Nat.succ_le_succ (h_bound z)
+    simpa [hn] using Nat.succ_le_succ (h_push.1 z)
   have h_ext_next : ExtensionOfCode z (NextLikelihoodFrontier B DL) := by
     simpa [NextLikelihoodFrontier, NextLikelihoodDigest, applyLikelihoodDelta, hn]
       using hz (B.N_lt + 1) h_start_le (by simp [applyLikelihoodDelta])
@@ -574,11 +578,11 @@ theorem applyLikelihoodDelta_preserves_pushCorrect
           rw [h_before]
     _ = (∏ i ∈ Icc ((B.nodes z).n_lt + 1) B.N_lt, safe_Δ z (DL.seq i)) *
           safe_Δ z (DL.seq (B.N_lt + 1)) := by
-          rw [h_push z h_old]
+          rw [h_push.2 z h_old]
           rfl
     _ = ∏ i ∈ Icc ((B.nodes z).n_lt + 1) (B.N_lt + 1), safe_Δ z (DL.seq i) := by
           symm
-          exact Finset.prod_Icc_succ_top (Nat.succ_le_succ (h_bound z)) _
+          exact Finset.prod_Icc_succ_top (Nat.succ_le_succ (h_push.1 z)) _
     _ = ∏ i ∈ Icc (((applyLikelihoodDelta B DL).nodes z).n_lt + 1)
           (applyLikelihoodDelta B DL).N_lt, safe_Δ z (DL.seq i) := by
           rw [applyLikelihoodDelta_n_lt B DL z]

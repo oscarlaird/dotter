@@ -538,11 +538,16 @@ We define our invariant, ``push correctness'':
 \begin{definition}[Push Correctness]
 \label{def:push-correctness}
     We say that a Bayesian trie $B$ is push correct for time $N^{lt}$ if,
-    for every node whose descendant likelihoods have changed by a constant factor,
+    every node has local likelihood tracking time at most $N^{lt}$,
+    and, for every node whose descendant likelihoods have changed by a constant factor,
     that factor is equal to the product of the ``unpushed likelihood'' fields of all of its ancestors (including itself).
     I.e.,
     \[
-    \forall x,\, x \geq \bigvee_{i=x.n^{lt}+1}^{N^{lt}} C^L_i \implies \prod_{y \leq x} y.l = \prod_{i = x.n^{lt}+1}^{N^{lt}} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
+    \forall x,\; x.n^{lt} \leq N^{lt}
+    \]
+    and
+    \[
+    \forall x,\; x \geq \bigvee_{i=x.n^{lt}+1}^{N^{lt}} C^L_i \implies \prod_{y \leq x} y.l = \prod_{i = x.n^{lt}+1}^{N^{lt}} \Delta^L_i\bigl(\lfloor x \rfloor_{C^L_i}\bigr)
     \]
 \end{definition}
 
@@ -713,6 +718,11 @@ of byte-pair encoders.
 Analogously to the string case, we will use the notation $\mathbf{H}$ to
 represent the set of all properly terminated token sequences.
 
+\begin{definition}[At Most Properly Terminated Token Sequence]
+    A token sequence is at most properly terminated if and only if it is either properly
+    terminated or contains no stop token.
+\end{definition}
+
 \begin{definition}[Token Sequence]
     A token sequence is a sequence of tokens.
 \end{definition}
@@ -726,6 +736,12 @@ represent the set of all properly terminated token sequences.
 \end{definition}
 
 We will use the symbol $\mathbf{C}$ to represent the set of all canonical token sequences.
+
+\begin{definition}[Admissible Token Sequence]
+    A token sequence is admissible if and only if it is canonical and at most properly terminated.
+\end{definition}
+
+We will use the symbol $\mathbf{A}$ to represent the set of all admissible token sequences.
 
 \begin{definition}[Literalization Function]
     The literalization function, $T^{-1}$, maps a token sequence to a string, by concatenating its tokens.
@@ -772,6 +788,11 @@ We will use the symbol $\mathbf{C}$ to represent the set of all canonical token 
     and $\mathbf{a} > C$ to mean $T^{-1}(\mathbf{a}) > C$.
 \end{definition}
 
+\begin{definition}[Token Sequence versus Token Sequence Comparison]
+    We compare token sequences by first literalizing them to strings. We write
+    $\mathbf{a} \leq \mathbf{b}$ to mean $T^{-1}(\mathbf{a}) \leq T^{-1}(\mathbf{b})$.
+\end{definition}
+
 \begin{definition}[Boundary Sufficiency]
     The boundary sufficiency property of a tokenization function states that every contiguous
     subsequence of a canonical token sequence remains canonical when retokenized in isolation.
@@ -808,6 +829,7 @@ This is because all byte-pair encoders have this property.
 We can now formalize a token-based language model.
 
 \begin{definition}[Conditional Token Prior Function]
+\label{def:conditional-token-prior-function}
     Our conditional token prior function tells us the conditional probability of a token
     given a token sequence. It is a mapping
     $$
@@ -822,9 +844,21 @@ We can now formalize a token-based language model.
     \[
     \mathbf{Q}(\mathbf{t} \mid \mathbf{a}) = 0
     \qquad
-    \text{whenever } \mathbf{a}+\mathbf{t} \text{ is not canonical.}
+    \text{whenever } \mathbf{a} \in \mathbf{A} \text{ and } \mathbf{a}+\mathbf{t} \notin \mathbf{A}.
+    \]
+    We also require almost-sure termination: for every admissible token sequence
+    $\mathbf{a} \in \mathbf{A}\setminus\mathbf{H}$,
+    \[
+    \sum_{\mathbf{s} \in \mathbf{H}}
+    \prod_{i < |\mathbf{s}|} \mathbf{Q}(\mathbf{s}[i] \mid \mathbf{a}+\mathbf{s}[:i])
+    = 1.
     \]
 \end{definition}
+
+\textit{Explanatory Note: } The almost-sure termination condition is an assumption on the
+conditional token prior, not a lemma. Local normalization of $\mathbf{Q}(\mathbf{t}\mid\mathbf{a})$
+only guarantees that the next token is sampled from a probability distribution; by itself it does
+not imply that the process eventually emits the stop token with probability $1$.
 
 \begin{definition}[Conditional Token Prior Function Sequence]
     A conditional token prior function sequence is a sequence of conditional token prior functions,
@@ -865,9 +899,29 @@ We can now formalize a token-based language model.
     \]
 \end{definition}
 
+\begin{proposition}[Induced Token Prior Is a Token Prior]
+    The induced token prior is a token prior function.
+\end{proposition}
+\begin{proof}
+    By definition, $\mathbf{P}_m : \mathbf{H} \to \mathbb{R}^+$.
+    It remains to show that
+    \[
+    \sum_{\mathbf{h} \in \mathbf{H}} \mathbf{P}_m(\mathbf{h}) = 1.
+    \]
+    Since the empty token sequence is admissible and not properly terminated, the
+    almost-sure termination assumption gives
+    \[
+    \sum_{\mathbf{h} \in \mathbf{H}}
+    \prod_{i < |\mathbf{h}|} \mathbf{Q}_m(\mathbf{h}[i] \mid \mathbf{h}[:i])
+    = 1.
+    \]
+    By definition~\ref{def:induced-token-prior}, the summand is exactly
+    $\mathbf{P}_m(\mathbf{h})$, so the claim follows.
+\end{proof}
+
 \begin{lemma}[Token Branch Prior Product Formula]
 \label{lemma:token-branch-prior-product}
-    For every token sequence $\mathbf{a}$,
+    For every admissible token sequence $\mathbf{a} \in \mathbf{A}$,
     \[
     \mathbf{P}^{br}_m(\mathbf{a})
     =
@@ -875,8 +929,7 @@ We can now formalize a token-based language model.
     \]
 \end{lemma}
 \begin{proof}
-    We first consider the case that $\mathbf{a}$ is canonical.
-    We split into two subcases.
+    We split into two cases.
 
     If $\mathbf{a}\in\mathbf{H}$, then $\mathbf{a}$ is already properly terminated.
     No properly terminated token sequence can be a strict extension of $\mathbf{a}$,
@@ -890,7 +943,7 @@ We can now formalize a token-based language model.
     \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i]).
     \]
 
-    Now suppose $\mathbf{a}$ is canonical but not properly terminated.
+    Now suppose $\mathbf{a} \in \mathbf{A}\setminus\mathbf{H}$.
     Every properly terminated token sequence $\mathbf{h} \geq \mathbf{a}$ can be written
     uniquely as $\mathbf{h}=\mathbf{a}+\mathbf{s}$ where $\mathbf{s}\in\mathbf{H}$.
     Therefore,
@@ -914,27 +967,12 @@ We can now formalize a token-based language model.
     &=
     \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i]),
     \end{align*}
-    where the final step is assumption continuation normalization (lemma todo).
-
-    Now suppose $\mathbf{a}$ is not canonical. Let $j$ be the least index such that
-    $\mathbf{a}[:j+1]$ is not canonical. Then $\mathbf{a}[:j]$ is canonical, and by
-    canonical support,
-    \[
-    \mathbf{Q}_m(\mathbf{a}[j] \mid \mathbf{a}[:j]) = 0.
-    \]
-    So the product on the right-hand side is $0$.
-
-    Also, every properly terminated descendant $\mathbf{h} \geq \mathbf{a}$ has the same
-    non-canonical prefix $\mathbf{a}[:j+1]$, so its induced token prior contains the same
-    zero factor. Hence $\mathbf{P}_m(\mathbf{h})=0$ for every such descendant, and therefore
-    \[
-    \mathbf{P}^{br}_m(\mathbf{a}) = 0.
-    \]
-    Thus the identity holds in both cases.
+    where the final step is the almost-sure termination assumption in
+    definition~\ref{def:conditional-token-prior-function}.
 \end{proof}
 
 Henceforth we will study prior function sequences that are derived from token
-prior functions by the relation,
+priors induced from conditional token priors by the relation,
 $$
 P_n(h) = \mathbf{P}_n(T(h)).
 $$
@@ -949,8 +987,8 @@ We can now state our first result
     P^{br}(a)=
     \begin{cases}
         1, & a=\epsilon,\\[4pt]
-        \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<a}\mathbf{P}^{br}(\mathbf{b})
-        \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{Q}(\mathbf{t}\mid\mathbf{b}), & a\neq\epsilon.
+        \sum_{\mathbf{b}\in\mathbf{A},\,\mathbf{b}<a}\mathbf{P}^{br}(\mathbf{b})
+        \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le \mathbf{b+t}}\mathbf{Q}(\mathbf{t}\mid\mathbf{b}), & a\neq\epsilon.
     \end{cases}
     $$
 \end{theorem}
@@ -967,22 +1005,24 @@ We can now state our first result
     P^{br}(a)=\sum_{\substack{h\in H\\ h\ge a}}P(h).
     $$
 
-    For each $h\ge a$, write $\mathbf{c}:=T(h)$. Since $T^{-1}(\mathbf{c})=h\ge a$,
+    For each $h\ge a$, write $\mathbf{c}:=T(h)$. Since $\mathbf{c}\ge a$,
     there exists a unique smallest $j$ such that
-    $a\le T^{-1}(\mathbf{c}[:j+1])$.
+    $a\le \mathbf{c}[:j+1]$.
     Define $\mathbf{b}:=\mathbf{c}[:j]$ and $\mathbf{t}:=\mathbf{c}[j]$.
     By minimality of $j$, we have
     $$
-    T^{-1}(\mathbf{b})<a\le T^{-1}(\mathbf{b}+\mathbf{t}).
+    \mathbf{b}<a\le \mathbf{b}+\mathbf{t}.
     $$
     So each $h\ge a$ determines a unique pair $(\mathbf{b},\mathbf{t})$ with those inequalities.
 
     Grouping the sum over $h$ by these pairs gives
     $$
     P^{br}(a)=
-    \sum_{\substack{\mathbf{b}\in\mathbf{\Lambda}^*\\T^{-1}(\mathbf{b})<a}}
-    \sum_{\substack{\mathbf{t}\in\mathbf{\Lambda}\\a\le T^{-1}(\mathbf{b}+\mathbf{t})}}
-    \sum_{\substack{h\in H:\\ T(h)\text{ begins with }\mathbf{b}+\mathbf{t}}}
+    \sum_{\substack{\mathbf{b}\in\mathbf{A}\\\mathbf{b}<a}}
+    \;\;
+    \sum_{\substack{\mathbf{t}\in\mathbf{\Lambda}\\a\le \mathbf{b}+\mathbf{t}}}
+    \;\;
+    \sum_{\substack{h\in H:\\ (\mathbf{b}+\mathbf{t}) \leq T(h)}}
     P(h).
     $$
 
@@ -1001,11 +1041,12 @@ We can now state our first result
     Substituting yields
     $$
     P^{br}(a)=
-    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<a}\mathbf{P}^{br}(\mathbf{b})
-    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{Q}(\mathbf{t}\mid\mathbf{b}),
+    \sum_{\mathbf{b}\in\mathbf{A},\,\mathbf{b}<a}\mathbf{P}^{br}(\mathbf{b})
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le \mathbf{b+t}}\mathbf{Q}(\mathbf{t}\mid\mathbf{b}),
     $$
     as claimed.
 \end{proof}
+
 
 \section{Prior Tracking}
 We now replace the oracular access to the branch prior function with an explicit
@@ -1075,14 +1116,22 @@ We now formalize a finite dynamic program that does exactly this.
 
 \begin{definition}[Token Fan]
 \label{def:token-fan}
-    Let $m$ be a prior time, let $\mathbf{b} \in \mathbf{\Lambda}^*$ be a token sequence,
+    Let $m$ be a prior time, let $\mathbf{b} \in \mathbf{A}$ be an admissible token sequence,
     and let $x$ be an at most properly terminated string.
     The token fan of $x$ from context $\mathbf{b}$ at time $m$ is
     \[
     \Phi_m(\mathbf{b}, x)
     :=
-    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le \mathbf{b+t}}
     \mathbf{Q}_m(\mathbf{t}\mid\mathbf{b}).
+    \]
+\end{definition}
+
+\begin{definition}[Token Ancestor]
+    \label{def:token-ancestor}
+    For a non-empty string $x$, we define its token ancestor by
+    \[
+    \tau(x) := T^{-1}(T(x)[:-1]).
     \]
 \end{definition}
 
@@ -1093,6 +1142,7 @@ We now formalize a finite dynamic program that does exactly this.
     \[
     \kappa_x(i) := T(x[:i]).
     \]
+    (and for convenience, we allow this notation for negative indices too).
 \end{definition}
 
 \textit{Explanatory Note: } The sum for a branch prior runs over \emph{string}
@@ -1114,20 +1164,37 @@ strict string ancestors.
     applied to the canonical token sequence $T(x)$ with indices $0$ and $j$.
 \end{proof}
 
-\begin{lemma}[Noncanonical Token Branch Priors Vanish]
-\label{lemma:noncanonical-token-branch-prior-vanishes}
-    If a token sequence $\mathbf{a}$ is not canonical, then
+\begin{lemma}[Nonadmissible Token Branch Priors Vanish]
+\label{lemma:nonadmissible-token-branch-prior-vanishes}
+    If a token sequence $\mathbf{a}$ is not admissible, then
     \[
     \mathbf{P}^{br}_m(\mathbf{a}) = 0.
     \]
 \end{lemma}
 \begin{proof}
-    This is the non-canonical case of lemma~\ref{lemma:token-branch-prior-product}.
+    If $\mathbf{a}$ is not at most properly terminated, then no properly terminated token
+    sequence can extend $\mathbf{a}$, since that would preserve an internal stop token.
+    Hence the index set in definition~\ref{def:token-branch-prior-function} is empty, so
+    $\mathbf{P}^{br}_m(\mathbf{a}) = 0$.
+
+    Otherwise, $\mathbf{a}$ is at most properly terminated but not canonical.
+    Let $j$ be the least index such that $\mathbf{a}[:j+1]$ is not canonical.
+    Then $\mathbf{a}[:j]$ is canonical, and because $\mathbf{a}$ is at most properly
+    terminated, the sequence $\mathbf{a}[:j+1]$ is not admissible. By admissible support,
+    \[
+    \mathbf{Q}_m(\mathbf{a}[j] \mid \mathbf{a}[:j]) = 0.
+    \]
+    Every properly terminated descendant $\mathbf{h} \geq \mathbf{a}$ has the same prefix
+    $\mathbf{a}[:j+1]$, so its induced token prior contains the same zero factor.
+    Therefore $\mathbf{P}_m(\mathbf{h}) = 0$ for every such descendant, and hence
+    \[
+    \mathbf{P}^{br}_m(\mathbf{a}) = 0.
+    \]
 \end{proof}
 
 \begin{theorem}[String-Ancestor Reindexing]
 \label{theorem:string-ancestor-reindexing}
-    For every non-empty string $x$,
+    For every non-empty at most properly terminated string $x$,
     \[
     P^{br}_m(x)
     =
@@ -1140,7 +1207,7 @@ strict string ancestors.
     \[
     P^{br}_m(x)
     =
-    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<x}
+    \sum_{\mathbf{b}\in\mathbf{A},\,\mathbf{b}<x}
     \mathbf{P}^{br}_m(\mathbf{b}) \, \Phi_m(\mathbf{b},x).
     \]
 
@@ -1148,21 +1215,14 @@ strict string ancestors.
     \[
     s := T^{-1}(\mathbf{b}).
     \]
-    If $\mathbf{b}$ is canonical, then
+    Since $\mathbf{b} \in \mathbf{A}$, in particular $\mathbf{b}$ is canonical, so
     \[
     \mathbf{b} = T(T^{-1}(\mathbf{b})) = T(s),
     \]
     so $\mathbf{b} = \kappa_x(|s|)$. Since $s < x$, this index satisfies
     $|s| < |x|$.
 
-    If $\mathbf{b}$ is not canonical, then lemma~\ref{lemma:noncanonical-token-branch-prior-vanishes}
-    shows that
-    \[
-    \mathbf{P}^{br}_m(\mathbf{b}) = 0,
-    \]
-    so the corresponding summand vanishes.
-
-    Thus only canonical contexts contribute, and these are in one-to-one
+    Thus the admissible contexts are in one-to-one
     correspondence with the strict string prefixes $x[:i]$ for $0 \leq i < |x|$,
     via $\mathbf{b} = \kappa_x(i) = T(x[:i])$. Substituting this reindexing into
     the path-summation formula yields
@@ -1192,11 +1252,12 @@ This makes the presentation simple.
 \label{alg:compute-token-branch-prior}
 \begin{algorithmic}[1]
 \Require Bayesian Trie $B$, Node $x$, New Time $m$
-\Require $x = \epsilon$ or $(T^{-1}(T(x)[:-1])).m^\mathbf{P} = m$ \Comment{The token ancestor of $x$ already has the new time.}
+\Require Every node in $B$ stores correct prior values for its recorded times.
+\Require $x = \epsilon$ or $\tau(x).m^\mathbf{P} = m$ \Comment{The token ancestor of $x$ already has the new time.}
 \If{$x = \epsilon$}
     \State $x.\mathbf{P} \gets 1$
 \Else
-    \State $x.\mathbf{P} \gets (T^{-1}(T(x)[:-1])).\mathbf{P} * \mathbf{Q}_m(T(x)[-1] \mid T(x)[:-1])$
+    \State $x.\mathbf{P} \gets \tau(x).\mathbf{P} * \mathbf{Q}_m(T(x)[-1] \mid T(x)[:-1])$
 \EndIf
 \State $x.m^\mathbf{P} \gets m$
 \end{algorithmic}
@@ -1207,6 +1268,7 @@ This makes the presentation simple.
 \label{alg:compute-branch-prior}
 \begin{algorithmic}[1]
 \Require Bayesian Trie $B$, Node $x$, New Time $m$
+\Require Every node in $B$ stores correct prior values for its recorded times.
 \Require $(x[:i]).m^\mathbf{P} = m \quad \forall i < |x|$ \Comment{All string ancestors of $x$ already have calculated the token branch prior at the new time.}
 \State $x.P \gets \sum_{i=0}^{|x|-1} (x[:i]).\mathbf{P} * \Phi_m(\kappa_x(i), x)$  \Comment{Theorem \ref{theorem:string-ancestor-reindexing}.}
 \State $x.m^P \gets m$
@@ -1244,24 +1306,24 @@ We now show the correctness of these two algorithms.
     so the stored value is correct.
 
     Now suppose $x\neq \epsilon$.
-    By the precondition, the string node corresponding to the token ancestor, $T^{-1}(T(x)[:-1])$, already has time $m$,
+    By the precondition, the token ancestor $\tau(x)$ already has time $m$,
     so its stored value is correct:
     \[
-    (T^{-1}(T(x)[:-1])).\mathbf{P}=\mathbf{P}^{br}_m(T(T^{-1}(T(x)[:-1]))).
+    \tau(x).\mathbf{P}=\mathbf{P}^{br}_m(T(\tau(x))).
     \]
     By lemma~\ref{lemma:token-prefix-retokenization},
     \[
-    T(T^{-1}(T(x)[:-1])) = T(x)[:-1].
+    T(\tau(x)) = T(x)[:-1].
     \]
     Thus,
     \[
-    (T^{-1}(T(x)[:-1])).\mathbf{P}=\mathbf{P}^{br}_m(T(x)[:-1]).
+    \tau(x).\mathbf{P}=\mathbf{P}^{br}_m(T(x)[:-1]).
     \]
     The algorithm then sets
     \[
     x.\mathbf{P}
     \gets
-    (T^{-1}(T(x)[:-1])).\mathbf{P}\cdot \mathbf{Q}_m(T(x)[-1]\mid T(x)[:-1]).
+    \tau(x).\mathbf{P}\cdot \mathbf{Q}_m(T(x)[-1]\mid T(x)[:-1]).
     \]
     Substituting the known ancestor value gives
     \[
@@ -1357,14 +1419,14 @@ a kind of up-propagation.
     for which the canonical tokenization is an extension of $\mathbf{a}$ and makes $\mathbf{a}$ the
     token truncation of $x$. If there is no such descendant, this maximum is taken to be $0$.
     $$
-    R(\mathbf{a}, x) =
+    R_n(\mathbf{a}, x) =
     \max_{\substack{
         h \in H \\
         x \leq h \\
         \mathbf{a} \leq T(h) \\
         \btrunc{x}{T(h)} = \mathbf{a}
     }}
-    L(h)
+    L_n(h)
     $$
 \end{definition}
 
@@ -1372,7 +1434,7 @@ In the special case where the string corresponds to the token sequence, this red
 \begin{lemma}[Identical Token and String Prefixes]
     If $\mathbf{a}$ is canonical, i.e., $a = T^{-1}(\mathbf{a})$, then
     $$
-    R(\mathbf{a}, a) = \max_{\substack{h \in H \\ \mathbf{a} \leq T(h)}} L(h)
+    R_n(\mathbf{a}, a) = \max_{\substack{h \in H \\ \mathbf{a} \leq T(h)}} L_n(h)
     $$
 \end{lemma}
 \begin{proof}
@@ -1381,17 +1443,18 @@ In the special case where the string corresponds to the token sequence, this red
     since the stop character is always required to tokenize as its own token.
 \end{proof}
 This latter quantity, the maximum likelihood of any descendant of a token sequence, is the quantity of interest,
-but we will need a datastructure that maintains $R(\mathbf{a}, x)$ for other values of $x$ which are not equal to $\mathbf{a}$.
+but we will need a datastructure that maintains $R_n(\mathbf{a}, x)$ for other values of $x$ which are not equal to $\mathbf{a}$.
 
 The core theorem required for our algorithm related the double path likelihood to the double path likelihood near
 an arbitrary frontier.
 
 \begin{theorem}[Double Path Maximum Likelihood from the Frontier]
 \label{theorem:double-path-maximum-likelihood-from-frontier}
-Given a canonical token sequence $\mathbf{a}$, a string $x$, and a complete prefix code $F$,
+Given a canonical token sequence $\mathbf{a}$, a string $x$, a complete prefix code $F$,
+and a likelihood time $n$,
 such that $x \leq F$ and $H \geq F$,
 $$
-R(\mathbf{a}, x) =
+R_n(\mathbf{a}, x) =
     \max_{\substack{
         f \in F \\
         x \leq f
@@ -1402,7 +1465,7 @@ R(\mathbf{a}, x) =
         \mathbf{a} \leq \mathbf{b} \leq f \\
         \btrunc{x}{\mathbf{b}} = \mathbf{a}
     }} 
-    R(\mathbf{b}, f),
+    R_n(\mathbf{b}, f),
 $$
 \end{theorem}
 \begin{proof}
@@ -1434,15 +1497,15 @@ $$
     \mathbf{a}.
     $$
     Since $f \leq h$, $\mathbf{b} \leq T(h)$, and $\btrunc{f}{T(h)} = \mathbf{b}$,
-    the string $h$ is admissible in the definition of $R(\mathbf{b}, f)$.
+    the string $h$ is admissible in the definition of $R_n(\mathbf{b}, f)$.
     Hence
     $$
-    L(h) \leq R(\mathbf{b}, f).
+    L_n(h) \leq R_n(\mathbf{b}, f).
     $$
-    Because every admissible $h$ for $R(\mathbf{a}, x)$ yields such a pair $(\mathbf{b}, f)$,
+    Because every admissible $h$ for $R_n(\mathbf{a}, x)$ yields such a pair $(\mathbf{b}, f)$,
     this proves
     $$
-    R(\mathbf{a}, x)
+    R_n(\mathbf{a}, x)
     \leq
     \max_{\substack{
         f \in F \\
@@ -1454,15 +1517,15 @@ $$
         \mathbf{a} \leq \mathbf{b} \leq f \\
         \btrunc{x}{\mathbf{b}} = \mathbf{a}
     }}
-    R(\mathbf{b}, f).
+    R_n(\mathbf{b}, f).
     $$
 
     For the reverse inequality, let $\mathbf{b} \in \mathbf{C}$ and $f \in F$ satisfy
     $$
     x \leq f, \quad \mathbf{a} \leq \mathbf{b} \leq f, \quad \btrunc{x}{\mathbf{b}} = \mathbf{a}.
     $$
-    If there is no $h \in H$ admissible in the definition of $R(\mathbf{b}, f)$, then
-    $R(\mathbf{b}, f) = 0 \leq R(\mathbf{a}, x)$ by definition.
+    If there is no $h \in H$ admissible in the definition of $R_n(\mathbf{b}, f)$, then
+    $R_n(\mathbf{b}, f) = 0 \leq R_n(\mathbf{a}, x)$ by definition.
     Otherwise, let $h \in H$ satisfy
     $$
     f \leq h, \quad \mathbf{b} \leq T(h), \quad \btrunc{f}{T(h)} = \mathbf{b}.
@@ -1479,10 +1542,10 @@ $$
     \mathbf{a}.
     $$
     Because $\mathbf{a} \leq \mathbf{b} \leq T(h)$, the string $h$ is admissible in the
-    definition of $R(\mathbf{a}, x)$. Hence every value contributing to $R(\mathbf{b}, f)$
-    also contributes to $R(\mathbf{a}, x)$, so
+    definition of $R_n(\mathbf{a}, x)$. Hence every value contributing to $R_n(\mathbf{b}, f)$
+    also contributes to $R_n(\mathbf{a}, x)$, so
     $$
-    R(\mathbf{b}, f) \leq R(\mathbf{a}, x).
+    R_n(\mathbf{b}, f) \leq R_n(\mathbf{a}, x).
     $$
     Taking the maximum over all such $\mathbf{b}$ and $f$ gives
     $$
@@ -1496,9 +1559,9 @@ $$
         \mathbf{a} \leq \mathbf{b} \leq f \\
         \btrunc{x}{\mathbf{b}} = \mathbf{a}
     }}
-    R(\mathbf{b}, f)
+    R_n(\mathbf{b}, f)
     \leq
-    R(\mathbf{a}, x).
+    R_n(\mathbf{a}, x).
     $$
 
     Therefore the two sides are equal.
@@ -1532,10 +1595,11 @@ $$
 \end{proof}
 
 \begin{corollary}[Double Path Maximum Likelihood from the Frontier, Reindexed]
-    Given a canonical token sequence $\mathbf{a}$, a string $x$, and a complete prefix code $F$,
+    Given a canonical token sequence $\mathbf{a}$, a string $x$, a complete prefix code $F$,
+    and a likelihood time $n$,
     such that $x \leq F$ and $H \geq F$,
     $$
-    R(\mathbf{a}, x)
+    R_n(\mathbf{a}, x)
     =
     \max_{\substack{
         f \in F \\
@@ -1546,13 +1610,13 @@ $$
         i \leq |f| \\
         \btrunc{x}{T(f[:i])} = \mathbf{a}
     }}
-    R(T(f[:i]), f).
+    R_n(T(f[:i]), f).
     $$
 \end{corollary}
 \begin{proof}
     By theorem~\ref{theorem:double-path-maximum-likelihood-from-frontier},
     $$
-    R(\mathbf{a}, x) =
+    R_n(\mathbf{a}, x) =
     \max_{\substack{
         f \in F \\
         x \leq f
@@ -1563,7 +1627,7 @@ $$
         \mathbf{a} \leq \mathbf{b} \leq f \\
         \btrunc{x}{\mathbf{b}} = \mathbf{a}
     }}
-    R(\mathbf{b}, f).
+    R_n(\mathbf{b}, f).
     $$
     For fixed $f \in F$, lemma~\ref{lemma:canonical-token-prefixes-of-a-string}
     shows that the canonical token sequences $\mathbf{b}$ satisfying $\mathbf{b} \leq f$
@@ -1646,8 +1710,9 @@ This prepares us for our first, algorithm,
 We compute a quanitity, $Q(\mathbf{a}, x)$.
 In implementation, this is data attached to the node, $x$,
 indexed by its ancestors, $\mathbf{a}$.
-Our goal is to design an algorithm that correctly computes $Q(\mathbf{a}, x)$,
-i.e., $Q(\mathbf{a}, x) = R(\mathbf{a}, x)$.
+Our goal is to design an algorithm that correctly computes $Q(\mathbf{a}, x)$
+at time $N^{\phi}$,
+i.e., $Q(\mathbf{a}, x) = R_{N^{\phi}}(\mathbf{a}, x)$.
 
 \begin{algorithm}[H]
 \caption{MTDL Up Propagation}
@@ -1655,9 +1720,12 @@ i.e., $Q(\mathbf{a}, x) = R(\mathbf{a}, x)$.
 \begin{algorithmic}[1]
 \Require Complete Prefix Code, $F$
 \Require $H \geq F$
-\Require $f \in F \implies Q(\mathbf{d}, f) = R(\mathbf{d}, f)$ for all $\mathbf{d} < f$.
-\Require $x < F \implies Q(\mathbf{d}, x) = 0$ for all $\mathbf{d} \leq x$.
-\Comment{MTDLFA Already Computed at the Frontier}
+\Require New max likelihood time, $N^{\phi}$
+\Require $x.n^{\phi} = N^{\phi}$
+\Comment{All frontier nodes already have the new max likelihood tracking time}
+\Require $f \in F \implies Q(\mathbf{d}, f) = R_{N^{\phi}}(\mathbf{d}, f)$ for all canonical $\mathbf{d} \leq f$.
+\Comment{MTDLFA Already Correct at Frontier}
+\Require $x < F \implies Q(\mathbf{d}, x) \leq R_{N^{\phi}}(\mathbf{d}, x)$ for all canonical $\mathbf{d} \leq x$.
 \For{each node $f \in F$}
     \For{$i \leq |f|$}
         \State $\mathbf{b} \gets T(f[:i])$
@@ -1667,80 +1735,278 @@ i.e., $Q(\mathbf{a}, x) = R(\mathbf{a}, x)$.
         \EndFor
     \EndFor
 \EndFor
+\For{each node $x < F$}
+\Comment{Update the local max likelihood tracking time of all nodes}
+    \State $x.n^{\phi} \gets N^{\phi}$
+\EndFor
 \end{algorithmic}
 \end{algorithm}
 
 \begin{theorem}[MTDL Up Propagation Correctness]
 \label{theorem:mtdl-up-propagation-correctness}
-Algorithm~\ref{alg:mtdl-up-propagation} correctly computes $Q(\mathbf{a}, x)$ within the frontier.
-If $H \geq F$, $\mathbf{a} \leq F$, and $x \leq F$, then
+Under the hypotheses of algorithm~\ref{alg:mtdl-up-propagation},
+if $H \geq F$, $\mathbf{a} \leq F$, and $x \leq F$, then
 \[
-R(\mathbf{a}, x) = Q(\mathbf{a}, x).
+R_{N^{\phi}}(\mathbf{a}, x) = Q(\mathbf{a}, x).
 \]
 \end{theorem}
 \begin{proof}
     Fix $\mathbf{a} \leq F$ and $x \leq F$.
     By inspection of algorithm~\ref{alg:mtdl-up-propagation},
-    the value $Q(\mathbf{a}, x)$ at termination is the maximum of all values
-    $Q(T(f[:i]), f)$ such that $f \in F$, $x \leq f$, and $\btrunc{x}{T(f[:i])} = \mathbf{a}$.
+    the value $Q(\mathbf{a}, x)$ at termination is the maximum of its initial value
+    and all values $Q(T(f[:i]), f)$ such that $f \in F$, $x \leq f$, and
+    $\btrunc{x}{T(f[:i])} = \mathbf{a}$.
     Thus
     $$
     Q(\mathbf{a}, x)
     =
-    \max_{\substack{
-        f \in F \\
-        x \leq f
-    }}
-    \;\;
-    \max_{\substack{
-        i \leq |f| \\
-        \btrunc{x}{T(f[:i])} = \mathbf{a}
-    }}
-    Q(T(f[:i]), f).
+    \max \Bigg(
+        Q^{\mathrm{init}}(\mathbf{a}, x),
+        \;\;
+        \max_{\substack{
+            f \in F \\
+            x \leq f
+        }}
+        \;
+        \max_{\substack{
+            i \leq |f| \\
+            \btrunc{x}{T(f[:i])} = \mathbf{a}
+        }}
+        Q(T(f[:i]), f)
+    \Bigg).
     $$
-    If the indexing set is empty, then no update ever targets $Q(\mathbf{a}, x)$, so by the
-    initialization hypothesis $Q(\mathbf{a}, x)=0$. Otherwise, for every $f \in F$ and $i \leq |f|$,
-    the frontier hypothesis gives
+    By the initialization hypothesis, $Q^{\mathrm{init}}(\mathbf{a}, x) \leq R_{N^{\phi}}(\mathbf{a}, x)$.
+    Also, for every $f \in F$ and $i \leq |f|$, the frontier hypothesis gives
     $$
-    Q(T(f[:i]), f) = R(T(f[:i]), f).
+    Q(T(f[:i]), f) = R_{N^{\phi}}(T(f[:i]), f).
     $$
     Therefore
     $$
     Q(\mathbf{a}, x)
     =
-    \max_{\substack{
-        f \in F \\
-        x \leq f
-    }}
-    \;\;
-    \max_{\substack{
-        i \leq |f| \\
-        \btrunc{x}{T(f[:i])} = \mathbf{a}
-    }}
-    R(T(f[:i]), f).
+    \max \Bigg(
+        Q^{\mathrm{init}}(\mathbf{a}, x),
+        \;\;
+        \max_{\substack{
+            f \in F \\
+            x \leq f
+        }}
+        \;
+        \max_{\substack{
+            i \leq |f| \\
+            \btrunc{x}{T(f[:i])} = \mathbf{a}
+        }}
+        R_{N^{\phi}}(T(f[:i]), f)
+    \Bigg).
     $$
     By the reindexed corollary above,
-    the right hand side is exactly $R(\mathbf{a}, x)$.
+    the second term is exactly $R_{N^{\phi}}(\mathbf{a}, x)$. Hence the maximum above is
+    $\max(Q_{\mathrm{init}}(\mathbf{a}, x), R_{N^{\phi}}(\mathbf{a}, x)) = R_{N^{\phi}}(\mathbf{a}, x)$.
 \end{proof}
 
 
-\section{older stuff}
-\begin{lemma}[Double path maximum likelihood from the frontier]
-    If $x$ is a string and $\mathbf{a}$ is a token sequence, then
-    $$
-    R(\mathbf{a}, x) =
-    \begin{cases}
-        \prod_{i=1}^N \Delta^L_i(\lfloor x \rfloor_{C^L_i}) & \text{if } \phi(\mathbf{a}, x) \text{ is true} \\
-        0 & \text{otherwise}
-    \end{cases}
-    $$
+The preceding algorithm explains how to update within the frontier
+to a new likelihood time. We now give a simple update algorithm
+for beyond the frontier.
+
+\begin{algorithm}[H]
+\caption{MTDL Update}
+\label{alg:mtdl-update}
+\begin{algorithmic}[1]
+\Require Node $x$
+\Require New max likelihood tracking time $n'$
+\Require $n' \geq x.n^{\phi}$
+\Comment{The new likelihood time is not earlier than the node's local time}
+\Require $Q(\mathbf{d}, x) = R_{x.n^{\phi}}(\mathbf{d}, x)$ for all canonical $\mathbf{d} \leq x$.
+\Require $x \geq \bigvee_{i=x.n^{\phi}+1}^{n'} C^L_i$
+\State $Q(\mathbf{d}, x) \mathrel{*=} \prod_{i=x.n^{\phi}+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \quad \text{for all canonical } \mathbf{d} \leq x$
+\State $x.n^{\phi} \gets n'$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{lemma}[MTDL Likelihood Factorization]
+\label{lemma:mtdl-likelihood-factorization}
+    Let $n \leq n'$ and let $x$ be a string satisfying
+    \[
+    x \geq \bigvee_{i=n+1}^{n'} C^L_i.
+    \]
+    Then for every canonical token sequence $\mathbf{a} \leq x$,
+    \[
+    R_{n'}(\mathbf{a}, x)
+    =
+    R_n(\mathbf{a}, x)
+    \prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}).
+    \]
 \end{lemma}
 \begin{proof}
-    The predicate, $\phi(\mathbf{a}, x)$, exactly determines whether the maximum 
-    described in definition~\ref{def:maximum-likelihood-for-double-path} has any terms.
-    If so, all of those terms are equal to $\prod_{i=1}^N \Delta^L_i(\lfloor x \rfloor_{C^L_i})$.
+    By the definition of a likelihood delta digest sequence, for every $h \in H$,
+    \[
+    L_{n'}(h)
+    =
+    L_n(h)\prod_{i=n+1}^{n'} \Delta^L_i(\lfloor h \rfloor_{C^L_i}).
+    \]
+    Since $x \geq \bigvee_{i=n+1}^{n'} C^L_i$, the same argument as in
+    lemma~\ref{lemma:eventually-constant-likelihoods} shows that for every
+    $h \geq x$ and every $i \in \{n+1,\dots,n'\}$,
+    \[
+    \lfloor h \rfloor_{C^L_i} = \lfloor x \rfloor_{C^L_i}.
+    \]
+    Hence, for all $h \geq x$,
+    \[
+    L_{n'}(h)
+    =
+    L_n(h)\prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}).
+    \]
+
+    If there is no $h \in H$ admissible in the definition of $R_n(\mathbf{a}, x)$,
+    then both $R_n(\mathbf{a}, x)$ and $R_{n'}(\mathbf{a}, x)$ are $0$ by
+    definition, and the claim follows. Otherwise,
+    \begin{align*}
+    R_{n'}(\mathbf{a}, x)
+    &=
+    \max_{\substack{
+        h \in H \\
+        x \leq h \\
+        \mathbf{a} \leq T(h) \\
+        \btrunc{x}{T(h)} = \mathbf{a}
+    }}
+    L_{n'}(h) \\
+    &=
+    \max_{\substack{
+        h \in H \\
+        x \leq h \\
+        \mathbf{a} \leq T(h) \\
+        \btrunc{x}{T(h)} = \mathbf{a}
+    }}
+    \left(
+        L_n(h)\prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i})
+    \right) \\
+    &=
+    \left(
+        \max_{\substack{
+            h \in H \\
+            x \leq h \\
+            \mathbf{a} \leq T(h) \\
+            \btrunc{x}{T(h)} = \mathbf{a}
+        }}
+        L_n(h)
+    \right)
+    \prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \\
+    &=
+    R_n(\mathbf{a}, x)
+    \prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}),
+    \end{align*}
+    as claimed.
 \end{proof}
 
+\begin{theorem}[MTDL Update Correctness]
+    Under the hypotheses of algorithm~\ref{alg:mtdl-update},
+    after execution,
+    \[
+    Q(\mathbf{a}, x) = R_{n'}(\mathbf{a}, x)
+    \]
+    for all canonical $\mathbf{a} \leq x$.
+\end{theorem}
+\begin{proof}
+    Let $n := x.n^{\phi}$ before execution of the algorithm, and fix a canonical
+    token sequence $\mathbf{a} \leq x$.
+    By the precondition,
+    \[
+    Q(\mathbf{a}, x) = R_n(\mathbf{a}, x).
+    \]
+    By lemma~\ref{lemma:mtdl-likelihood-factorization},
+    \[
+    R_{n'}(\mathbf{a}, x)
+    =
+    R_n(\mathbf{a}, x)
+    \prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}).
+    \]
+    The algorithm multiplies $Q(\mathbf{a}, x)$ by this same factor, so the
+    updated value satisfies
+    \begin{align*}
+    Q(\mathbf{a}, x)
+    &=
+    R_n(\mathbf{a}, x)
+    \prod_{i=n+1}^{n'} \Delta^L_i(\lfloor x \rfloor_{C^L_i}) \\
+    &=
+    R_{n'}(\mathbf{a}, x).
+    \end{align*}
+    Since $\mathbf{a}$ was arbitrary, the conclusion holds for all canonical
+    $\mathbf{a} \leq x$.
+\end{proof}
+
+
+\section{The Complete Algorithm}
+Here we combine the preceding sections
+to give Dotter's complete algorithm.
+The tracking of the maximum descendant likelihood
+is optional and will only run on the server.
+
+\begin{algorithm}[H]
+\caption{Complete Prior Update}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$.
+\State $M' \gets B.M + 1$
+\State $F \gets \emptyset$
+\For{each node $x$ in the trie in topological order}
+    \State Run algorithm~\ref{alg:compute-token-branch-prior}, Compute Token Branch Prior, on $x$.
+    \If{$x \geq \bigvee_{i=1}^{N} C^L_i$ or $x \geq C^P_{M'}$}
+        \State $F \gets F \cup \{x\}$
+        \State \text{Break descent from $x$}
+    \EndIf
+\EndFor
+\For{each node $x \in F$}
+    \State Run algorithm~\ref{alg:compute-branch-prior}, Compute Branch Prior, on $x$.
+    \State Run algorithm~\ref{alg:advance-node-time}, Advance Node Time, on $x$.
+\EndFor
+\For{each node $x < F$ in reverse topological order}
+    \State $x.Z \gets \sum_{y \in x.\text{children}} y.\text{Z}$
+    \State $x.m \gets M'$
+\EndFor
+\State $B.M \gets M'$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Complete Likelihood Update}
+\label{alg:complete-likelihood-update}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$.
+\State $N' \gets B.N + 1$
+\For{each node $x < C^L_{N'}$ in topological order}
+    \State Run algorithm~\ref{alg:push-likelihood}, Push Likelihood, on $x$.
+\EndFor
+\For{each node $x \in C^L_{N'}$}
+    \State Run algorithm~\ref{alg:apply-likelihood-delta}, Apply Likelihood Delta, on $x$.
+    \State Run algorithm~\ref{alg:advance-node-time}, Advance Node Time, on $x$.
+    \State Run algorithm~\ref{alg:mtdl-update}, MTDL Update, on $x$.
+\EndFor
+\State Run algorithm~\ref{alg:mtdl-up-propagation}, MTDL Up Propagation, on $B$ for frontier, $C^L_{N'}$.
+\For{each node $x < C^L_{N'}$ in reverse topological order}
+    \State $x.Z \gets \sum_{y \in x.\text{children}} y.\text{Z}$
+    \State $x.n \gets N'$
+\EndFor
+\State $B.N \gets N'$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Complete Push}
+\begin{algorithmic}[1]
+\Require Bayesian Trie $B$.
+\Require Node $x$.
+\Require All ancestors of $x$ are correct and have no unpushed likelihood.
+\State Run algorithm~\ref{alg:compute-token-branch-prior}, Compute Token Branch Prior, on $x$.
+\State Run algorithm~\ref{alg:compute-branch-prior}, Compute Branch Prior, on $x$.
+\State Run algorithm~\ref{alg:mtdl-update}, MTDL Update, on $x$.
+\State Run algorithm~\ref{alg:push-likelihood}, Push Likelihood, on $x$.
+\end{algorithmic}
+\end{algorithm}
+
+
+
+
+\section{OLD STUFF}
 \begin{definition}[Pita predicate]
     The predicate, $\phi(\mathbf{a}, x)$, indicates whether there exists a strict descendant $h$ of $x$
     whose tokenization truncates at $x$ to $\mathbf{a}$.
@@ -1751,284 +2017,7 @@ R(\mathbf{a}, x) = Q(\mathbf{a}, x).
     $$
 \end{definition}
 
-\section{Old stuff}
-
-\section{Global Variables}
-
-\begin{itemize}
-    \item \texttt{track\_mdlfta}: \textbf{bool} --- indicates whether we are tracking maximum descendant likelihoods for token ancestors.
-    This is only necessary on the server where we will want to be able to evaluate token sequence posteriors.
-    \item \texttt{max\_token\_length}: \textbf{int} --- the maximum length of a token.
-    \item \texttt{pta\_lut}: \textbf{dict} --- a lookup table for possible token ancestors, mapping from (ancestor final token, token prefix) to a boolean indicating whether it 
-    is possible for any token beginning with the token prefix to follow upon the ancestor final token.
-    \item \texttt{llm\_results}: \textbf{dict} --- a mapping from (token sequence, token) to the language model's conditional probability of the token given the token sequence.
-    \item \texttt{llm\_fans}: \textbf{dict} --- a mapping from (token sequence, token prefix) to the language model's conditional probability that the next token begins with the token prefix given the token sequence.
-\end{itemize}
-
-\section{Fields of a Node}
-A node in the trie has the following fields.
-(Note: All array fields have length \texttt{max\_token\_length} (0-indexed) unless otherwise specified.)
-
-Constant Fields:
-\begin{itemize}
-    \item \texttt{letter}: \textbf{str} --- the character represented by this node.
-    \item \texttt{value}: \textbf{str} --- the string represented by this node, i.e., the concatenation of the parent's value and the character represented by this node.
-    (In implementation, we only need at most the last 2*\texttt{max\_token\_length} characters of the value.)
-    \item \texttt{depth}: \textbf{int} --- the depth of this node in the trie.
-    \item \texttt{final\_token}: \textbf{str} --- the token to which this node belongs, if this node is the last character of a token.
-    \item \texttt{final\_token\_length}: \textbf{int} --- the number of characters in the final token.
-    \item \texttt{ancestor\_final\_tokens}: \textbf{list of strs} --- the $i$-th ancestor final token is the final token of the $i$-th ancestor.
-     (In implementation, this can be an array of the ancestor final token lengths, and we may slice into our value to derive the final token.)
-    \item \texttt{possible\_token\_ancestors}: \textbf{list of bool} --- a list of flags indicating whether the $i$-th ancestor
-    could possibly be a token ancestor of this node. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
-\end{itemize}
-
-Mutable Fields:
-\begin{itemize}
-    \item \texttt{posterior\_Z}: \textbf{float} --- the unnormalized posterior probability of this node being a prefix of the user's target string,
-    \item \texttt{ever\_parent\_of\_visible\_node}: \textbf{bool} --- indicates whether this node has ever been a parent of a visible node
-    (at a time when a signal was received).
-    This must be false for the likelihood field to be valid.
-    If this flag is true, the likelihood can only be calculated as a weighted sum of its children's likelihoods,
-    $P(D | S \leq X) = \sum_l P(D | S+l \leq X) P(S+l \leq X | S \leq X)$,
-    since its children have different likelihoods.
-    Hence, if a node was not ever a parent of a visible node, then its likelihood is known absolutely,
-    but if a node was once a parent of a visible node, then its likelihood is at best known conditional on a prior model.
-    Since our prior model mutates over time, this is not definite knowledge of the likelihood.
-    % prior
-    \item \texttt{prior}: \textbf{float} --- the prior probability of this node being a prefix of the user's target string.
-    \item \texttt{break\_prior}: \textbf{float} --- the prior probability that not only is this node a prefix of the user's target string,
-    but also that it is the last character of a token in the tokenization of the user's target string.
-    \item \texttt{ancestor\_break\_priors}: \textbf{list of floats} --- the $i$-th ancestor break prior is the \texttt{break\_prior} of the $i$-th ancestor. This may be stale.
-    \item \texttt{unpushed\_break\_priors}: \textbf{list of optional floats} --- the $i$-th element is the fresh \texttt{break\_prior} if the $i$-th ancestor's \texttt{break\_prior} has changed since the last time we visited this node.
-    \item \texttt{token\_fans}: \textbf{list of floats} --- the $i$-th token fan is the prior probability of this node being a prefix of the target string 
-    conditional on its $i$-th parent being the last character of the token immediately preceding the token to which this character belongs.
-    \item \texttt{final\_token\_prior}: \textbf{float} --- the conditional prior probability of the final token if the ancestor
-    at depth \texttt{depth - final\_token\_length} is the last character of a token.
-    \item \texttt{unpushed\_llm\_results}: \textbf{list of optional bool} --- the $i$-th element is true if the $\texttt{llm\_result}$ corresponding
-    to the value of the $i$-th ancestor has changed since the last time we visited this node.
-    % likelihood
-    \item \texttt{likelihood}: \textbf{optional float} --- the accumulated likelihood of all signals conditional on this node being a prefix
-    of the user's target string, $\prod_{d \in D} P(d | S \leq X)$.
-    \item \texttt{unpushed\_likelihood}: \textbf{float} --- likelihood that has not been accumulated to descendant nodes.
-    \item \texttt{max\_descendant\_likelihood\_for\_token\_ancestor}: \textbf{list of floats} --- the $i$-th element is the 
-    maximum (valid) likelihood of any descendant of this node which could also have this node's $i$-th ancestor as a token ancestor. (See chapter \ref{chap:determine-most-likely-break-nodes}.)
-\end{itemize}
-
-
-
-\section{Valid Descent}
-The above data structure gives us the machinery to effectively defer the calculation of the posteriors of most nodes.
-
-When we visit a node $x$, we update the statistics of its children. If
-the node $x$ has no children because it has never been visited before,
-then we initialize its children.
-
-\begin{algorithm}[H]
-\caption{Initialize Children}
-\label{alg:initialize-children}
-\begin{algorithmic}[1]
-\Require Node $x$
-\State $x.\text{unpushed\_likelihood} \gets 1$
-\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None} \quad \forall i$
-\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None} \quad \forall i$
-\For{each character $c$ in the alphabet}
-    \State Create child node $y$ of $x$
-    % constant fields
-    \State $y.\text{letter} \gets c$
-    \State $y.\text{value} \gets x.\text{value} + c$
-    \State $y.\text{depth} \gets x.\text{depth} + 1$
-    \State Tokenize the string corresponding to $y$ into a sequence of tokens $\mathbf{T} = [\mathbf{t}_1, \dots, \mathbf{t}_k]$
-    \State $y.\text{final\_token} \gets \mathbf{t}_k$
-    \State $y.\text{final\_token\_length} \gets |\mathbf{t}_k|$
-    \State $y.\text{ancestor\_final\_tokens}[0] \gets y.\text{final\_token}$
-    \State $y.\text{ancestor\_final\_tokens}[i] \gets x.\text{ancestor\_final\_tokens}[i - 1] \quad \forall i \ge 1$
-    % mutable fields
-    \State $y.\text{ever\_parent\_of\_visible\_node} \gets \text{false}$
-    % prior
-    \State $y.\text{ancestor\_break\_priors}[i] \gets x.\text{ancestor\_break\_priors}[i-1] \quad \forall i \ge 1$
-    \State $y.\text{unpushed\_break\_priors}[i] \gets \text{None} \quad \forall i$
-    \State $y.\text{unpushed\_llm\_results}[i] \gets \text{None} \quad \forall i$
-    \State $y.\text{final\_token\_prior} \gets \texttt{llm\_results}[(y.\text{value}[:-y.\text{final\_token\_length}],\ y.\text{final\_token})]$
-    \State $\begin{aligned}[t]
-        y.\text{break\_prior} &\gets y.\text{ancestor\_break\_priors}[y.\text{final\_token\_length}] \\
-        &\quad * y.\text{final\_token\_prior}
-    \end{aligned}$
-    \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
-    \State $y.\text{token\_fans}[i] \gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \quad \forall i$
-    \State $y.\text{prior} \gets \sum_i y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
-    % likelihood
-    \State $y.\text{likelihood} \gets x.\text{likelihood}$
-    \If{\texttt{track\_mdlfta}}
-        \State $y.\text{possible\_token\_ancestors}[i] \gets \texttt{pta\_lut}[y.\text{ancestor\_final\_tokens}[i],\ y.\text{value}[-i:]] \quad \forall i$
-
-        \Comment{This correctly sets $y.\text{possible\_token\_ancestors}[0]$ to true.}
-        \State $\begin{aligned}[t]
-            &y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets \\
-            &\quad \begin{cases} 
-                x.\text{likelihood} & \text{if } y.\text{possible\_token\_ancestors}[i] \\ 
-                0 & \text{otherwise} 
-            \end{cases} \quad \forall i
-        \end{aligned}$
-        \State $TrackMDLFTA(y)$ Using algorithm \ref{alg:track-mdlfta}.
-    \EndIf
-    \State $y.\text{unpushed\_likelihood} \gets 1$
-    % posterior
-    \State $y.\text{posterior\_Z} \gets y.\text{prior} * y.\text{likelihood}$
-\EndFor
-\State $x.\text{likelihood} \gets \text{None}$
-\end{algorithmic}
-\end{algorithm}
-
-When we visit a node, we push the unpushed likelihood and the unpushed break priors to its children.
-Let $x$ be our current node, and $y$ be a child of $x$.
-
-\begin{algorithm}[H]
-\caption{Visit Node}
-\label{alg:visit-node}
-\begin{algorithmic}[1]
-\Require Node $x$
-\For{each child $y$ of $x$}
-    % save initial values
-    \State $\texttt{old\_prior} \gets y.\text{prior}$
-
-    \If{$y.\text{ever\_parent\_of\_visible\_node}$ is \text{false}}
-        \State $\texttt{old\_likelihood} \gets y.\text{likelihood}$
-        \State $y.\text{likelihood} \mathrel{*=} x.\text{unpushed\_likelihood}$
-    \EndIf
-    %
-    \State $y.\text{unpushed\_likelihood} \mathrel{*=} x.\text{unpushed\_likelihood}$
-    \State $y.\text{unpushed\_llm\_results}[i] \mathrel{\lor=} x.\text{unpushed\_llm\_results}[i] \quad \forall i$
-    \State $y.\text{unpushed\_break\_priors}[i] \mathrel{\lor=} x.\text{unpushed\_break\_priors}[i] \quad \forall i$
-    % refresh token fans
-    \State $\begin{aligned}[t]
-        y.\text{token\_fans}[i] &\gets \texttt{llm\_fans}[(y.\text{value}[:-i],\ y.\text{value}[-i:])] \\
-        &\quad \forall i \text{ s.t. } x.\text{unpushed\_llm\_results}[i] \neq \text{None}
-    \end{aligned}$
-    % refresh prior
-    \State $\texttt{prior\_changed} \gets \left(\exists~i:~x.\text{unpushed\_break\_priors}[i] \neq \text{None}\right) \vee \left(\exists~i:~x.\text{unpushed\_llm\_results}[i] \neq \text{None}\right)$
-    \If{$\texttt{prior\_changed}$}
-        \State $y.\text{prior} \gets \sum_i y.\text{ancestor\_break\_priors}[i] * y.\text{token\_fans}[i]$
-    \EndIf
-    % refresh final_token_prior
-    \If{$x.\text{unpushed\_llm\_results}[x.\text{final\_token\_length}]$ is not \text{None}}
-        \State $y.\text{final\_token\_prior} \gets \text{LLM\_Results}[y.\text{value}[:-y.\text{final\_token\_length}]][y.\text{final\_token}]$
-        \State $y.\text{break\_prior} \gets y.\text{ancestor\_break\_priors}[y.\text{final\_token\_length}] * y.\text{final\_token\_prior}$
-        \State $y.\text{ancestor\_break\_priors}[0] \gets y.\text{break\_prior}$
-        \State $y.\text{unpushed\_break\_priors}[0] \gets y.\text{break\_prior}$
-    \EndIf
-    % TODO: think hard about how to properly set postZ
-    \If{$y.\text{ever\_parent\_of\_visible\_node}$ is \text{false}}
-        \State $y.\text{posterior\_Z} \gets y.\text{prior} * y.\text{likelihood}$
-    \Else
-        \State $\texttt{prior\_correction} \gets \texttt{y.\text{prior}} / \texttt{old\_prior}$
-        \State $\texttt{likelihood\_correction} \gets x.\text{unpushed\_likelihood}$
-        \State $y.\text{posterior\_Z} \mathrel{*=} \texttt{prior\_correction} * \texttt{likelihood\_correction}$
-    \EndIf
-    % TODO: think about when max descendant likelihoods is actually handled.
-    \If{\texttt{track\_mdlfta} is true and $y.\text{ever\_parent\_of\_visible\_node}$ is false}
-        \State $\begin{aligned}[t]
-            &y.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \gets \\
-            &\quad \begin{cases} 
-                y.\text{likelihood} & \text{if } y.\text{possible\_token\_ancestors}[i] \\ 
-                0 & \text{otherwise} 
-            \end{cases} \quad \forall i
-        \end{aligned}$
-        \State $TrackMDLFTA(y)$ Using algorithm \ref{alg:track-mdlfta}.
-    \EndIf
-\EndFor
-\State $x.\text{unpushed\_likelihood} \gets 1$
-\State $x.\text{unpushed\_break\_priors}[i] \gets \text{None} \quad \forall i$
-\State $x.\text{unpushed\_llm\_results}[i] \gets \text{None} \quad \forall i$
-\end{algorithmic}
-\end{algorithm}
-
-\begin{algorithm}[H]
-\caption{Track Token Descendant Max Likelihood}
-\label{alg:track-mdlfta}
-\begin{algorithmic}[1]
-\Require Node $x$
-\Require $x.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i] \text{ is already correct for all } i$
-\For{each $i < \texttt{max\_token\_length}$}
-    \State $\texttt{new\_mdlfta} \gets \texttt{x}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[i]$
-    \State $\texttt{node} \gets x$
-    \State $\texttt{dist\_to\_last\_token} \gets i$
-    \While{true}
-        \State $\texttt{old\_mdlfta} \gets \texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}]$
-        \If{$\texttt{old\_mdlfta} < \texttt{new\_mdlfta}$}
-            \State $\texttt{node}.\text{max\_descendant\_likelihood\_for\_token\_ancestor}[\texttt{dist\_to\_last\_token}] \gets \texttt{new\_mdlfta}$
-        \Else
-            \State break
-            \label{alg:track-mdlfta-break}
-        \EndIf
-        \If{$\texttt{dist\_to\_last\_token} = 0$}
-            \State $\texttt{dist\_to\_last\_token} \gets \texttt{node}.\text{final\_token\_length}$
-        \EndIf
-        \State $\texttt{dist\_to\_last\_token} \mathrel{-=} 1$
-        \State $\texttt{node} \gets \texttt{node}.\text{parent}$
-        \If{$\texttt{node}$ is \text{None}}
-            \State break
-        \EndIf
-    \EndWhile
-\EndFor
-\end{algorithmic}
-\end{algorithm}
-
-\begin{algorithm}
-\caption{Valid Descent}
-\label{alg:valid-descent}
-\begin{algorithmic}[1]
-\Require Bayesian Trie $B$ and node $x$ in $B$.
-\If{$x$ is a leaf in $B$}
-    \State InitializeChildren($x$) Using algorithm \ref{alg:initialize-children}.
-\Else
-    \State VisitNode($x$) Using algorithm \ref{alg:visit-node}.
-\EndIf
-\end{algorithmic}
-\end{algorithm}
-
-\begin{definition}
-    We define the truncation of a token sequence, $\lfloor \mathbf{B} \rfloor_d$,
-    to be the longest token sequence prefix of $\mathbf{B}$, which has fewer than $d$ characters,
-    i.e., it is the longest $\mathbf{C}$ such that $|Literalize(\mathbf{C})| < d$.
-\end{definition}
-
-\begin{definition}
-    For a given character sequence, $S$, and
-    a given token sequence, $\mathbf{B}$,
-    (which are compatible with each other in the sense that $\mathbf{B} \leq S$),
-    we define the ``Chain Maximum Likelihood'' with respect to depth $d$,
-    to be the maximum likelihood of any descendant which is compatible
-    with both the character sequence and the token sequence up to depth $d$.
-    $$
-    ChainMaxLikelihood(S, \mathbf{B}, d) = \max_{
-        \substack{
-            Q \geq S[:d] \\
-            Tokenize(Q) \geq \lfloor \mathbf{B} \rfloor_d
-        }
-    } P(D \mid Q)
-    $$
-\end{definition}
-
-\begin{theorem}
-\label{thm:chain-max-likelihood-decreasing}
-    For a given character sequence, $S$, and
-    a given token sequence, $\mathbf{B}$,
-    the Chain Maximum Likelihood is a decreasing function of the depth.
-\end{theorem}
-
-\begin{proof}
-    The two conditions become more restrictive, i.e.,
-    \begin{align*}
-        Q \geq S[:d+1] &\implies Q \geq S[:d] \\
-        Tokenize(Q) \geq \lfloor \mathbf{B} \rfloor_{d+1} &\implies Tokenize(Q) \geq \lfloor \mathbf{B} \rfloor_d
-    \end{align*}
-\end{proof}
-
-Theorem \ref{thm:chain-max-likelihood-decreasing}
-is necessary to prove that breaking at line \ref{alg:track-mdlfta-break} in algorithm \ref{alg:track-mdlfta} is correct.
-
-\section{Likelihood Update}
+Likelihood update:
 
 \begin{algorithm}[H]
 \caption{Complete Visible Trie}
@@ -2081,7 +2070,7 @@ we can afford to use a lookup table, since the server has to keep a language mod
 
 
 % !TEX root = ../math.tex
-\section{Prior Update}
+Prior update:
 \label{sec:prior-update}
 
 After receiving an ``LLM Result'' we must update the trie to reflect this refinement of
