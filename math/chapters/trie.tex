@@ -717,6 +717,16 @@ represent the set of all properly terminated token sequences.
     A token sequence is a sequence of tokens.
 \end{definition}
 
+\begin{definition}[Canonical Token Sequence]
+    A token sequence $\mathbf{a}$ is canonical if and only if re-tokenizing its
+    literalization yields the same token sequence:
+    \[
+    T(T^{-1}(\mathbf{a})) = \mathbf{a}.
+    \]
+\end{definition}
+
+We will use the symbol $\mathbf{C}$ to represent the set of all canonical token sequences.
+
 \begin{definition}[Literalization Function]
     The literalization function, $T^{-1}$, maps a token sequence to a string, by concatenating its tokens.
     I.e.,
@@ -736,54 +746,64 @@ represent the set of all properly terminated token sequences.
     $$
     T: H \to \mathbf{H}
     $$
+    so in particular the final stop character of a properly terminated string
+    tokenizes as the stop token.
 \end{definition}
 
-
-\begin{definition}[Token to Character Index Function]
-    The token to character index function is a utility function
-    mapping the index of a token within its token sequence
-    to the index of the first character of that token in the corresponding string.
-    $$
-    TokenToCharacterIndex(\mathbf{a}, i) = \sum_{j < i} |\mathbf{a}[j]|
-    $$
-\end{definition}
-
-\begin{proposition}[Monotonicity of Token to Character Index Function]
-    The token to character index function is strictly monotonic.
+\begin{proposition}
+    For every string $x$, the token sequence $T(x)$ is canonical.
 \end{proposition}
 \begin{proof}
-    This follows from the requirement that tokens are non-empty.
+    By definition,
+    $$
+    T(T^{-1}(T(x))) = T(x).
+    $$
 \end{proof}
 
-\begin{definition}[Character to Token Index Function]
-    The character to token index function, $CharToTokenIndex_T(x, j)$, is a utility function derived from the tokenization function, $T$,
-    mapping the index of a character in the string to the index of the token that contains that character.
-    I.e. it is the greatest value of $i$ that satisfies,
-    $$
-    TokenToCharacterIndex(T(x), i) \leq j
-    $$
+\begin{definition}[String versus Token Sequence Comparison]
+    Since literalization is a well defined function, we compare token sequences and strings,
+    by first literalizing the token sequence to a string. We write this as $\mathbf{a} \leq x$,
+    to mean, $T^{-1}(\mathbf{a}) \leq x$. It does \textit{not} mean that $\mathbf{a} \leq T(x)$.
 \end{definition}
 
-\begin{definition}[Break Point]
-    We refer to an index in a string as a ``break point'' if it is the first character of a token
-    with respect to our tokenization function. So $i$ is a break point for a string $x$ and
-    a tokenization function $T$ if there exists some $j$ such that $i = TokenToCharacterIndex(T(x), j)$.
+\begin{definition}[Token Sequence versus Complete Prefix Code Comparison]
+    We also compare token sequences and complete prefix codes by first literalizing the token
+    sequence to a string. We write $\mathbf{a} \leq C$ to mean $T^{-1}(\mathbf{a}) \leq C$,
+    and $\mathbf{a} > C$ to mean $T^{-1}(\mathbf{a}) > C$.
 \end{definition}
 
 \begin{definition}[Boundary Sufficiency]
-    The boundary sufficiency property of a tokenization function states that
-    if $i_1, i_2$ are break points in a string $x$, then the tokenization within
-    the interval $[i_1, i_2)$ does not depend on characters outside this interval.
-    Formally, a tokenization function $T$ has boundary sufficiency if for all strings $x$
-    and break points $i_1 \le i_2$ of $x$, letting
-    $j_1 = CharToTokenIndex_T(x, i_1)$ and $j_2 = CharToTokenIndex_T(x, i_2)$, we have
+    The boundary sufficiency property of a tokenization function states that every contiguous
+    subsequence of a canonical token sequence remains canonical when retokenized in isolation.
+    Formally, a tokenization function $T$ has boundary sufficiency if for every canonical token
+    sequence $\mathbf{a} \in \mathbf{C}$ and every $0 \leq i \leq j \leq |\mathbf{a}|$,
     $$
-    T(x[i_1:i_2]) = T(x)[j_1:j_2]
+    T(T^{-1}(\mathbf{a}[i:j])) = \mathbf{a}[i:j].
     $$
 \end{definition}
 
 Henceforth, we will always assume that our tokenization function has boundary sufficiency.
 This is because all byte-pair encoders have this property.
+
+\begin{proposition}[Token-sequence prefixes of a tokenization are canonical]
+    \label{prop:tokenization-prefixes-are-canonical}
+    If $\mathbf{b} \leq T(x)$, then $\mathbf{b} \in \mathbf{C}$.
+\end{proposition}
+\begin{proof}
+    Since $T(x) \in \mathbf{C}$ and $\mathbf{b} \leq T(x)$, there exists $j \leq |T(x)|$ such that
+    $\mathbf{b} = T(x)[:j]$. Applying boundary sufficiency to the canonical token sequence $T(x)$
+    with indices $0$ and $j$ gives
+    $$
+    T(T^{-1}(\mathbf{b}))
+    =
+    T(T^{-1}(T(x)[:j]))
+    =
+    T(x)[:j]
+    =
+    \mathbf{b},
+    $$
+    so $\mathbf{b} \in \mathbf{C}$.
+\end{proof}
 
 We can now formalize a token-based language model.
 
@@ -791,40 +811,132 @@ We can now formalize a token-based language model.
     Our conditional token prior function tells us the conditional probability of a token
     given a token sequence. It is a mapping
     $$
-    \mathbf{P} : \mathbf{\Lambda}^* \times \mathbf{\Lambda} \to \mathbb{R}^+
+    \mathbf{Q} : \mathbf{\Lambda}^* \times \mathbf{\Lambda} \to \mathbb{R}^+
     $$
-    written as $\mathbf{P}(\mathbf{t} \mid \mathbf{a})$,
+    written as $\mathbf{Q}(\mathbf{t} \mid \mathbf{a})$,
     where,
     $$
-    \forall \mathbf{a} \in \mathbf{\Lambda}^*, \sum_{\mathbf{t} \in \mathbf{\Lambda}} \mathbf{P}(\mathbf{t} \mid \mathbf{a}) = 1
+    \forall \mathbf{a} \in \mathbf{\Lambda}^*, \sum_{\mathbf{t} \in \mathbf{\Lambda}} \mathbf{Q}(\mathbf{t} \mid \mathbf{a}) = 1.
     $$
-    We also require that $\mathbf{P}$ only assigns non-zero probability to canonical tokenizations. 
-    That is, if appending a token $\mathbf{t}$ to a sequence $\mathbf{a}$ produces a sequence that is not the canonical tokenization of its literalization, the probability of that token must be zero:
-    $$
-    \mathbf{P}(\mathbf{t} \mid \mathbf{a}) = 0 \quad \text{if } T(T^{-1}(\mathbf{a}+\mathbf{t})) \neq \mathbf{a}+\mathbf{t}
-    $$
+    We also require canonical support:
+    \[
+    \mathbf{Q}(\mathbf{t} \mid \mathbf{a}) = 0
+    \qquad
+    \text{whenever } \mathbf{a}+\mathbf{t} \text{ is not canonical.}
+    \]
 \end{definition}
 
 \begin{definition}[Conditional Token Prior Function Sequence]
     A conditional token prior function sequence is a sequence of conditional token prior functions,
-    $ \{ \mathbf{P}_n \} $.
+    $ \{ \mathbf{Q}_n \} $.
 \end{definition}
 
-\begin{definition}[Token Branch Prior]
-    We refer to the prior probability of beginning with a given sequence of tokens as the,
-    ``token branch prior'', denoted $\mathbf{P}^{br}_n(\mathbf{a})$. It is defined as,
-    $$
-    \mathbf{P}^{br}_n(\mathbf{a}) = \prod_{i < |\mathbf{a}|} \mathbf{P}_n(\mathbf{a}[i] \; | \; \mathbf{a}[:i])
-    $$
-    Once again, we pedantically require calling this a ``branch prior'', to remind ourselves
-    that priors stricly only apply to properly terminated strings. Note however, that in the case
-    that $\mathbf{a}$ is properly terminated this is the true prior probability of the string (see below).
+\begin{definition}[Token Prior Function]
+    A token prior function is a mapping from properly terminated token sequences to
+    non-negative real numbers,
+    \[
+    \mathbf{P}_m : \mathbf{H} \to \mathbb{R}^+,
+    \]
+    satisfying
+    \[
+    \sum_{\mathbf{h} \in \mathbf{H}} \mathbf{P}_m(\mathbf{h}) = 1.
+    \]
 \end{definition}
+
+\begin{definition}[Token Branch Prior Function]
+\label{def:token-branch-prior-function}
+    The token branch prior of a token sequence $\mathbf{a}$ is
+    \[
+    \mathbf{P}^{br}_m(\mathbf{a})
+    :=
+    \sum_{\substack{\mathbf{h} \in \mathbf{H} \\ \mathbf{h} \geq \mathbf{a}}}
+    \mathbf{P}_m(\mathbf{h}).
+    \]
+\end{definition}
+
+\begin{definition}[Induced Token Prior]
+\label{def:induced-token-prior}
+    Given a conditional token prior function $\mathbf{Q}_m$, we define the induced token
+    prior on properly terminated token sequences by
+    \[
+    \mathbf{P}_m(\mathbf{h})
+    :=
+    \prod_{i < |\mathbf{h}|} \mathbf{Q}_m(\mathbf{h}[i] \mid \mathbf{h}[:i]).
+    \]
+\end{definition}
+
+\begin{lemma}[Token Branch Prior Product Formula]
+\label{lemma:token-branch-prior-product}
+    For every token sequence $\mathbf{a}$,
+    \[
+    \mathbf{P}^{br}_m(\mathbf{a})
+    =
+    \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i]).
+    \]
+\end{lemma}
+\begin{proof}
+    We first consider the case that $\mathbf{a}$ is canonical.
+    We split into two subcases.
+
+    If $\mathbf{a}\in\mathbf{H}$, then $\mathbf{a}$ is already properly terminated.
+    No properly terminated token sequence can be a strict extension of $\mathbf{a}$,
+    since that would place the stop token before the final index. Therefore
+    $\mathbf{a}$ is the unique properly terminated descendant of itself, so
+    \[
+    \mathbf{P}^{br}_m(\mathbf{a}) = \mathbf{P}_m(\mathbf{a}).
+    \]
+    By definition~\ref{def:induced-token-prior}, this is exactly
+    \[
+    \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i]).
+    \]
+
+    Now suppose $\mathbf{a}$ is canonical but not properly terminated.
+    Every properly terminated token sequence $\mathbf{h} \geq \mathbf{a}$ can be written
+    uniquely as $\mathbf{h}=\mathbf{a}+\mathbf{s}$ where $\mathbf{s}\in\mathbf{H}$.
+    Therefore,
+    \begin{align*}
+    \mathbf{P}^{br}_m(\mathbf{a})
+    &= \sum_{\substack{\mathbf{h} \in \mathbf{H} \\ \mathbf{h} \geq \mathbf{a}}} \mathbf{P}_m(\mathbf{h}) \\
+    &= \sum_{\mathbf{s} \in \mathbf{H}} \mathbf{P}_m(\mathbf{a}+\mathbf{s}) \\
+    &= \sum_{\mathbf{s} \in \mathbf{H}}
+    \left(
+        \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i])
+    \right)
+    \left(
+        \prod_{i < |\mathbf{s}|} \mathbf{Q}_m(\mathbf{s}[i] \mid \mathbf{a}+\mathbf{s}[:i])
+    \right) \\
+    &=
+    \left(
+        \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i])
+    \right)
+    \sum_{\mathbf{s} \in \mathbf{H}}
+    \prod_{i < |\mathbf{s}|} \mathbf{Q}_m(\mathbf{s}[i] \mid \mathbf{a}+\mathbf{s}[:i]) \\
+    &=
+    \prod_{i < |\mathbf{a}|} \mathbf{Q}_m(\mathbf{a}[i] \mid \mathbf{a}[:i]),
+    \end{align*}
+    where the final step is assumption continuation normalization (lemma todo).
+
+    Now suppose $\mathbf{a}$ is not canonical. Let $j$ be the least index such that
+    $\mathbf{a}[:j+1]$ is not canonical. Then $\mathbf{a}[:j]$ is canonical, and by
+    canonical support,
+    \[
+    \mathbf{Q}_m(\mathbf{a}[j] \mid \mathbf{a}[:j]) = 0.
+    \]
+    So the product on the right-hand side is $0$.
+
+    Also, every properly terminated descendant $\mathbf{h} \geq \mathbf{a}$ has the same
+    non-canonical prefix $\mathbf{a}[:j+1]$, so its induced token prior contains the same
+    zero factor. Hence $\mathbf{P}_m(\mathbf{h})=0$ for every such descendant, and therefore
+    \[
+    \mathbf{P}^{br}_m(\mathbf{a}) = 0.
+    \]
+    Thus the identity holds in both cases.
+\end{proof}
 
 Henceforth we will study prior function sequences that are derived from token
 prior functions by the relation,
 $$
-P_n(h) = \mathbf{P}^{br}_n(T(h))
+P_n(h) = \mathbf{P}_n(T(h)).
 $$
 
 We can now state our first result
@@ -838,7 +950,7 @@ We can now state our first result
     \begin{cases}
         1, & a=\epsilon,\\[4pt]
         \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<a}\mathbf{P}^{br}(\mathbf{b})
-        \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{P}(\mathbf{t}\mid\mathbf{b}), & a\neq\epsilon.
+        \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{Q}(\mathbf{t}\mid\mathbf{b}), & a\neq\epsilon.
     \end{cases}
     $$
 \end{theorem}
@@ -874,19 +986,23 @@ We can now state our first result
     P(h).
     $$
 
-    The innermost sum is exactly the prior probability of beginning with
-    $\mathbf{b}+\mathbf{t}$, namely
-    $\mathbf{P}^{br}(\mathbf{b}+\mathbf{t})$.
-    By the token branch prior definition,
+    By the defining relation $P_m(h)=\mathbf{P}_m(T(h))$, the innermost sum is
+    \[
+    \sum_{\substack{\mathbf{h}\in\mathbf{H}\\ \mathbf{h}\geq \mathbf{b}+\mathbf{t}}}
+    \mathbf{P}_m(\mathbf{h}),
+    \]
+    which is exactly $\mathbf{P}^{br}(\mathbf{b}+\mathbf{t})$ by
+    definition~\ref{def:token-branch-prior-function}. By
+    lemma~\ref{lemma:token-branch-prior-product},
     $$
     \mathbf{P}^{br}(\mathbf{b}+\mathbf{t})
-    =\mathbf{P}^{br}(\mathbf{b})\,\mathbf{P}(\mathbf{t}\mid\mathbf{b}).
+    =\mathbf{P}^{br}(\mathbf{b})\,\mathbf{Q}(\mathbf{t}\mid\mathbf{b}).
     $$
     Substituting yields
     $$
     P^{br}(a)=
     \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<a}\mathbf{P}^{br}(\mathbf{b})
-    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{P}(\mathbf{t}\mid\mathbf{b}),
+    \sum_{\mathbf{t}\in\mathbf{\Lambda},\,a\le T^{-1}(\mathbf{b+t})}\mathbf{Q}(\mathbf{t}\mid\mathbf{b}),
     $$
     as claimed.
 \end{proof}
@@ -966,9 +1082,98 @@ We now formalize a finite dynamic program that does exactly this.
     \Phi_m(\mathbf{b}, x)
     :=
     \sum_{\mathbf{t}\in\mathbf{\Lambda},\,x\le T^{-1}(\mathbf{b+t})}
-    \mathbf{P}_m(\mathbf{t}\mid\mathbf{b}).
+    \mathbf{Q}_m(\mathbf{t}\mid\mathbf{b}).
     \]
 \end{definition}
+
+\begin{definition}[String-Prefix Context]
+\label{def:string-prefix-context}
+    For a string $x$ and a character index $i \leq |x|$, we define the
+    string-prefix context
+    \[
+    \kappa_x(i) := T(x[:i]).
+    \]
+\end{definition}
+
+\textit{Explanatory Note: } The sum for a branch prior runs over \emph{string}
+ancestors of $x$, not merely over token ancestors of $x$ in its own tokenization.
+For each strict string prefix $x[:i]$, we re-tokenize that shorter string to obtain
+the context $\kappa_x(i)$. In general, $\kappa_x(i)$ need not be a prefix of $T(x)$.
+This is exactly why algorithm~\ref{alg:compute-branch-prior} must sum over all
+strict string ancestors.
+
+\begin{lemma}[Token Prefix Retokenization]
+\label{lemma:token-prefix-retokenization}
+    For every string $x$ and every $j \leq |T(x)|$,
+    \[
+    T(T^{-1}(T(x)[:j])) = T(x)[:j].
+    \]
+\end{lemma}
+\begin{proof}
+    Since $T(x) \in \mathbf{C}$, the claim follows immediately from boundary sufficiency
+    applied to the canonical token sequence $T(x)$ with indices $0$ and $j$.
+\end{proof}
+
+\begin{lemma}[Noncanonical Token Branch Priors Vanish]
+\label{lemma:noncanonical-token-branch-prior-vanishes}
+    If a token sequence $\mathbf{a}$ is not canonical, then
+    \[
+    \mathbf{P}^{br}_m(\mathbf{a}) = 0.
+    \]
+\end{lemma}
+\begin{proof}
+    This is the non-canonical case of lemma~\ref{lemma:token-branch-prior-product}.
+\end{proof}
+
+\begin{theorem}[String-Ancestor Reindexing]
+\label{theorem:string-ancestor-reindexing}
+    For every non-empty string $x$,
+    \[
+    P^{br}_m(x)
+    =
+    \sum_{i=0}^{|x|-1}
+    \mathbf{P}^{br}_m(\kappa_x(i)) \, \Phi_m(\kappa_x(i), x).
+    \]
+\end{theorem}
+\begin{proof}
+    By theorem~\ref{theorem:token-prior-path-summation},
+    \[
+    P^{br}_m(x)
+    =
+    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<x}
+    \mathbf{P}^{br}_m(\mathbf{b}) \, \Phi_m(\mathbf{b},x).
+    \]
+
+    We now reindex this sum by the literal prefix
+    \[
+    s := T^{-1}(\mathbf{b}).
+    \]
+    If $\mathbf{b}$ is canonical, then
+    \[
+    \mathbf{b} = T(T^{-1}(\mathbf{b})) = T(s),
+    \]
+    so $\mathbf{b} = \kappa_x(|s|)$. Since $s < x$, this index satisfies
+    $|s| < |x|$.
+
+    If $\mathbf{b}$ is not canonical, then lemma~\ref{lemma:noncanonical-token-branch-prior-vanishes}
+    shows that
+    \[
+    \mathbf{P}^{br}_m(\mathbf{b}) = 0,
+    \]
+    so the corresponding summand vanishes.
+
+    Thus only canonical contexts contribute, and these are in one-to-one
+    correspondence with the strict string prefixes $x[:i]$ for $0 \leq i < |x|$,
+    via $\mathbf{b} = \kappa_x(i) = T(x[:i])$. Substituting this reindexing into
+    the path-summation formula yields
+    \[
+    P^{br}_m(x)
+    =
+    \sum_{i=0}^{|x|-1}
+    \mathbf{P}^{br}_m(\kappa_x(i)) \, \Phi_m(\kappa_x(i), x),
+    \]
+    as claimed.
+\end{proof}
 
 We provide two short algorithms to compute the priors.
 The essential thing is to know the ``token branch prior'', written $x.\mathbf{P}$,
@@ -991,7 +1196,7 @@ This makes the presentation simple.
 \If{$x = \epsilon$}
     \State $x.\mathbf{P} \gets 1$
 \Else
-    \State $x.\mathbf{P} \gets (T^{-1}(T(x)[:-1])).\mathbf{P} * \mathbf{P}_m(T(x)[-1] \mid T(x)[:-1])$
+    \State $x.\mathbf{P} \gets (T^{-1}(T(x)[:-1])).\mathbf{P} * \mathbf{Q}_m(T(x)[-1] \mid T(x)[:-1])$
 \EndIf
 \State $x.m^\mathbf{P} \gets m$
 \end{algorithmic}
@@ -1003,7 +1208,7 @@ This makes the presentation simple.
 \begin{algorithmic}[1]
 \Require Bayesian Trie $B$, Node $x$, New Time $m$
 \Require $(x[:i]).m^\mathbf{P} = m \quad \forall i < |x|$ \Comment{All string ancestors of $x$ already have calculated the token branch prior at the new time.}
-\State $x.P \gets \sum_{i=0}^{|x|-1} (x[:i]).\mathbf{P} * \Phi_m(T(x[:i]), x)$  \Comment{Theorem \ref{theorem:token-prior-path-summation}.}
+\State $x.P \gets \sum_{i=0}^{|x|-1} (x[:i]).\mathbf{P} * \Phi_m(\kappa_x(i), x)$  \Comment{Theorem \ref{theorem:string-ancestor-reindexing}.}
 \State $x.m^P \gets m$
 \end{algorithmic}
 \end{algorithm}
@@ -1020,18 +1225,23 @@ We now show the correctness of these two algorithms.
     \]
     There are two cases.
 
+
     If $x=\epsilon$, the algorithm sets $x.\mathbf{P}\gets 1$.
-    Also $T(\epsilon)=\epsilon$, so by Definition~\ref{def:token-branch-prior},
+    Also $T(\epsilon)=\epsilon$, so it suffices to show that
     \[
-    \mathbf{P}^{br}_m(T(x))
-    =
+    \mathbf{P}^{br}_m(\epsilon)=1.
+    \]
+    By definition~\ref{def:token-branch-prior-function},
+    \[
     \mathbf{P}^{br}_m(\epsilon)
     =
-    \prod_{i<0}\mathbf{P}_m(\epsilon[i]\mid \epsilon[:i])
-    =
-    1.
+    \sum_{\mathbf{h}\in\mathbf{H}} \mathbf{P}_m(\mathbf{h}),
     \]
-    Hence the stored value is correct.
+    which is equal to $1$ because $\mathbf{P}_m$ is a token prior function. Hence
+    \[
+    \mathbf{P}^{br}_m(T(x))=\mathbf{P}^{br}_m(\epsilon)=1=x.\mathbf{P},
+    \]
+    so the stored value is correct.
 
     Now suppose $x\neq \epsilon$.
     By the precondition, the string node corresponding to the token ancestor, $T^{-1}(T(x)[:-1])$, already has time $m$,
@@ -1039,7 +1249,10 @@ We now show the correctness of these two algorithms.
     \[
     (T^{-1}(T(x)[:-1])).\mathbf{P}=\mathbf{P}^{br}_m(T(T^{-1}(T(x)[:-1]))).
     \]
-    By boundary sufficiency, re-tokenizing this literalized prefix yields the same token sequence: $T(T^{-1}(T(x)[:-1])) = T(x)[:-1]$.
+    By lemma~\ref{lemma:token-prefix-retokenization},
+    \[
+    T(T^{-1}(T(x)[:-1])) = T(x)[:-1].
+    \]
     Thus,
     \[
     (T^{-1}(T(x)[:-1])).\mathbf{P}=\mathbf{P}^{br}_m(T(x)[:-1]).
@@ -1048,21 +1261,19 @@ We now show the correctness of these two algorithms.
     \[
     x.\mathbf{P}
     \gets
-    (T^{-1}(T(x)[:-1])).\mathbf{P}\cdot \mathbf{P}_m(T(x)[-1]\mid T(x)[:-1]).
+    (T^{-1}(T(x)[:-1])).\mathbf{P}\cdot \mathbf{Q}_m(T(x)[-1]\mid T(x)[:-1]).
     \]
     Substituting the known ancestor value gives
     \[
     x.\mathbf{P}
     =
-    \mathbf{P}^{br}_m(T(x)[:-1])\cdot \mathbf{P}_m(T(x)[-1]\mid T(x)[:-1]).
+    \mathbf{P}^{br}_m(T(x)[:-1])\cdot \mathbf{Q}_m(T(x)[-1]\mid T(x)[:-1]).
     \]
-    But by Definition~\ref{def:token-branch-prior},
-    appending the final token multiplies the token branch prior by exactly this
-    conditional factor, so
+    By lemma~\ref{lemma:token-branch-prior-product},
     \[
     \mathbf{P}^{br}_m(T(x))
     =
-    \mathbf{P}^{br}_m(T(x)[:-1])\cdot \mathbf{P}_m(T(x)[-1]\mid T(x)[:-1]).
+    \mathbf{P}^{br}_m(T(x)[:-1])\cdot \mathbf{Q}_m(T(x)[-1]\mid T(x)[:-1]).
     \]
     Therefore $x.\mathbf{P}=\mathbf{P}^{br}_m(T(x))$, as required.
 
@@ -1078,35 +1289,35 @@ We now show the correctness of these two algorithms.
     \[
     x.P = P^{br}_m(x).
     \]
-    By the precondition, every string ancestor $x[:i]$ has already had its
-    token branch prior computed at time $m$.
-    Equivalently, for every string prefix of $x$, the stored value
-    $(x[:i]).\mathbf{P}$ is equal to the token branch prior of its tokenization:
+    By the precondition, every strict string ancestor $x[:i]$ has already had its
+    token branch prior computed at time $m$. Thus for every $i < |x|$,
     \[
     (x[:i]).\mathbf{P}=\mathbf{P}^{br}_m(T(x[:i])).
     \]
 
-    Now apply theorem~\ref{theorem:token-prior-path-summation} at prior time $m$.
-    It states that the branch prior of $x$ is the sum, over all token contexts
-    whose literalization is a strict prefix of $x$, of the token branch prior of
-    that context times the corresponding token fan:
+    By theorem~\ref{theorem:string-ancestor-reindexing},
     \[
     P^{br}_m(x)
     =
-    \sum_{\mathbf{b}\in\mathbf{\Lambda}^*,\,T^{-1}(\mathbf{b})<x}
-    \mathbf{P}^{br}_m(\mathbf{b})\,\Phi_m(\mathbf{b},x).
+    \sum_{i=0}^{|x|-1}
+    \mathbf{P}^{br}_m(\kappa_x(i)) \, \Phi_m(\kappa_x(i),x).
     \]
-    Because we only assign non-zero probability to canonical tokenizations, the relevant contexts $\mathbf{b}$ are exactly the tokenizations of the
-    string prefixes of $x$. That is, there is exactly one such valid $\mathbf{b}$ for each strict string prefix $x[:i]$, namely $\mathbf{b} = T(x[:i])$.
-    Replacing each
-    $\mathbf{P}^{br}_m(T(x[:i]))$ by the already-computed stored value
-    $(x[:i]).\mathbf{P}$ yields
+    Using definition~\ref{def:string-prefix-context}, this becomes
     \[
     P^{br}_m(x)
     =
-    \sum_{i=0}^{|x|-1} (x[:i]).\mathbf{P}\,\Phi_m(T(x[:i]),x).
+    \sum_{i=0}^{|x|-1}
+    \mathbf{P}^{br}_m(T(x[:i])) \, \Phi_m(T(x[:i]),x).
     \]
-    But this is exactly the value assigned to $x.P$ by the algorithm.
+    Replacing each $\mathbf{P}^{br}_m(T(x[:i]))$ by the already-computed stored
+    value $(x[:i]).\mathbf{P}$ gives
+    \[
+    P^{br}_m(x)
+    =
+    \sum_{i=0}^{|x|-1}
+    (x[:i]).\mathbf{P}\,\Phi_m(\kappa_x(i),x).
+    \]
+    This is exactly the value assigned to $x.P$ by the algorithm.
     Therefore the algorithm correctly computes the branch prior of $x$.
 
     Finally, the assignment $x.m^P\gets m$ records the time at which this branch
@@ -1136,8 +1347,409 @@ The quantity is not needed to compute posteriors and is orthogonal to the
 preceding discussion. However, it will be helpful later for determining
 which token sequences should be evaluated by the language model.
 
+The algorithm somewhat resembles the core posterior calculation algorithm, in that we
+begin by fixing the computation at the frontier and then fix it within the frontier with
+a kind of up-propagation.
+
+\begin{definition}[Maximum Likelihood for Double Path]
+\label{def:maximum-likelihood-for-double-path}
+    The so called ``maximum likelihood for double path'' is the maximum likelihood of any descendant, $h$, 
+    for which the canonical tokenization is an extension of $\mathbf{a}$ and makes $\mathbf{a}$ the
+    token truncation of $x$. If there is no such descendant, this maximum is taken to be $0$.
+    $$
+    R(\mathbf{a}, x) =
+    \max_{\substack{
+        h \in H \\
+        x \leq h \\
+        \mathbf{a} \leq T(h) \\
+        \btrunc{x}{T(h)} = \mathbf{a}
+    }}
+    L(h)
+    $$
+\end{definition}
+
+In the special case where the string corresponds to the token sequence, this reduces to,
+\begin{lemma}[Identical Token and String Prefixes]
+    If $\mathbf{a}$ is canonical, i.e., $a = T^{-1}(\mathbf{a})$, then
+    $$
+    R(\mathbf{a}, a) = \max_{\substack{h \in H \\ \mathbf{a} \leq T(h)}} L(h)
+    $$
+\end{lemma}
+\begin{proof}
+    If $\mathbf{a}$ is properly terminated then $h = a$ satisfies the conditions.
+    Otherwise, if $\mathbf{a}$ is not terminated, then $h = a + \text{\textquotesingle}\blacksquare\text{\textquotesingle}$ satisfies the conditions,
+    since the stop character is always required to tokenize as its own token.
+\end{proof}
+This latter quantity, the maximum likelihood of any descendant of a token sequence, is the quantity of interest,
+but we will need a datastructure that maintains $R(\mathbf{a}, x)$ for other values of $x$ which are not equal to $\mathbf{a}$.
+
+The core theorem required for our algorithm related the double path likelihood to the double path likelihood near
+an arbitrary frontier.
+
+\begin{theorem}[Double Path Maximum Likelihood from the Frontier]
+\label{theorem:double-path-maximum-likelihood-from-frontier}
+Given a canonical token sequence $\mathbf{a}$, a string $x$, and a complete prefix code $F$,
+such that $x \leq F$ and $H \geq F$,
+$$
+R(\mathbf{a}, x) =
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        \mathbf{b} \in \mathbf{C} \\
+        \mathbf{a} \leq \mathbf{b} \leq f \\
+        \btrunc{x}{\mathbf{b}} = \mathbf{a}
+    }} 
+    R(\mathbf{b}, f),
+$$
+\end{theorem}
+\begin{proof}
+    We prove both inequalities.
+
+    First, let $h \in H$ be any string satisfying
+    $$
+    x \leq h, \quad \mathbf{a} \leq T(h), \quad \btrunc{x}{T(h)} = \mathbf{a}.
+    $$
+    Because $H \geq F$ and $h \in H$, there exists $f \in F$ such that $f \leq h$.
+    Since also $x \leq h$ and $x \leq F$, we cannot have $f < x$, because then $f$ and the
+    frontier element extending $x$ would be comparable distinct elements of the prefix code $F$.
+    Thus $x \leq f \leq h$.
+
+    Let
+    $$
+    \mathbf{b} := \btrunc{f}{T(h)}.
+    $$
+    Then $\mathbf{b} \leq T(h)$, so proposition~\ref{prop:tokenization-prefixes-are-canonical}
+    gives $\mathbf{b} \in \mathbf{C}$. Also $\mathbf{b} \leq f$ and $\mathbf{a} \leq \mathbf{b}$.
+    Moreover, by lemma~\ref{lemma:token-truncation-string-prefix-transitivity},
+    $$
+    \btrunc{x}{\mathbf{b}}
+    =
+    \btrunc{x}{\btrunc{f}{T(h)}}
+    =
+    \btrunc{x}{T(h)}
+    =
+    \mathbf{a}.
+    $$
+    Since $f \leq h$, $\mathbf{b} \leq T(h)$, and $\btrunc{f}{T(h)} = \mathbf{b}$,
+    the string $h$ is admissible in the definition of $R(\mathbf{b}, f)$.
+    Hence
+    $$
+    L(h) \leq R(\mathbf{b}, f).
+    $$
+    Because every admissible $h$ for $R(\mathbf{a}, x)$ yields such a pair $(\mathbf{b}, f)$,
+    this proves
+    $$
+    R(\mathbf{a}, x)
+    \leq
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        \mathbf{b} \in \mathbf{C} \\
+        \mathbf{a} \leq \mathbf{b} \leq f \\
+        \btrunc{x}{\mathbf{b}} = \mathbf{a}
+    }}
+    R(\mathbf{b}, f).
+    $$
+
+    For the reverse inequality, let $\mathbf{b} \in \mathbf{C}$ and $f \in F$ satisfy
+    $$
+    x \leq f, \quad \mathbf{a} \leq \mathbf{b} \leq f, \quad \btrunc{x}{\mathbf{b}} = \mathbf{a}.
+    $$
+    If there is no $h \in H$ admissible in the definition of $R(\mathbf{b}, f)$, then
+    $R(\mathbf{b}, f) = 0 \leq R(\mathbf{a}, x)$ by definition.
+    Otherwise, let $h \in H$ satisfy
+    $$
+    f \leq h, \quad \mathbf{b} \leq T(h), \quad \btrunc{f}{T(h)} = \mathbf{b}.
+    $$
+    Since $x \leq f \leq h$, we have $x \leq h$. Also, again by
+    lemma~\ref{lemma:token-truncation-string-prefix-transitivity},
+    $$
+    \btrunc{x}{T(h)}
+    =
+    \btrunc{x}{\btrunc{f}{T(h)}}
+    =
+    \btrunc{x}{\mathbf{b}}
+    =
+    \mathbf{a}.
+    $$
+    Because $\mathbf{a} \leq \mathbf{b} \leq T(h)$, the string $h$ is admissible in the
+    definition of $R(\mathbf{a}, x)$. Hence every value contributing to $R(\mathbf{b}, f)$
+    also contributes to $R(\mathbf{a}, x)$, so
+    $$
+    R(\mathbf{b}, f) \leq R(\mathbf{a}, x).
+    $$
+    Taking the maximum over all such $\mathbf{b}$ and $f$ gives
+    $$
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        \mathbf{b} \in \mathbf{C} \\
+        \mathbf{a} \leq \mathbf{b} \leq f \\
+        \btrunc{x}{\mathbf{b}} = \mathbf{a}
+    }}
+    R(\mathbf{b}, f)
+    \leq
+    R(\mathbf{a}, x).
+    $$
+
+    Therefore the two sides are equal.
+\end{proof}
+
+\begin{lemma}[Canonical token prefixes of a string]
+    \label{lemma:canonical-token-prefixes-of-a-string}
+    Let $f$ be a string. The canonical token sequences $\mathbf{b}$ satisfying $\mathbf{b} \leq f$
+    are exactly those of the form
+    $$
+    \mathbf{b} = T(f[:i])
+    $$
+    for some $i \leq |f|$.
+\end{lemma}
+\begin{proof}
+    First suppose $\mathbf{b} \leq f$ and $\mathbf{b}$ is canonical. Then there exists a string
+    $b = T^{-1}(\mathbf{b})$ with $b \leq f$. Writing $i := |b|$, we have $b = f[:i]$, and therefore
+    $$
+    \mathbf{b}
+    =
+    T(b)
+    =
+    T(f[:i]).
+    $$
+
+    Conversely, let $i \leq |f|$. Then $f[:i] \leq f$, so
+    $$
+    T^{-1}(T(f[:i])) = f[:i] \leq f.
+    $$
+    Thus $T(f[:i])$ is canonical and satisfies $T(f[:i]) \leq f$.
+\end{proof}
+
+\begin{corollary}[Double Path Maximum Likelihood from the Frontier, Reindexed]
+    Given a canonical token sequence $\mathbf{a}$, a string $x$, and a complete prefix code $F$,
+    such that $x \leq F$ and $H \geq F$,
+    $$
+    R(\mathbf{a}, x)
+    =
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        i \leq |f| \\
+        \btrunc{x}{T(f[:i])} = \mathbf{a}
+    }}
+    R(T(f[:i]), f).
+    $$
+\end{corollary}
+\begin{proof}
+    By theorem~\ref{theorem:double-path-maximum-likelihood-from-frontier},
+    $$
+    R(\mathbf{a}, x) =
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        \mathbf{b} \in \mathbf{C} \\
+        \mathbf{a} \leq \mathbf{b} \leq f \\
+        \btrunc{x}{\mathbf{b}} = \mathbf{a}
+    }}
+    R(\mathbf{b}, f).
+    $$
+    For fixed $f \in F$, lemma~\ref{lemma:canonical-token-prefixes-of-a-string}
+    shows that the canonical token sequences $\mathbf{b}$ satisfying $\mathbf{b} \leq f$
+    are exactly those of the form $\mathbf{b} = T(f[:i])$ for $i \leq |f|$.
+    Reindexing the outer maximum by this correspondence yields the claim.
+\end{proof}
+
+\begin{definition}[Token Truncation]
+    The token truncation of a string $x$ under a token sequence $\mathbf{a}$ is the longest prefix
+    of $\mathbf{a}$ that is also, as a string, a prefix of $x$. It maps a string to a token sequence,
+    and is written as $\lfloor x \rfloor_{\mathbf{a}}$. (Context makes it clear when 
+    this is intended as opposed to complete prefix code truncation, which uses the same notation,
+    but with a complete prefix code instead of a token sequence in the subscript.)
+    $$
+    \btrunc{x}{\mathbf{a}} = \max_{\substack{\mathbf{b} \leq \mathbf{a} \\ \mathbf{b} \leq x}} \mathbf{b}
+    $$
+\end{definition}
+
+\begin{lemma}[Token truncation is transitive along string prefixes]
+    \label{lemma:token-truncation-string-prefix-transitivity}
+    If $x \leq f$, then for every token sequence $\mathbf{c}$,
+    $$
+    \btrunc{x}{\btrunc{f}{\mathbf{c}}} = \btrunc{x}{\mathbf{c}}.
+    $$
+\end{lemma}
+\begin{proof}
+    By definition,
+    $$
+    \btrunc{x}{\btrunc{f}{\mathbf{c}}}
+    =
+    \max_{\substack{
+        \mathbf{b} \leq \btrunc{f}{\mathbf{c}} \\
+        \mathbf{b} \leq x
+    }}
+    \mathbf{b}.
+    $$
+    Since
+    $$
+    \btrunc{f}{\mathbf{c}}
+    =
+    \max_{\substack{
+        \mathbf{d} \leq \mathbf{c} \\
+        \mathbf{d} \leq f
+    }}
+    \mathbf{d},
+    $$
+    a token sequence $\mathbf{b}$ satisfies $\mathbf{b} \leq \btrunc{f}{\mathbf{c}}$ if and only if
+    $\mathbf{b} \leq \mathbf{c}$ and $\mathbf{b} \leq f$.
+
+    Therefore the indexing set above is exactly
+    $$
+    \left\{
+        \mathbf{b} \;\middle|\; \mathbf{b} \leq \mathbf{c},\ \mathbf{b} \leq f,\ \mathbf{b} \leq x
+    \right\}.
+    $$
+    Because $x \leq f$, every token sequence whose string is a prefix of $x$ is automatically a prefix of $f$.
+    Hence this set is equal to
+    $$
+    \left\{
+        \mathbf{b} \;\middle|\; \mathbf{b} \leq \mathbf{c},\ \mathbf{b} \leq x
+    \right\}.
+    $$
+    Taking the maximum over this set gives
+    $$
+    \btrunc{x}{\btrunc{f}{\mathbf{c}}}
+    =
+    \max_{\substack{
+        \mathbf{b} \leq \mathbf{c} \\
+        \mathbf{b} \leq x
+    }}
+    \mathbf{b}
+    =
+    \btrunc{x}{\mathbf{c}},
+    $$
+    as claimed.
+\end{proof}
+
+This prepares us for our first, algorithm,
+
+We compute a quanitity, $Q(\mathbf{a}, x)$.
+In implementation, this is data attached to the node, $x$,
+indexed by its ancestors, $\mathbf{a}$.
+Our goal is to design an algorithm that correctly computes $Q(\mathbf{a}, x)$,
+i.e., $Q(\mathbf{a}, x) = R(\mathbf{a}, x)$.
+
+\begin{algorithm}[H]
+\caption{MTDL Up Propagation}
+\label{alg:mtdl-up-propagation}
+\begin{algorithmic}[1]
+\Require Complete Prefix Code, $F$
+\Require $H \geq F$
+\Require $f \in F \implies Q(\mathbf{d}, f) = R(\mathbf{d}, f)$ for all $\mathbf{d} < f$.
+\Require $x < F \implies Q(\mathbf{d}, x) = 0$ for all $\mathbf{d} \leq x$.
+\Comment{MTDLFA Already Computed at the Frontier}
+\For{each node $f \in F$}
+    \For{$i \leq |f|$}
+        \State $\mathbf{b} \gets T(f[:i])$
+        \Comment{Canonical tokenizations of each string ancestor of $f$}
+        \For{$j$ from $|f|$ down to $0$}
+            \State $Q(\btrunc{f[:j]}{\mathbf{b}}, f[:j]) \gets_{\max} Q(\mathbf{b}, f)$
+        \EndFor
+    \EndFor
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\begin{theorem}[MTDL Up Propagation Correctness]
+\label{theorem:mtdl-up-propagation-correctness}
+Algorithm~\ref{alg:mtdl-up-propagation} correctly computes $Q(\mathbf{a}, x)$ within the frontier.
+If $H \geq F$, $\mathbf{a} \leq F$, and $x \leq F$, then
+\[
+R(\mathbf{a}, x) = Q(\mathbf{a}, x).
+\]
+\end{theorem}
+\begin{proof}
+    Fix $\mathbf{a} \leq F$ and $x \leq F$.
+    By inspection of algorithm~\ref{alg:mtdl-up-propagation},
+    the value $Q(\mathbf{a}, x)$ at termination is the maximum of all values
+    $Q(T(f[:i]), f)$ such that $f \in F$, $x \leq f$, and $\btrunc{x}{T(f[:i])} = \mathbf{a}$.
+    Thus
+    $$
+    Q(\mathbf{a}, x)
+    =
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        i \leq |f| \\
+        \btrunc{x}{T(f[:i])} = \mathbf{a}
+    }}
+    Q(T(f[:i]), f).
+    $$
+    If the indexing set is empty, then no update ever targets $Q(\mathbf{a}, x)$, so by the
+    initialization hypothesis $Q(\mathbf{a}, x)=0$. Otherwise, for every $f \in F$ and $i \leq |f|$,
+    the frontier hypothesis gives
+    $$
+    Q(T(f[:i]), f) = R(T(f[:i]), f).
+    $$
+    Therefore
+    $$
+    Q(\mathbf{a}, x)
+    =
+    \max_{\substack{
+        f \in F \\
+        x \leq f
+    }}
+    \;\;
+    \max_{\substack{
+        i \leq |f| \\
+        \btrunc{x}{T(f[:i])} = \mathbf{a}
+    }}
+    R(T(f[:i]), f).
+    $$
+    By the reindexed corollary above,
+    the right hand side is exactly $R(\mathbf{a}, x)$.
+\end{proof}
 
 
+\section{older stuff}
+\begin{lemma}[Double path maximum likelihood from the frontier]
+    If $x$ is a string and $\mathbf{a}$ is a token sequence, then
+    $$
+    R(\mathbf{a}, x) =
+    \begin{cases}
+        \prod_{i=1}^N \Delta^L_i(\lfloor x \rfloor_{C^L_i}) & \text{if } \phi(\mathbf{a}, x) \text{ is true} \\
+        0 & \text{otherwise}
+    \end{cases}
+    $$
+\end{lemma}
+\begin{proof}
+    The predicate, $\phi(\mathbf{a}, x)$, exactly determines whether the maximum 
+    described in definition~\ref{def:maximum-likelihood-for-double-path} has any terms.
+    If so, all of those terms are equal to $\prod_{i=1}^N \Delta^L_i(\lfloor x \rfloor_{C^L_i})$.
+\end{proof}
+
+\begin{definition}[Pita predicate]
+    The predicate, $\phi(\mathbf{a}, x)$, indicates whether there exists a strict descendant $h$ of $x$
+    whose tokenization truncates at $x$ to $\mathbf{a}$.
+    $$
+    \phi(\mathbf{a}, x)
+    \iff
+    \exists h \;\bigl( x < h \land \btrunc{x}{T(h)} = \mathbf{a} \bigr)
+    $$
+\end{definition}
 
 \section{Old stuff}
 

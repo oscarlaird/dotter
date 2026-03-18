@@ -71,6 +71,61 @@ theorem priorDeltaQuotient
   apply (eq_div_iff hpos).2
   simpa [mul_comm] using (priorDeltaFactorization hmm' hx).symm
 
+/--
+Additional data needed for the prior-tracking section:
+- `Tok` tokenizes arbitrary strings, not just properly terminated ones
+- `Tok_prefix_retok` is the retokenization lemma used in the LaTeX proof
+- `tokBranchPrior_zero_of_noncanonical` formalizes the canonical-support condition
+-/
+structure PriorTrackingSetup extends TokenPriorSetup α where
+  Tok : StringAlg α → TokenSeq α
+  Tok_right_inv : ∀ x : StringAlg α, literalizeTokenSeq (Tok x) = x
+  Tok_prefix_retok :
+    ∀ x : StringAlg α, ∀ j ≤ (Tok x).length,
+      Tok (literalizeTokenSeq ((Tok x).take j)) = (Tok x).take j
+  tokBranchPrior_zero_of_noncanonical :
+    ∀ b : TokenSeq α,
+      Tok (literalizeTokenSeq b) ≠ b →
+      tokBranchPrior cond b = 0
+
+namespace PriorTracking
+
+def CanonicalTokenSeq (S : PriorTrackingSetup (α := α)) (b : TokenSeq α) : Prop :=
+  S.Tok (literalizeTokenSeq b) = b
+
+def stringPrefixContext (S : PriorTrackingSetup (α := α))
+    (x : StringAlg α) (i : ℕ) : TokenSeq α :=
+  S.Tok (x.take i)
+
+def stringContexts (S : PriorTrackingSetup (α := α)) (x : StringAlg α) : Finset (TokenSeq α) :=
+  (Finset.range x.length).image (fun i => stringPrefixContext S x i)
+
+lemma take_eq_of_prefix {β : Type} {s x : List β}
+    (h : List.IsPrefix s x) :
+    x.take s.length = s := by
+  rcases h with ⟨r, rfl⟩
+  simp
+
+lemma canonical_mem_stringContexts
+    (S : PriorTrackingSetup (α := α))
+    {x : StringAlg α} {b : TokenSeq α}
+    (hcanon : CanonicalTokenSeq S b)
+    (hstrict : IsStrictPrefix (literalizeTokenSeq b) x) :
+    b ∈ stringContexts S x := by
+  let i := (literalizeTokenSeq b).length
+  have hi : i < x.length := by
+    refine lt_of_le_of_ne hstrict.1.length_le ?_
+    intro hEq
+    apply hstrict.2
+    exact List.IsPrefix.eq_of_length hstrict.1 hEq
+  have htake : x.take i = literalizeTokenSeq b := by
+    simpa [i] using take_eq_of_prefix hstrict.1
+  refine Finset.mem_image.mpr ?_
+  refine ⟨i, Finset.mem_range.mpr hi, ?_⟩
+  rw [PriorTracking.stringPrefixContext, htake, hcanon]
+
+end PriorTracking
+
 /-- A tracked token context storing a token branch prior at a given time. -/
 structure TrackedTokenContext where
   seq : TokenSeq α
@@ -269,6 +324,71 @@ theorem branchPriorFromContexts_correct
             exact hpath.symm
 
 /--
+Variant of `branchPriorFromContexts_correct` suited to the prior-tracking section:
+it is enough that any context omitted from `contexts` has zero token branch prior
+whenever its literalization is a strict prefix of `x`.
+-/
+theorem branchPriorFromContexts_correct_of_zero_outside
+    (S : TokenPriorSetup α)
+    (contexts : Finset (TokenSeq α))
+    {x : StringAlg α}
+    (hzero :
+      ∀ ⦃b : TokenSeq α⦄,
+        b ∉ contexts →
+        IsStrictPrefix (literalizeTokenSeq b) x →
+        tokBranchPrior S.cond b = 0) :
+    branchPriorFromContexts S contexts x = ((BranchPrior S.derivedPrior x : NNReal) : ENNReal) := by
+  by_cases hxnil : x = []
+  · subst hxnil
+    simp [branchPriorFromContexts, S.root_branch]
+  · have hpath := S.token_prior_path_summation x
+    simp [hxnil] at hpath
+    calc
+      branchPriorFromContexts S contexts x
+          = ∑ b ∈ contexts,
+              if IsStrictPrefix (literalizeTokenSeq b) x
+              then ↑(tokBranchPrior S.cond b) * tokenFan S b x
+              else 0 := by
+                simp [branchPriorFromContexts, hxnil]
+      _ = ∑' b : TokenSeq α,
+            if IsStrictPrefix (literalizeTokenSeq b) x
+            then ↑(tokBranchPrior S.cond b) * tokenFan S b x
+            else 0 := by
+              symm
+              exact tsum_eq_sum (s := contexts) (fun b hb => by
+                by_cases hstrict : IsStrictPrefix (literalizeTokenSeq b) x
+                · have hz : tokBranchPrior S.cond b = 0 := hzero hb hstrict
+                  simp [hstrict, hz]
+                · simp [hstrict])
+      _ = ∑' b : TokenSeq α,
+            ∑' t : TokenString α,
+              if (IsStrictPrefix (literalizeTokenSeq b) x ∧
+                  List.IsPrefix x (literalizeTokenSeq (b ++ [t])))
+              then ((tokBranchPrior S.cond b * S.cond b t : NNReal) : ENNReal)
+              else 0 := by
+                apply tsum_congr
+                intro b
+                symm
+                exact cross_inner_eq_tokenFan S b x
+      _ = ((BranchPrior S.derivedPrior x : NNReal) : ENNReal) := by
+            exact hpath.symm
+
+/--
+The branch-prior formula reindexed by strict string prefixes of `x`.
+-/
+theorem stringAncestorReindexing
+    (S : PriorTrackingSetup (α := α))
+    {x : StringAlg α} (_hx : x ≠ []) :
+    branchPriorFromContexts S.toTokenPriorSetup (PriorTracking.stringContexts S x) x
+      = ((BranchPrior S.toTokenPriorSetup.derivedPrior x : NNReal) : ENNReal) := by
+  apply branchPriorFromContexts_correct_of_zero_outside
+  intro b hb hstrict
+  by_cases hcanon : PriorTracking.CanonicalTokenSeq S b
+  · exfalso
+    exact hb (PriorTracking.canonical_mem_stringContexts S hcanon hstrict)
+  · exact S.tokBranchPrior_zero_of_noncanonical b hcanon
+
+/--
 Correctness of the branch-prior algorithm:
 if every relevant token context already stores the correct token branch prior at time `m`,
 then the computed string value is the correct branch prior at time `m`.
@@ -310,6 +430,47 @@ theorem computeBranchPrior_correct
               simp [branchPriorFromContexts, hxnil]
         _ = ((BranchPrior S.derivedPrior x : NNReal) : ENNReal) := by
               exact branchPriorFromContexts_correct S frontier contexts hcomplete hx
+  · simp [computeBranchPrior]
+
+/--
+Specialization of `computeBranchPrior_correct` to the exact prior-tracking algorithm:
+the contexts are the tokenizations of the strict string prefixes of `x`.
+-/
+theorem computeBranchPrior_stringPrefixes_correct
+    (S : PriorTrackingSetup (α := α))
+    (ctxNode : TokenSeq α → TrackedTokenContext (α := α))
+    (m : ℕ)
+    {x : StringAlg α} (hx : x ≠ [])
+    (hctx :
+      ∀ i ∈ Finset.range x.length,
+        let b := PriorTracking.stringPrefixContext S x i
+        (ctxNode b).seq = b ∧ TokenContextCorrect S.toTokenPriorSetup m (ctxNode b)) :
+    StringNodeCorrect S.toTokenPriorSetup m
+      (computeBranchPrior S.toTokenPriorSetup (PriorTracking.stringContexts S x) ctxNode x m) := by
+  constructor
+  · simpa [computeBranchPrior] using calc
+      (computeBranchPrior S.toTokenPriorSetup (PriorTracking.stringContexts S x) ctxNode x m).branchPrior
+          = ∑ b ∈ PriorTracking.stringContexts S x,
+              if IsStrictPrefix (literalizeTokenSeq b) x
+              then ↑((ctxNode b).tokBranchPrior) * tokenFan S.toTokenPriorSetup b x
+              else 0 := by
+                simp [computeBranchPrior, hx]
+      _ = ∑ b ∈ PriorTracking.stringContexts S x,
+            if IsStrictPrefix (literalizeTokenSeq b) x
+            then ↑(tokBranchPrior S.toTokenPriorSetup.cond b) * tokenFan S.toTokenPriorSetup b x
+            else 0 := by
+              apply Finset.sum_congr rfl
+              intro b hb
+              rcases Finset.mem_image.mp hb with ⟨i, hi, rfl⟩
+              rcases hctx i hi with ⟨hseq, hcorr⟩
+              rcases hcorr with ⟨hprior, htime⟩
+              by_cases hstrict : IsStrictPrefix (literalizeTokenSeq (PriorTracking.stringPrefixContext S x i)) x
+              · simp [hstrict, hseq, hprior]
+              · simp [hstrict]
+      _ = branchPriorFromContexts S.toTokenPriorSetup (PriorTracking.stringContexts S x) x := by
+            simp [branchPriorFromContexts, hx]
+      _ = ((BranchPrior S.toTokenPriorSetup.derivedPrior x : NNReal) : ENNReal) := by
+            exact stringAncestorReindexing S hx
   · simp [computeBranchPrior]
 
 end Trie
