@@ -6,49 +6,50 @@
 \contentsline {section}{\numberline {1.3}Client-Server Communication}{5}{section.1.3}%
 \contentsline {chapter}{\numberline {2}The Bayesian Trie}{6}{chapter.2}%
 \contentsline {section}{\numberline {2.1}Lazy Posterior Calculation: The Core Algorithms}{6}{section.2.1}%
-\contentsline {section}{\numberline {2.2}Likelihood Tracking}{13}{section.2.2}%
-\contentsline {section}{\numberline {2.3}Character Priors from Token Models}{14}{section.2.3}%
-\contentsline {section}{\numberline {2.4}Prior Tracking}{19}{section.2.4}%
-\contentsline {section}{\numberline {2.5}Maximum Descendant Likelihood}{23}{section.2.5}%
-\contentsline {section}{\numberline {2.6}The Complete Algorithm}{28}{section.2.6}%
-\contentsline {section}{\numberline {2.7}OLD STUFF}{29}{section.2.7}%
-\contentsline {subsubsection}{Possible Token Ancestors}{29}{section*.5}%
-\contentsline {chapter}{\numberline {3}Determine Visible Nodes}{31}{chapter.3}%
-\contentsline {section}{\numberline {3.1}Setting the Visibility Threshold}{31}{section.3.1}%
-\contentsline {section}{\numberline {3.2}Searching for Visible Nodes}{31}{section.3.2}%
-\contentsline {section}{\numberline {3.3}Responding to Likelihood Updates versus Prior Updates}{31}{section.3.3}%
-\contentsline {chapter}{\numberline {4}Render Trie}{33}{chapter.4}%
-\contentsline {section}{\numberline {4.1}Embellishments}{33}{section.4.1}%
-\contentsline {subsection}{\numberline {4.1.1}Branches of the Tree}{33}{subsection.4.1.1}%
-\contentsline {chapter}{\numberline {5}Stimulus Optimization: Ideal Timer Placement}{34}{chapter.5}%
-\contentsline {section}{\numberline {5.1}The Continuous One Bit Channel}{34}{section.5.1}%
-\contentsline {subsection}{\numberline {5.1.1}Two Interpretations}{34}{subsection.5.1.1}%
-\contentsline {subsection}{\numberline {5.1.2}The Ideal Timing Distribution}{34}{subsection.5.1.2}%
-\contentsline {subsubsection}{A Geometric Intuition}{35}{section*.6}%
-\contentsline {section}{\numberline {5.2}Periodic Signals}{35}{section.5.2}%
-\contentsline {subsection}{\numberline {5.2.1}Random Scan Times}{35}{subsection.5.2.1}%
-\contentsline {subsection}{\numberline {5.2.2}Periodic signals}{35}{subsection.5.2.2}%
-\contentsline {subsection}{\numberline {5.2.3}Approximating A Uniform Distribution with a Gaussian Mixture}{35}{subsection.5.2.3}%
-\contentsline {subsubsection}{Two Heuristics}{36}{section*.7}%
-\contentsline {subsubsection}{Approximations to the entropy based on pairwise distances}{37}{section*.8}%
-\contentsline {paragraph}{Gaussian Mixture Model with Rényi Entropy}{37}{section*.9}%
-\contentsline {paragraph}{Gaussian Mixture Model with Kolchinsky Objective}{37}{section*.10}%
-\contentsline {paragraph}{Von Mises Mixture Model with Rényi Entropy}{37}{section*.11}%
-\contentsline {paragraph}{Von Mises Mixture Model with Kolchinsky Objective}{37}{section*.12}%
-\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{37}{section*.13}%
-\contentsline {section}{\numberline {5.3}User Parameters}{38}{section.5.3}%
-\contentsline {subsection}{\numberline {5.3.1}The Likelihood Model}{38}{subsection.5.3.1}%
-\contentsline {subsection}{\numberline {5.3.2}Directional Statistics}{39}{subsection.5.3.2}%
-\contentsline {chapter}{\numberline {6}Render Stimulus}{40}{chapter.6}%
-\contentsline {section}{\numberline {6.1}Circular Timers}{40}{section.6.1}%
-\contentsline {chapter}{\numberline {7}Detect Response}{41}{chapter.7}%
-\contentsline {section}{\numberline {7.1}Blink Detection}{41}{section.7.1}%
-\contentsline {section}{\numberline {7.2}Keypress Detection}{41}{section.7.2}%
-\contentsline {chapter}{\numberline {8}Determine Most Likely Break Nodes}{42}{chapter.8}%
-\contentsline {section}{\numberline {8.1}An Upper Bound for the Likelihood of a Token Sequence}{42}{section.8.1}%
-\contentsline {section}{\numberline {8.2}Descending the Token Trie}{43}{section.8.2}%
-\contentsline {chapter}{\numberline {9}LLM Query}{44}{chapter.9}%
-\contentsline {section}{\numberline {9.1}Maintaining a Key-Value Cache Trie}{44}{section.9.1}%
-\contentsline {chapter}{\numberline {10}Mastering Dotter}{45}{chapter.10}%
-\contentsline {section}{\numberline {10.1}The Cost of Incorrect Signals}{45}{section.10.1}%
-\contentsline {chapter}{Bibliography}{46}{section*.14}%
+\contentsline {section}{\numberline {2.2}Likelihood Tracking}{14}{section.2.2}%
+\contentsline {section}{\numberline {2.3}Character Priors from Token Models}{16}{section.2.3}%
+\contentsline {section}{\numberline {2.4}Prior Tracking}{21}{section.2.4}%
+\contentsline {section}{\numberline {2.5}Maximum Truncation Compatible Descendant Likelihood}{24}{section.2.5}%
+\contentsline {subsubsection}{Efficient Evaluation of the Possible Truncation Predicate}{31}{section*.5}%
+\contentsline {section}{\numberline {2.6}The Complete Algorithms}{31}{section.2.6}%
+\contentsline {section}{\numberline {2.7}Appendix: Byte-Pair Encoding Mechanics}{34}{section.2.7}%
+\contentsline {section}{\numberline {2.8}OLD STUFF}{39}{section.2.8}%
+\contentsline {chapter}{\numberline {3}Determine Visible Nodes}{41}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Setting the Visibility Threshold}{41}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Searching for Visible Nodes}{41}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Responding to Likelihood Updates versus Prior Updates}{41}{section.3.3}%
+\contentsline {chapter}{\numberline {4}Render Trie}{43}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Embellishments}{43}{section.4.1}%
+\contentsline {subsection}{\numberline {4.1.1}Branches of the Tree}{43}{subsection.4.1.1}%
+\contentsline {chapter}{\numberline {5}Stimulus Optimization: Ideal Timer Placement}{44}{chapter.5}%
+\contentsline {section}{\numberline {5.1}The Continuous One Bit Channel}{44}{section.5.1}%
+\contentsline {subsection}{\numberline {5.1.1}Two Interpretations}{44}{subsection.5.1.1}%
+\contentsline {subsection}{\numberline {5.1.2}The Ideal Timing Distribution}{44}{subsection.5.1.2}%
+\contentsline {subsubsection}{A Geometric Intuition}{45}{section*.6}%
+\contentsline {section}{\numberline {5.2}Periodic Signals}{45}{section.5.2}%
+\contentsline {subsection}{\numberline {5.2.1}Random Scan Times}{45}{subsection.5.2.1}%
+\contentsline {subsection}{\numberline {5.2.2}Periodic signals}{45}{subsection.5.2.2}%
+\contentsline {subsection}{\numberline {5.2.3}Approximating A Uniform Distribution with a Gaussian Mixture}{45}{subsection.5.2.3}%
+\contentsline {subsubsection}{Two Heuristics}{46}{section*.7}%
+\contentsline {subsubsection}{Approximations to the entropy based on pairwise distances}{47}{section*.8}%
+\contentsline {paragraph}{Gaussian Mixture Model with Rényi Entropy}{47}{section*.9}%
+\contentsline {paragraph}{Gaussian Mixture Model with Kolchinsky Objective}{47}{section*.10}%
+\contentsline {paragraph}{Von Mises Mixture Model with Rényi Entropy}{47}{section*.11}%
+\contentsline {paragraph}{Von Mises Mixture Model with Kolchinsky Objective}{47}{section*.12}%
+\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{47}{section*.13}%
+\contentsline {section}{\numberline {5.3}User Parameters}{48}{section.5.3}%
+\contentsline {subsection}{\numberline {5.3.1}The Likelihood Model}{48}{subsection.5.3.1}%
+\contentsline {subsection}{\numberline {5.3.2}Directional Statistics}{49}{subsection.5.3.2}%
+\contentsline {chapter}{\numberline {6}Render Stimulus}{50}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Circular Timers}{50}{section.6.1}%
+\contentsline {chapter}{\numberline {7}Detect Response}{51}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Blink Detection}{51}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Keypress Detection}{51}{section.7.2}%
+\contentsline {chapter}{\numberline {8}Determine Most Likely Break Nodes}{52}{chapter.8}%
+\contentsline {section}{\numberline {8.1}An Upper Bound for the Likelihood of a Token Sequence}{52}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Descending the Token Trie}{53}{section.8.2}%
+\contentsline {chapter}{\numberline {9}LLM Query}{54}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Maintaining a Key-Value Cache Trie}{54}{section.9.1}%
+\contentsline {chapter}{\numberline {10}Mastering Dotter}{55}{chapter.10}%
+\contentsline {section}{\numberline {10.1}The Cost of Incorrect Signals}{55}{section.10.1}%
+\contentsline {chapter}{Bibliography}{56}{section*.14}%

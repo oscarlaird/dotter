@@ -1,0 +1,13 @@
+name = "rustadderproof"
+version = "0.1.0"
+defaultTargets = ["RustAdderProof"]
+
+[[require]]
+name = "aeneas"
+path = "/home/oscar/.local/share/aeneas-verif/aeneas/backends/lean"
+
+[[lean_lib]]
+name = "AdderCore"
+
+[[lean_lib]]
+name = "RustAdderProof"

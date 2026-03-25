@@ -23,6 +23,26 @@ vite.config.ts.timestamp-*
 # trie_worker_rust
 static/trie_worker_rust
 
+# Lean / Lake
+**/.lake/
+**/lake-manifest.json
+**/*.olean
+**/*.olean.hash
+**/*.ilean
+**/*.ilean.hash
+**/*.trace
+
+# Rust / Cargo
+**/target/
+
+# Generated demo outputs
+charon_out/
+**/charon_out/
+**/dist/
+**/build/generated/
+**/*.tgz
+**/*.wasm
+**/*.llbc
 
 # python
 __pycache__/
@@ -37,13 +57,27 @@ __pycache__/
 **/*.pyd
 **/*.py[cod]
 **/*$py.class
+**/.venv/
+**/.builddeps/
+**/.pkgtest/
+**/*.egg-info/
 
 # misc
 log.txt
 prefix_range_precomp.json
-log.txt
 blink_log.json
 blink_log_long.json
-log.txt
-log.txt
 poetry.lock
+
+# LaTeX build artifacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# Local generated project outputs
+lean_python_demo/build/
+rust_aeneas_demo/lean_verify/generated/
