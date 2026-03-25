@@ -8,6 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module"] }
+serde_json = "1"
 
 [[bin]]
 name = "bayesian"
