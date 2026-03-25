@@ -33,6 +33,24 @@ Example — `new_lm.py` imports the Rust **`bayesian`** extension:
 poetry run python new_lm.py
 ```
 
+Build the `xi` precompute files (`tokens.txt`, `prefixes.txt`, `xi.bits`) with:
+
+```sh
+poetry run python build_xi_precomp.py
+```
+
+For a smaller smoke test:
+
+```sh
+poetry run python build_xi_precomp.py --limit-tokens 256 --output-dir /tmp/xi-precomp-smoke
+```
+
+Query a generated precompute:
+
+```sh
+poetry run python xi_precomp.py --input-dir /tmp/xi-precomp-smoke " the" " "
+```
+
 `requirements.txt` is optional legacy pip pinning; prefer Poetry for a consistent env.
 
 ## `bayesian` (Rust / PyO3)

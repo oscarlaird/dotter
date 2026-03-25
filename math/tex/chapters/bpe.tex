@@ -1,0 +1,12 @@
+% !TEX root = ../math.tex
+\chapter{Byte-Pair Encoding}
+\label{chap:bpe}
+
+This chapter collects the material in this book that depends specifically on byte-pair
+encoding (BPE). Section~\ref{sec:bpe-mechanics} contains the formal mechanics of stagewise
+BPE tokenization and the proof of canonical concatenation. Section~\ref{sec:bpe-spines}
+then gives an implementation-oriented view based on merge IDs, left and right spines,
+and a fast boundary test for token-pair canonicality.
+
+\input{chapters/bpe-mechanics}
+\input{chapters/bpe-spines}

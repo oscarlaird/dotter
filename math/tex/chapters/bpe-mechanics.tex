@@ -1,0 +1,529 @@
+% !TEX root = ../math.tex
+\section{Byte-Pair Encoding Mechanics}
+\label{sec:bpe-mechanics}
+\label{sec:appendix-bpe-mechanics}
+
+We now specialize the general tokenization formalism of this book to byte-pair encoders.
+Our goal is to prove a structural property that is stronger than boundary sufficiency and is
+specific to BPE tokenizers.
+
+Throughout this section we identify each BPE token with its spelling.
+Thus a token is itself a nonempty string over the character alphabet $\Lambda$,
+and the literalization map is just concatenation of tokens.
+
+\begin{definition}[Character Tokenization]
+    For a string $x = x_1 \cdots x_n$, let
+    \[
+    \operatorname{chars}(x) = [x_1, \ldots, x_n]
+    \]
+    denote the sequence of one-character strings whose concatenation is $x$.
+\end{definition}
+
+\begin{definition}[BPE Merge System]
+    A BPE merge system of depth $N$ consists of vocabularies
+    \[
+    \boldsymbol{\Lambda}^{(0)} \subseteq \boldsymbol{\Lambda}^{(1)} \subseteq \cdots \subseteq \boldsymbol{\Lambda}^{(N)}
+    \]
+    and tokens $\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}, \boldsymbol{\gamma_k}$ for each
+    $1 \leq k \leq N$ satisfying:
+    \begin{enumerate}
+        \item $\boldsymbol{\Lambda}^{(0)} = \Lambda$, where each character is regarded as a one-character token.
+        \item $\boldsymbol{\alpha_k}, \boldsymbol{\beta_k} \in \boldsymbol{\Lambda}^{(k-1)}$.
+        \item $\boldsymbol{\gamma_k} = \boldsymbol{\alpha_k} + \boldsymbol{\beta_k}$ as strings.
+        \item $\boldsymbol{\gamma_k} \notin \boldsymbol{\Lambda}^{(k-1)}$.
+        \item $\boldsymbol{\Lambda}^{(k)} = \boldsymbol{\Lambda}^{(k-1)} \cup \{\boldsymbol{\gamma_k}\}$.
+    \end{enumerate}
+\end{definition}
+
+\begin{definition}[Single BPE Merge Pass]
+    For $1 \leq k \leq N$, the $k$th merge pass
+    \[
+    M_k : (\boldsymbol{\Lambda}^{(k-1)})^* \to (\boldsymbol{\Lambda}^{(k)})^*
+    \]
+    is defined recursively by
+    \[
+    M_k([]) = [],
+    \]
+    \[
+    M_k([\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}] + \mathbf{r})
+    =
+    [\boldsymbol{\gamma_k}] + M_k(\mathbf{r}),
+    \]
+    and
+    \[
+    M_k([\boldsymbol{\tau}] + \mathbf{r})
+    =
+    [\boldsymbol{\tau}] + M_k(\mathbf{r})
+    \]
+    whenever either $\mathbf{r} = []$, or the first token of $\mathbf{r}$ is not $\boldsymbol{\beta_k}$,
+    or $\boldsymbol{\tau} \neq \boldsymbol{\alpha_k}$.
+
+    Thus $M_k$ performs the left-to-right maximal non-overlapping replacement of
+    $[\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}]$ by $[\boldsymbol{\gamma_k}]$.
+\end{definition}
+
+\begin{definition}[Stagewise BPE Tokenizers]
+    The tokenizer after $k$ merge stages is the map
+    \[
+    T_k : S \to (\boldsymbol{\Lambda}^{(k)})^*
+    \]
+    defined recursively by
+    \[
+    T_0(x) = \operatorname{chars}(x),
+    \qquad
+    T_k(x) = M_k(T_{k-1}(x)).
+    \]
+    The final BPE tokenizer is $T := T_N$.
+\end{definition}
+
+\begin{definition}[Stagewise Canonicality]
+    A token sequence $\mathbf{a} \in (\boldsymbol{\Lambda}^{(k)})^*$ is stage-$k$ canonical if and only if
+    \[
+    T_k(T^{-1}(\mathbf{a})) = \mathbf{a}.
+    \]
+    We denote the set of stage-$k$ canonical token sequences by $\mathbf{C}^{(k)}$.
+\end{definition}
+
+\begin{proposition}[Stage-$0$ Canonicality]
+    \label{prop:bpe-stage-zero-canonicality}
+    A token sequence is stage-$0$ canonical if and only if each of its tokens has length $1$.
+\end{proposition}
+\begin{proof}
+    By definition,
+    \[
+    T_0(T^{-1}(\mathbf{a})) = \operatorname{chars}(T^{-1}(\mathbf{a})).
+    \]
+    The token sequence on the right is obtained by splitting the literalization of $\mathbf{a}$
+    into one-character strings.
+    Therefore it is equal to $\mathbf{a}$ if and only if every token of $\mathbf{a}$ is already
+    a one-character string.
+\end{proof}
+
+\begin{definition}[Single-Stage Decompression]
+    For $1 \leq k \leq N$, the single-stage decompression map
+    \[
+    D_k : (\boldsymbol{\Lambda}^{(k)})^* \to (\boldsymbol{\Lambda}^{(k-1)})^*
+    \]
+    is defined recursively by
+    \[
+    D_k([]) = [],
+    \]
+    \[
+    D_k([\boldsymbol{\gamma_k}] + \mathbf{r})
+    =
+    [\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}] + D_k(\mathbf{r}),
+    \]
+    and
+    \[
+    D_k([\boldsymbol{\tau}] + \mathbf{r})
+    =
+    [\boldsymbol{\tau}] + D_k(\mathbf{r})
+    \qquad
+    \text{for } \boldsymbol{\tau} \neq \boldsymbol{\gamma_k}.
+    \]
+\end{definition}
+
+\begin{definition}[Stage-$k$ Reduced Sequence]
+    For $1 \leq k \leq N$, we say that a token sequence $\mathbf{a}$ is stage-$k$ reduced if and only if
+    it contains no adjacent occurrence of the pair $[\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}]$.
+    Equivalently,
+    \[
+    \operatorname{red}_k(\mathbf{a})
+    \iff
+    \not\exists i < |\mathbf{a}|-1,\;
+    \mathbf{a}[i] = \boldsymbol{\alpha_k}
+    \land
+    \mathbf{a}[i+1] = \boldsymbol{\beta_k}.
+    \]
+\end{definition}
+
+\begin{lemma}[Single-stage decompression preserves literalization]
+    \label{lemma:bpe-decompression-preserves-literalization}
+    For every $\mathbf{a} \in (\boldsymbol{\Lambda}^{(k)})^*$,
+    \[
+    T^{-1}(D_k(\mathbf{a})) = T^{-1}(\mathbf{a}).
+    \]
+\end{lemma}
+\begin{proof}
+    We argue by induction on $|\mathbf{a}|$.
+
+    If $\mathbf{a} = []$, the claim is immediate.
+    Otherwise write $\mathbf{a} = [\boldsymbol{\tau}] + \mathbf{r}$.
+
+    If $\boldsymbol{\tau} = \boldsymbol{\gamma_k}$, then
+    \[
+    D_k(\mathbf{a}) = [\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}] + D_k(\mathbf{r}),
+    \]
+    so
+    \begin{align*}
+    T^{-1}(D_k(\mathbf{a}))
+    &=
+    \boldsymbol{\alpha_k} + \boldsymbol{\beta_k} + T^{-1}(D_k(\mathbf{r})) \\
+    &=
+    \boldsymbol{\gamma_k} + T^{-1}(\mathbf{r}) \\
+    &=
+    T^{-1}(\mathbf{a}),
+    \end{align*}
+    using the defining relation $\boldsymbol{\gamma_k} = \boldsymbol{\alpha_k}+\boldsymbol{\beta_k}$
+    and the inductive hypothesis.
+
+    If $\boldsymbol{\tau} \neq \boldsymbol{\gamma_k}$, then
+    \[
+    D_k(\mathbf{a}) = [\boldsymbol{\tau}] + D_k(\mathbf{r}),
+    \]
+    and therefore
+    \[
+    T^{-1}(D_k(\mathbf{a}))
+    =
+    \boldsymbol{\tau} + T^{-1}(D_k(\mathbf{r}))
+    =
+    \boldsymbol{\tau} + T^{-1}(\mathbf{r})
+    =
+    T^{-1}(\mathbf{a}),
+    \]
+    again by the inductive hypothesis.
+\end{proof}
+
+\begin{lemma}[Single-stage decompression respects concatenation]
+    \label{lemma:bpe-decompression-append}
+    For all token sequences $\mathbf{a}$ and $\mathbf{b}$,
+    \[
+    D_k(\mathbf{a}+\mathbf{b}) = D_k(\mathbf{a}) + D_k(\mathbf{b}).
+    \]
+\end{lemma}
+\begin{proof}
+    We argue by induction on $|\mathbf{a}|$.
+
+    If $\mathbf{a} = []$, the claim is immediate.
+    Otherwise write $\mathbf{a} = [\boldsymbol{\tau}] + \mathbf{r}$ and split on whether
+    $\boldsymbol{\tau} = \boldsymbol{\gamma_k}$.
+    In each case the recursive definition of $D_k$ reduces the claim to the inductive hypothesis.
+\end{proof}
+
+\begin{lemma}[Decompression inverts a merge pass]
+    \label{lemma:bpe-decompression-left-inverse}
+    For every $\mathbf{a} \in (\boldsymbol{\Lambda}^{(k-1)})^*$,
+    \[
+    D_k(M_k(\mathbf{a})) = \mathbf{a}.
+    \]
+\end{lemma}
+\begin{proof}
+    We argue by induction on $|\mathbf{a}|$.
+
+    If $\mathbf{a} = []$, the claim is immediate.
+    Otherwise write $\mathbf{a} = [\boldsymbol{\tau}] + \mathbf{r}$.
+
+    If $\boldsymbol{\tau} = \boldsymbol{\alpha_k}$ and $\mathbf{r} = [\boldsymbol{\beta_k}] + \mathbf{r}'$,
+    then
+    \[
+    M_k(\mathbf{a}) = [\boldsymbol{\gamma_k}] + M_k(\mathbf{r}'),
+    \]
+    so
+    \[
+    D_k(M_k(\mathbf{a}))
+    =
+    [\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}] + D_k(M_k(\mathbf{r}'))
+    =
+    [\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}] + \mathbf{r}'
+    =
+    \mathbf{a},
+    \]
+    by the inductive hypothesis.
+
+    Otherwise,
+    \[
+    M_k(\mathbf{a}) = [\boldsymbol{\tau}] + M_k(\mathbf{r}),
+    \]
+    and since $\boldsymbol{\tau} \neq \boldsymbol{\gamma_k}$,
+    \[
+    D_k(M_k(\mathbf{a}))
+    =
+    [\boldsymbol{\tau}] + D_k(M_k(\mathbf{r}))
+    =
+    [\boldsymbol{\tau}] + \mathbf{r}
+    =
+    \mathbf{a},
+    \]
+    again by the inductive hypothesis.
+\end{proof}
+
+\begin{lemma}[Merge pass yields a reduced sequence]
+    \label{lemma:bpe-merge-produces-reduced}
+    For every $\mathbf{a} \in (\boldsymbol{\Lambda}^{(k-1)})^*$,
+    \[
+    \operatorname{red}_k(M_k(\mathbf{a})).
+    \]
+\end{lemma}
+\begin{proof}
+    We argue by induction on $|\mathbf{a}|$.
+
+    If $\mathbf{a} = []$, the claim is immediate.
+    Otherwise write $\mathbf{a} = [\boldsymbol{\tau}] + \mathbf{r}$.
+
+    If $\boldsymbol{\tau} = \boldsymbol{\alpha_k}$ and $\mathbf{r} = [\boldsymbol{\beta_k}] + \mathbf{r}'$,
+    then
+    \[
+    M_k(\mathbf{a}) = [\boldsymbol{\gamma_k}] + M_k(\mathbf{r}').
+    \]
+    By the inductive hypothesis, the suffix $M_k(\mathbf{r}')$ is stage-$k$ reduced.
+    Since the first token is $\boldsymbol{\gamma_k}$ rather than $\boldsymbol{\alpha_k}$,
+    the whole sequence is stage-$k$ reduced.
+
+    Otherwise,
+    \[
+    M_k(\mathbf{a}) = [\boldsymbol{\tau}] + M_k(\mathbf{r}).
+    \]
+    By the inductive hypothesis, the suffix $M_k(\mathbf{r})$ is stage-$k$ reduced.
+    It remains only to rule out an adjacent occurrence of
+    $[\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}]$ starting at the first token.
+
+    If $\boldsymbol{\tau} \neq \boldsymbol{\alpha_k}$, this is immediate.
+    If $\boldsymbol{\tau} = \boldsymbol{\alpha_k}$, then by hypothesis the first token of $\mathbf{r}$
+    is either absent or different from $\boldsymbol{\beta_k}$.
+    Hence the first token of $M_k(\mathbf{r})$ is also either absent or different from $\boldsymbol{\beta_k}$.
+    Therefore no adjacent occurrence of $[\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}]$
+    starts at the first token.
+\end{proof}
+
+\begin{lemma}[Reduced sequences are reconstructed by decompression]
+    \label{lemma:bpe-reduced-reconstruction}
+    If $\operatorname{red}_k(\mathbf{a})$, then
+    \[
+    M_k(D_k(\mathbf{a})) = \mathbf{a}.
+    \]
+\end{lemma}
+\begin{proof}
+    We argue by induction on $|\mathbf{a}|$.
+
+    If $\mathbf{a} = []$, the claim is immediate.
+    Otherwise write $\mathbf{a} = [\boldsymbol{\tau}] + \mathbf{r}$.
+
+    If $\boldsymbol{\tau} = \boldsymbol{\gamma_k}$, then
+    \[
+    D_k(\mathbf{a}) = [\boldsymbol{\alpha_k}, \boldsymbol{\beta_k}] + D_k(\mathbf{r}),
+    \]
+    and hence
+    \[
+    M_k(D_k(\mathbf{a}))
+    =
+    [\boldsymbol{\gamma_k}] + M_k(D_k(\mathbf{r}))
+    =
+    [\boldsymbol{\gamma_k}] + \mathbf{r}
+    =
+    \mathbf{a},
+    \]
+    by the inductive hypothesis.
+
+    If $\boldsymbol{\tau} \neq \boldsymbol{\gamma_k}$, then
+    \[
+    D_k(\mathbf{a}) = [\boldsymbol{\tau}] + D_k(\mathbf{r}).
+    \]
+    Because $\operatorname{red}_k(\mathbf{a})$, either $\boldsymbol{\tau} \neq \boldsymbol{\alpha_k}$,
+    or $\mathbf{r} = []$, or the first token of $\mathbf{r}$ is not $\boldsymbol{\beta_k}$.
+    In all cases the first clause in the definition of $M_k$ does not apply to
+    $[\boldsymbol{\tau}] + D_k(\mathbf{r})$, so
+    \[
+    M_k(D_k(\mathbf{a}))
+    =
+    [\boldsymbol{\tau}] + M_k(D_k(\mathbf{r}))
+    =
+    [\boldsymbol{\tau}] + \mathbf{r}
+    =
+    \mathbf{a},
+    \]
+    again by the inductive hypothesis.
+\end{proof}
+
+\begin{theorem}[Stagewise canonicality characterization]
+    \label{thm:bpe-canonical-characterization}
+    Let $1 \leq k \leq N$.
+    Then for every token sequence $\mathbf{a} \in (\boldsymbol{\Lambda}^{(k)})^*$,
+    \[
+    \mathbf{a} \in \mathbf{C}^{(k)}
+    \iff
+    \operatorname{red}_k(\mathbf{a})
+    \land
+    D_k(\mathbf{a}) \in \mathbf{C}^{(k-1)}.
+    \]
+\end{theorem}
+\begin{proof}
+    We prove both implications.
+
+    First suppose $\mathbf{a} \in \mathbf{C}^{(k)}$.
+    Then
+    \[
+    \mathbf{a}
+    =
+    T_k(T^{-1}(\mathbf{a}))
+    =
+    M_k(T_{k-1}(T^{-1}(\mathbf{a}))).
+    \]
+    Therefore $\operatorname{red}_k(\mathbf{a})$ by lemma~\ref{lemma:bpe-merge-produces-reduced}.
+
+    Also,
+    \[
+    D_k(\mathbf{a})
+    =
+    D_k(M_k(T_{k-1}(T^{-1}(\mathbf{a}))))
+    =
+    T_{k-1}(T^{-1}(\mathbf{a}))
+    \]
+    by lemma~\ref{lemma:bpe-decompression-left-inverse}. By
+    lemma~\ref{lemma:bpe-decompression-preserves-literalization},
+    \[
+    T^{-1}(D_k(\mathbf{a})) = T^{-1}(\mathbf{a}),
+    \]
+    so
+    \[
+    T_{k-1}(T^{-1}(D_k(\mathbf{a}))) = D_k(\mathbf{a}).
+    \]
+    Hence $D_k(\mathbf{a}) \in \mathbf{C}^{(k-1)}$.
+
+    Conversely, suppose
+    \[
+    \operatorname{red}_k(\mathbf{a})
+    \qquad\text{and}\qquad
+    D_k(\mathbf{a}) \in \mathbf{C}^{(k-1)}.
+    \]
+    Then
+    \[
+    T_{k-1}(T^{-1}(D_k(\mathbf{a}))) = D_k(\mathbf{a}).
+    \]
+    By lemma~\ref{lemma:bpe-decompression-preserves-literalization},
+    \[
+    T^{-1}(D_k(\mathbf{a})) = T^{-1}(\mathbf{a}),
+    \]
+    so
+    \[
+    T_k(T^{-1}(\mathbf{a}))
+    =
+    M_k(T_{k-1}(T^{-1}(\mathbf{a})))
+    =
+    M_k(D_k(\mathbf{a})).
+    \]
+    Since $\operatorname{red}_k(\mathbf{a})$, lemma~\ref{lemma:bpe-reduced-reconstruction} gives
+    \[
+    M_k(D_k(\mathbf{a})) = \mathbf{a}.
+    \]
+    Therefore
+    \[
+    T_k(T^{-1}(\mathbf{a})) = \mathbf{a},
+    \]
+    i.e. $\mathbf{a} \in \mathbf{C}^{(k)}$.
+\end{proof}
+
+\begin{theorem}[BPE overlap concatenation theorem]
+    \label{thm:bpe-overlap-concatenation}
+    For every $k \in \{0,\ldots,N\}$, if
+    \[
+    \mathbf{b} \neq \boldsymbol{\epsilon},
+    \qquad
+    \mathbf{a}+\mathbf{b} \in \mathbf{C}^{(k)}
+    \qquad\text{and}\qquad
+    \mathbf{b}+\mathbf{c} \in \mathbf{C}^{(k)},
+    \]
+    then
+    \[
+    \mathbf{a}+\mathbf{b}+\mathbf{c} \in \mathbf{C}^{(k)}.
+    \]
+\end{theorem}
+\begin{proof}
+    We argue by induction on $k$.
+
+    For $k=0$, proposition~\ref{prop:bpe-stage-zero-canonicality} implies that every token
+    occurring in $\mathbf{a}+\mathbf{b}$ and every token occurring in $\mathbf{b}+\mathbf{c}$
+    has length $1$. Hence every token in $\mathbf{a}+\mathbf{b}+\mathbf{c}$ has length $1$,
+    so $\mathbf{a}+\mathbf{b}+\mathbf{c} \in \mathbf{C}^{(0)}$ by the same proposition.
+
+    Now let $1 \leq k \leq N$, and suppose the theorem has been proved for $k-1$.
+    Assume
+    \[
+    \mathbf{b} \neq \boldsymbol{\epsilon},
+    \qquad
+    \mathbf{a}+\mathbf{b} \in \mathbf{C}^{(k)}
+    \qquad\text{and}\qquad
+    \mathbf{b}+\mathbf{c} \in \mathbf{C}^{(k)}.
+    \]
+    By theorem~\ref{thm:bpe-canonical-characterization},
+    \[
+    \operatorname{red}_k(\mathbf{a}+\mathbf{b}),
+    \quad
+    D_k(\mathbf{a}+\mathbf{b}) \in \mathbf{C}^{(k-1)},
+    \quad
+    \operatorname{red}_k(\mathbf{b}+\mathbf{c}),
+    \quad
+    D_k(\mathbf{b}+\mathbf{c}) \in \mathbf{C}^{(k-1)}.
+    \]
+    By lemma~\ref{lemma:bpe-decompression-append},
+    \[
+    D_k(\mathbf{a}+\mathbf{b}) = D_k(\mathbf{a}) + D_k(\mathbf{b}),
+    \qquad
+    D_k(\mathbf{b}+\mathbf{c}) = D_k(\mathbf{b}) + D_k(\mathbf{c}).
+    \]
+    Applying the inductive hypothesis at stage $k-1$ yields
+    \[
+    D_k(\mathbf{a}) + D_k(\mathbf{b}) + D_k(\mathbf{c}) \in \mathbf{C}^{(k-1)}.
+    \]
+    Using lemma~\ref{lemma:bpe-decompression-append} once more,
+    \[
+    D_k(\mathbf{a}+\mathbf{b}+\mathbf{c}) \in \mathbf{C}^{(k-1)}.
+    \]
+
+    It remains to prove that $\mathbf{a}+\mathbf{b}+\mathbf{c}$ is stage-$k$ reduced.
+    Because $\mathbf{b} \neq \boldsymbol{\epsilon}$, the boundary between $\mathbf{a}$ and $\mathbf{c}$
+    does not create an adjacent pair in $\mathbf{a}+\mathbf{b}+\mathbf{c}$.
+    Every adjacent pair of tokens in $\mathbf{a}+\mathbf{b}+\mathbf{c}$ lies either in the prefix
+    $\mathbf{a}+\mathbf{b}$ or in the suffix $\mathbf{b}+\mathbf{c}$.
+    Since both of those sequences are stage-$k$ reduced, so is $\mathbf{a}+\mathbf{b}+\mathbf{c}$.
+
+    A final application of theorem~\ref{thm:bpe-canonical-characterization} gives
+    \[
+    \mathbf{a}+\mathbf{b}+\mathbf{c} \in \mathbf{C}^{(k)},
+    \]
+    as required.
+\end{proof}
+
+\begin{corollary}[BPE last-pair extension]
+    \label{cor:bpe-last-pair-extension}
+    Assume the tokenization function of this chapter is induced by a BPE merge system, so that
+    $\mathbf{C} = \mathbf{C}^{(N)}$.
+    Let $\mathbf{a} \in \mathbf{C}$ be nonempty and let $\boldsymbol{\tau}$ be a token.
+    If
+    \[
+    \psi(\mathbf{a}[-1], \boldsymbol{\tau}),
+    \]
+    then
+    \[
+    \mathbf{a}+\boldsymbol{\tau} \in \mathbf{C}.
+    \]
+\end{corollary}
+\begin{proof}
+    Let
+    \[
+    \mathbf{a}' := \mathbf{a}[:-1],
+    \qquad
+    \mathbf{b} := [\mathbf{a}[-1]],
+    \qquad
+    \mathbf{c} := [\boldsymbol{\tau}].
+    \]
+    Then
+    \[
+    \mathbf{a}'+\mathbf{b} = \mathbf{a} \in \mathbf{C}.
+    \]
+    Also, in the BPE specialization, the condition
+    \[
+    \psi(\mathbf{a}[-1], \boldsymbol{\tau})
+    \]
+    is exactly the statement that
+    \[
+    \mathbf{b}+\mathbf{c} \in \mathbf{C}.
+    \]
+    Applying theorem~\ref{thm:bpe-overlap-concatenation} with $k=N$ gives
+    \[
+    \mathbf{a}'+\mathbf{b}+\mathbf{c} \in \mathbf{C},
+    \]
+    i.e.
+    \[
+    \mathbf{a}+\boldsymbol{\tau} \in \mathbf{C}.
+    \]
+\end{proof}

@@ -1,0 +1,118 @@
+% !TEX root = ../math.tex
+\section{Spines and Pair Canonicality}
+\label{sec:bpe-spines}
+
+For implementation purposes it is useful to represent a BPE merge rule as a tuple
+\[
+(\iota_1,\iota_2) \mapsto (\iota_3, r),
+\]
+where $\iota_1$ and $\iota_2$ are the IDs of the two child tokens, $\iota_3$ is the ID of
+their merged token, and $r$ is the merge rank. Lower rank means higher priority.
+
+This gives three natural lookup views of the same merge:
+\[
+(\iota_1,\iota_2) \mapsto (\iota_3,r),
+\qquad
+(\iota_1,\iota_3) \mapsto (\iota_2,r),
+\qquad
+(\iota_2,\iota_3) \mapsto (\iota_1,r).
+\]
+The first view answers the usual forward question, while the latter two answer
+``one child plus the parent'' queries that arise when reconstructing derivations.
+
+\begin{definition}[Left and right spines]
+    Let $\boldsymbol{\tau}$ be a BPE token, and let its binary merge tree be the unique tree whose
+    leaves are characters and whose internal nodes are merge results, with root $\boldsymbol{\tau}$.
+    The \emph{left spine} of $\boldsymbol{\tau}$ is the leftmost root-to-leaf path, reported from leaf to root.
+    The \emph{right spine} is defined symmetrically.
+\end{definition}
+
+In the implementation we store either spine as a list of pairs
+\[
+[(\iota_0, r_0), (\iota_1, r_1), \ldots, (\iota_m, r_m)],
+\]
+where:
+\begin{enumerate}
+    \item $\iota_0$ is the ID of the boundary-adjacent character on that side;
+    \item $\iota_m$ is the ID of the whole token;
+    \item for $j < m$, the rank $r_j$ is the merge rank of the operation that grows $\iota_j$
+    into $\iota_{j+1}$ along that spine;
+    \item $r_m = \texttt{None}$.
+\end{enumerate}
+
+Thus, for a token whose derivation is
+\[
+h+e \to he,
+\qquad
+l+l \to ll,
+\qquad
+he+ll \to hell,
+\]
+the left spine is
+\[
+[(h,\operatorname{rank}(h,e)), (he,\operatorname{rank}(he,ll)), (hell,\texttt{None})],
+\]
+while the right spine is
+\[
+[(l,\operatorname{rank}(l,l)), (ll,\operatorname{rank}(he,ll)), (hell,\texttt{None})].
+\]
+
+\begin{definition}[Spine frontier]
+    Let $\boldsymbol{\tau_1}$ and $\boldsymbol{\tau_2}$ be tokens.
+    Suppose we are given the right spine of $\boldsymbol{\tau_1}$ and the left spine of
+    $\boldsymbol{\tau_2}$, both stored leaf-to-root as above.
+    A \emph{spine frontier state} is a pair of indices $(i,j)$ pointing into these two lists.
+    The currently exposed boundary tokens are the IDs carried by those two entries.
+\end{definition}
+
+\begin{proposition}[Spine-based canonicality algorithm]
+    \label{prop:spine-based-canonicality}
+    Let $\boldsymbol{\tau_1}$ and $\boldsymbol{\tau_2}$ be BPE tokens.
+    Assume their right and left spines are known.
+    Consider the following procedure.
+
+    Initialize two pointers at the leaf ends of the spines.
+    At each step examine three candidate ranks:
+    \begin{enumerate}
+        \item the rank of the next merge on the right spine of $\boldsymbol{\tau_1}$;
+        \item the rank of the next merge on the left spine of $\boldsymbol{\tau_2}$;
+        \item the rank of the merge of the two currently exposed boundary tokens,
+        if such a merge exists in the BPE merge table.
+    \end{enumerate}
+    If the third rank is the unique highest-priority rank, the boundary is crossed and the pair is not canonical.
+    If the first or second rank has highest priority, advance the corresponding spine pointer to the next larger
+    spine token. If all three ranks are absent, terminate and return that the pair is canonical.
+
+    This procedure returns \texttt{true} if and only if
+    \[
+    \psi(\boldsymbol{\tau_1},\boldsymbol{\tau_2}).
+    \]
+\end{proposition}
+\begin{proof}
+    The key invariant is that after all merges of rank smaller than the current frontier have been applied,
+    the exposed token on the left side of the boundary is exactly the current node of the right spine of
+    $\boldsymbol{\tau_1}$, and the exposed token on the right side of the boundary is exactly the current node
+    of the left spine of $\boldsymbol{\tau_2}$.
+
+    Any merge that is strictly internal to the left token and affects the boundary must enlarge the
+    boundary-adjacent suffix of $\boldsymbol{\tau_1}$, and therefore must be the next merge on its right spine.
+    Likewise, any boundary-relevant internal merge on the right token must be the next merge on its left spine.
+    The only other possible boundary-relevant event is a direct merge of the two currently exposed boundary tokens.
+    Therefore every event that can affect whether the boundary survives is represented by exactly one of the
+    three candidate ranks listed above.
+
+    If the cross-boundary rank is the highest-priority one, then the next relevant event merges the two boundary
+    tokens together, so the boundary does not survive and the pair is not canonical.
+    If instead one of the within-token spine ranks is the highest-priority one, then the corresponding token grows
+    inward-to-outward along its spine while the boundary is preserved, so advancing that pointer is correct.
+    Finally, if all three ranks are absent, no further merge can affect the boundary, so the boundary survives to
+    the end of tokenization and the pair is canonical.
+\end{proof}
+
+The resulting decision procedure is linear in the two spine lengths:
+\[
+O(|\operatorname{rspine}(\boldsymbol{\tau_1})| + |\operatorname{lspine}(\boldsymbol{\tau_2})|),
+\]
+with one merge-table lookup per iteration.
+In practice this is substantially cheaper than retokenizing the concatenated string
+$\rho(\boldsymbol{\tau_1}) + \rho(\boldsymbol{\tau_2})$ from scratch.

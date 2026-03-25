@@ -12,10 +12,47 @@ use std::path::Path;
 /// SentencePiece “space” / word-boundary marker used in TinyLlama vocab and merges.
 pub const SPACESYMBOL: char = '\u{2581}';
 
-/// `(left, right) -> rank` where **lower** rank means **earlier** in the merges file (higher priority).
+type PieceId = u32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeEntry {
+    pub left: u32,
+    pub right: u32,
+    pub merged: u32,
+    pub rank: u32,
+}
+
+/// Interned BPE pieces plus an ID-based merge table.
 #[derive(Debug, Clone)]
 pub struct BpeMerges {
-    ranks: HashMap<(String, String), u32>,
+    piece_to_id: HashMap<String, PieceId>,
+    pieces: Vec<String>,
+    merges_by_left_right: HashMap<(PieceId, PieceId), MergeEntry>,
+    merges_by_left_merged: HashMap<(PieceId, PieceId), MergeEntry>,
+    merges_by_right_merged: HashMap<(PieceId, PieceId), MergeEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PieceRef {
+    Known(PieceId),
+    Inline(String),
+}
+
+impl PieceRef {
+    fn text<'a>(&'a self, pieces: &'a [String]) -> &'a str {
+        match self {
+            Self::Known(id) => pieces[*id as usize].as_str(),
+            Self::Inline(text) => text.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DerivationNode {
+    piece: PieceRef,
+    rank: Option<u32>,
+    left: Option<usize>,
+    right: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -26,6 +63,7 @@ pub enum BpeError {
     InvalidTokenizerJson(&'static str),
     WhitespaceInWord,
     UnknownPiece(String),
+    UnknownTokenId(u32),
 }
 
 impl std::fmt::Display for BpeError {
@@ -39,6 +77,7 @@ impl std::fmt::Display for BpeError {
             BpeError::InvalidTokenizerJson(msg) => write!(f, "invalid tokenizer.json: {msg}"),
             BpeError::WhitespaceInWord => write!(f, "input contains whitespace (use one word only)"),
             BpeError::UnknownPiece(s) => write!(f, "piece not in vocab: {s:?}"),
+            BpeError::UnknownTokenId(id) => write!(f, "unknown token id: {id}"),
         }
     }
 }
@@ -66,6 +105,111 @@ impl From<serde_json::Error> for BpeError {
 }
 
 impl BpeMerges {
+    fn new() -> Self {
+        Self {
+            piece_to_id: HashMap::new(),
+            pieces: Vec::new(),
+            merges_by_left_right: HashMap::new(),
+            merges_by_left_merged: HashMap::new(),
+            merges_by_right_merged: HashMap::new(),
+        }
+    }
+
+    fn intern_piece(&mut self, piece: &str) -> PieceId {
+        if let Some(&id) = self.piece_to_id.get(piece) {
+            return id;
+        }
+        let id = self.pieces.len() as PieceId;
+        let owned = piece.to_string();
+        self.piece_to_id.insert(owned.clone(), id);
+        self.pieces.push(owned);
+        id
+    }
+
+    fn intern_owned_piece(&mut self, piece: String) -> PieceId {
+        if let Some(&id) = self.piece_to_id.get(piece.as_str()) {
+            return id;
+        }
+        let id = self.pieces.len() as PieceId;
+        self.piece_to_id.insert(piece.clone(), id);
+        self.pieces.push(piece);
+        id
+    }
+
+    fn piece_id_char(&self, c: char) -> Option<PieceId> {
+        let mut buf = [0u8; 4];
+        let s = c.encode_utf8(&mut buf);
+        self.piece_to_id.get(s).copied()
+    }
+
+    fn char_piece(&self, c: char) -> PieceRef {
+        match self.piece_id_char(c) {
+            Some(id) => PieceRef::Known(id),
+            None => PieceRef::Inline(c.to_string()),
+        }
+    }
+
+    fn insert_merge(&mut self, left: PieceId, right: PieceId, merged: PieceId, rank: u32) {
+        let entry = MergeEntry {
+            left,
+            right,
+            merged,
+            rank,
+        };
+        debug_assert!(
+            self.merges_by_left_right
+                .insert((left, right), entry)
+                .is_none()
+        );
+        debug_assert!(
+            self.merges_by_left_merged
+                .insert((left, merged), entry)
+                .is_none()
+        );
+        debug_assert!(
+            self.merges_by_right_merged
+                .insert((right, merged), entry)
+                .is_none()
+        );
+    }
+
+    fn lookup_merge(&self, left: &PieceRef, right: &PieceRef) -> Option<MergeEntry> {
+        let (PieceRef::Known(left_id), PieceRef::Known(right_id)) = (left, right) else {
+            return None;
+        };
+        self.lookup_merge_by_left_right(*left_id, *right_id)
+    }
+
+    fn best_merge(&self, symbols: &[PieceRef]) -> Option<(usize, MergeEntry)> {
+        let mut best: Option<(usize, MergeEntry)> = None;
+        for i in 0..symbols.len().saturating_sub(1) {
+            let Some(rule) = self.lookup_merge(&symbols[i], &symbols[i + 1]) else {
+                continue;
+            };
+            match best {
+                None => best = Some((i, rule)),
+                Some((best_idx, best_rule)) => {
+                    if rule.rank < best_rule.rank || (rule.rank == best_rule.rank && i < best_idx) {
+                        best = Some((i, rule));
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    fn tokenize_piece_refs(&self, text: &str) -> Vec<PieceRef> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        let mut symbols: Vec<PieceRef> = text.chars().map(|c| self.char_piece(c)).collect();
+        while let Some((idx, rule)) = self.best_merge(&symbols) {
+            symbols[idx] = PieceRef::Known(rule.merged);
+            symbols.remove(idx + 1);
+        }
+        symbols
+    }
+
     /// Read a merges file: lines starting with `#` and empty lines are skipped.
     /// Each other line must contain two tokens separated by the **first** ASCII space (` `).
     pub fn from_merges_file(path: impl AsRef<Path>) -> Result<Self, BpeError> {
@@ -74,7 +218,7 @@ impl BpeMerges {
     }
 
     pub fn from_merges_str(content: &str) -> Result<Self, BpeError> {
-        let mut ranks = HashMap::new();
+        let mut out = Self::new();
         for (line_no, raw) in content.lines().enumerate() {
             let line_no = line_no + 1;
             let line = raw.trim_end_matches(['\r', '\n']);
@@ -82,13 +226,21 @@ impl BpeMerges {
                 continue;
             }
             let (left, right) = parse_merge_line(line, line_no)?;
-            let rank = ranks.len() as u32;
-            ranks.insert((left.to_string(), right.to_string()), rank);
+            let left_id = out.intern_piece(left);
+            let right_id = out.intern_piece(right);
+            let mut merged = String::with_capacity(left.len() + right.len());
+            merged.push_str(left);
+            merged.push_str(right);
+            let merged_id = out.intern_owned_piece(merged);
+            let rank = out.merges_by_left_right.len() as u32;
+            out.insert_merge(left_id, right_id, merged_id, rank);
         }
-        Ok(Self { ranks })
+        Ok(out)
     }
 
-    /// Load only the BPE merge ranks from a Hugging Face `tokenizer.json` (`model.merges`).
+    /// Load BPE merge ranks from a Hugging Face `tokenizer.json` (`model.merges`).
+    /// If `model.vocab` exists, its token strings are interned too so ID-based tokenization can
+    /// stay in the interned representation longer.
     pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Result<Self, BpeError> {
         let text = fs::read_to_string(path.as_ref())?;
         Self::from_tokenizer_json_str(&text)
@@ -96,53 +248,82 @@ impl BpeMerges {
 
     pub fn from_tokenizer_json_str(content: &str) -> Result<Self, BpeError> {
         let v: serde_json::Value = serde_json::from_str(content)?;
-        let merges = v
+        let model = v
             .get("model")
-            .and_then(|m| m.get("merges"))
+            .ok_or(BpeError::InvalidTokenizerJson("missing model object"))?;
+        let mut out = Self::new();
+        if let Some(vocab) = model.get("vocab").and_then(|v| v.as_object()) {
+            for token in vocab.keys() {
+                out.intern_piece(token);
+            }
+        }
+        let merges = model
+            .get("merges")
             .and_then(|m| m.as_array())
             .ok_or(BpeError::InvalidTokenizerJson("missing model.merges array"))?;
-        let mut ranks = HashMap::new();
         for (idx, item) in merges.iter().enumerate() {
             let line = item
                 .as_str()
                 .ok_or(BpeError::InvalidTokenizerJson("merge entry is not a string"))?;
             let line_no = idx + 1;
             let (left, right) = parse_merge_line(line, line_no)?;
-            ranks.insert((left.to_string(), right.to_string()), idx as u32);
+            let left_id = out.intern_piece(left);
+            let right_id = out.intern_piece(right);
+            let mut merged = String::with_capacity(left.len() + right.len());
+            merged.push_str(left);
+            merged.push_str(right);
+            let merged_id = out.intern_owned_piece(merged);
+            out.insert_merge(left_id, right_id, merged_id, idx as u32);
         }
-        Ok(Self { ranks })
+        Ok(out)
+    }
+
+    pub fn lookup_merge_by_left_right(&self, left: u32, right: u32) -> Option<MergeEntry> {
+        self.merges_by_left_right.get(&(left, right)).copied()
+    }
+
+    pub fn lookup_merge_by_left_merged(&self, left: u32, merged: u32) -> Option<MergeEntry> {
+        self.merges_by_left_merged.get(&(left, merged)).copied()
+    }
+
+    pub fn lookup_merge_by_right_merged(&self, right: u32, merged: u32) -> Option<MergeEntry> {
+        self.merges_by_right_merged.get(&(right, merged)).copied()
+    }
+
+    /// Encode an interned BPE piece to its internal ID.
+    pub fn encode_piece(&self, piece: &str) -> Option<u32> {
+        self.piece_to_id.get(piece).copied()
+    }
+
+    /// Decode an internal BPE piece ID back to its surface form.
+    pub fn decode_piece(&self, id: u32) -> Option<&str> {
+        self.pieces.get(id as usize).map(String::as_str)
+    }
+
+    /// Decode a slice of internal BPE piece IDs.
+    pub fn decode_piece_ids<'a>(&'a self, ids: &[u32]) -> Option<Vec<&'a str>> {
+        ids.iter().map(|&id| self.decode_piece(id)).collect()
     }
 
     /// Apply BPE merges until no adjacent pair appears in the merge table.
     /// Starts from one symbol per Unicode scalar value (`char`).
     pub fn tokenize(&self, text: &str) -> Vec<String> {
-        if text.is_empty() {
-            return Vec::new();
-        }
-        let mut symbols: Vec<String> = text.chars().map(|c| c.to_string()).collect();
-        loop {
-            let mut best: Option<(usize, u32)> = None;
-            for i in 0..symbols.len().saturating_sub(1) {
-                let key = (symbols[i].clone(), symbols[i + 1].clone());
-                if let Some(&rank) = self.ranks.get(&key) {
-                    match best {
-                        None => best = Some((i, rank)),
-                        Some((bi, br)) => {
-                            if rank < br || (rank == br && i < bi) {
-                                best = Some((i, rank));
-                            }
-                        }
-                    }
-                }
-            }
-            let Some((i, _)) = best else {
-                break;
-            };
-            let merged = format!("{}{}", symbols[i], symbols[i + 1]);
-            symbols[i] = merged;
-            symbols.remove(i + 1);
-        }
-        symbols
+        self.tokenize_piece_refs(text)
+            .into_iter()
+            .map(|piece| piece.text(&self.pieces).to_string())
+            .collect()
+    }
+
+    /// Like [`Self::tokenize`], but returns interned piece IDs when every leaf and merge result is
+    /// known to the current merge graph. Returns `None` if tokenization would need an inline piece.
+    pub fn tokenize_ids(&self, text: &str) -> Option<Vec<u32>> {
+        self.tokenize_piece_refs(text)
+            .into_iter()
+            .map(|piece| match piece {
+                PieceRef::Known(id) => Some(id),
+                PieceRef::Inline(_) => None,
+            })
+            .collect()
     }
 
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
@@ -150,7 +331,111 @@ impl BpeMerges {
         let mut text = String::with_capacity(a.len() + b.len());
         text.push_str(a);
         text.push_str(b);
-        self.tokenize(&text) == [a.to_string(), b.to_string()]
+        let pieces = self.tokenize_piece_refs(&text);
+        pieces.len() == 2
+            && pieces[0].text(&self.pieces) == a
+            && pieces[1].text(&self.pieces) == b
+    }
+
+    /// The leftmost root-to-leaf path in the merge tree for `token`, reported leaf-to-root.
+    ///
+    /// For example, if `hell` is built as `(he, ll)` with `he = (h, e)`, this returns the IDs
+    /// for `[h, he, hell]`, together with the merge rank that produces the next spine node.
+    pub fn left_spine(&self, token: &str) -> Option<Vec<(u32, Option<u32>)>> {
+        self.spine(token, true)
+    }
+
+    /// The rightmost root-to-leaf path in the merge tree for `token`, reported leaf-to-root.
+    ///
+    /// For example, if `hell` is built as `(he, ll)` with `ll = (l, l)`, this returns the IDs
+    /// for `[l, ll, hell]`, together with the merge rank that produces the next spine node.
+    pub fn right_spine(&self, token: &str) -> Option<Vec<(u32, Option<u32>)>> {
+        self.spine(token, false)
+    }
+
+    fn spine(&self, token: &str, take_left: bool) -> Option<Vec<(u32, Option<u32>)>> {
+        let (nodes, root) = self.tokenize_tree(token)?;
+        let mut spine = Vec::new();
+        let mut cursor = root;
+        let mut rank_to_next = None;
+        loop {
+            let PieceRef::Known(id) = nodes[cursor].piece else {
+                return None;
+            };
+            spine.push((id, rank_to_next));
+            let next = if take_left {
+                nodes[cursor].left
+            } else {
+                nodes[cursor].right
+            };
+            let Some(next) = next else {
+                break;
+            };
+            rank_to_next = nodes[cursor].rank;
+            cursor = next;
+        }
+        spine.reverse();
+        Some(spine)
+    }
+
+    fn tokenize_tree(&self, text: &str) -> Option<(Vec<DerivationNode>, usize)> {
+        if text.is_empty() {
+            return None;
+        }
+
+        let mut nodes = Vec::with_capacity(text.chars().count() * 2);
+        let mut symbols = Vec::new();
+        for c in text.chars() {
+            nodes.push(DerivationNode {
+                piece: self.char_piece(c),
+                rank: None,
+                left: None,
+                right: None,
+            });
+            symbols.push(nodes.len() - 1);
+        }
+
+        loop {
+            let mut best: Option<(usize, MergeEntry)> = None;
+            for i in 0..symbols.len().saturating_sub(1) {
+                let Some(rule) =
+                    self.lookup_merge(&nodes[symbols[i]].piece, &nodes[symbols[i + 1]].piece)
+                else {
+                    continue;
+                };
+                match best {
+                    None => best = Some((i, rule)),
+                    Some((best_idx, best_rule)) => {
+                        if rule.rank < best_rule.rank
+                            || (rule.rank == best_rule.rank && i < best_idx)
+                        {
+                            best = Some((i, rule));
+                        }
+                    }
+                }
+            }
+
+            let Some((idx, rule)) = best else {
+                break;
+            };
+
+            let left = symbols[idx];
+            let right = symbols[idx + 1];
+            nodes.push(DerivationNode {
+                piece: PieceRef::Known(rule.merged),
+                rank: Some(rule.rank),
+                left: Some(left),
+                right: Some(right),
+            });
+            symbols[idx] = nodes.len() - 1;
+            symbols.remove(idx + 1);
+        }
+
+        if symbols.len() == 1 && nodes[symbols[0]].piece.text(&self.pieces) == text {
+            Some((nodes, symbols[0]))
+        } else {
+            None
+        }
     }
 }
 
@@ -160,6 +445,8 @@ impl BpeMerges {
 pub struct TinyLlamaWordTokenizer {
     merges: BpeMerges,
     vocab: HashMap<String, u32>,
+    id_to_token: Vec<String>,
+    piece_id_to_vocab_id: Vec<Option<u32>>,
 }
 
 impl TinyLlamaWordTokenizer {
@@ -176,7 +463,10 @@ impl TinyLlamaWordTokenizer {
             .and_then(|m| m.get("vocab"))
             .and_then(|m| m.as_object())
             .ok_or(BpeError::InvalidTokenizerJson("missing model.vocab object"))?;
+
         let mut vocab = HashMap::with_capacity(vocab_obj.len());
+        let mut entries = Vec::with_capacity(vocab_obj.len());
+        let mut max_id = 0usize;
         for (token, id_val) in vocab_obj {
             let id = id_val
                 .as_u64()
@@ -185,15 +475,44 @@ impl TinyLlamaWordTokenizer {
             if id > u32::MAX as u64 {
                 return Err(BpeError::InvalidTokenizerJson("vocab id does not fit u32"));
             }
-            vocab.insert(token.clone(), id as u32);
+            let id = id as u32;
+            max_id = max_id.max(id as usize);
+            vocab.insert(token.clone(), id);
+            entries.push((token.as_str(), id));
         }
-        Ok(Self { merges, vocab })
+
+        let mut id_to_token = vec![String::new(); max_id + 1];
+        let mut seen = vec![false; max_id + 1];
+        for (token, id) in entries {
+            let slot = &mut seen[id as usize];
+            if *slot {
+                return Err(BpeError::InvalidTokenizerJson("duplicate vocab id"));
+            }
+            *slot = true;
+            id_to_token[id as usize] = token.to_string();
+        }
+        if seen.iter().any(|present| !present) {
+            return Err(BpeError::InvalidTokenizerJson("vocab ids must be dense from 0..max"));
+        }
+
+        let mut piece_id_to_vocab_id = vec![None; merges.pieces.len()];
+        for (token, &id) in &vocab {
+            if let Some(piece_id) = merges.encode_piece(token) {
+                piece_id_to_vocab_id[piece_id as usize] = Some(id);
+            }
+        }
+
+        Ok(Self {
+            merges,
+            vocab,
+            id_to_token,
+            piece_id_to_vocab_id,
+        })
     }
 
-    /// BPE surface strings (e.g. `▁hello`, or `▁abc` + `def` for `abcdef`).
-    pub fn tokenize_word(&self, text: &str) -> Result<Vec<String>, BpeError> {
+    fn word_with_space_symbol(&self, text: &str) -> Result<String, BpeError> {
         if text.is_empty() {
-            return Ok(Vec::new());
+            return Ok(String::new());
         }
         if text.chars().any(|c| c.is_whitespace()) {
             return Err(BpeError::WhitespaceInWord);
@@ -203,7 +522,41 @@ impl TinyLlamaWordTokenizer {
             s.push(SPACESYMBOL);
         }
         s.push_str(text);
-        Ok(self.merges.tokenize(&s))
+        Ok(s)
+    }
+
+    /// BPE surface strings (e.g. `▁hello`, or `▁abc` + `def` for `abcdef`).
+    pub fn tokenize_word(&self, text: &str) -> Result<Vec<String>, BpeError> {
+        let s = self.word_with_space_symbol(text)?;
+        if s.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .tokenize_word_piece_ids(text)?
+            .into_iter()
+            .map(|piece_id| {
+                self.merges
+                    .decode_piece(piece_id)
+                    .expect("piece ids returned by tokenize_word_piece_ids must decode")
+                    .to_string()
+            })
+            .collect())
+    }
+
+    /// Internal BPE piece IDs for a single space-free word.
+    pub fn tokenize_word_piece_ids(&self, text: &str) -> Result<Vec<u32>, BpeError> {
+        let s = self.word_with_space_symbol(text)?;
+        if s.is_empty() {
+            return Ok(Vec::new());
+        }
+        for c in s.chars() {
+            if self.merges.piece_id_char(c).is_none() {
+                return Err(BpeError::UnknownPiece(c.to_string()));
+            }
+        }
+        self.merges
+            .tokenize_ids(&s)
+            .ok_or_else(|| BpeError::UnknownPiece(s))
     }
 
     /// True iff `token` is present in the tokenizer vocabulary.
@@ -211,32 +564,61 @@ impl TinyLlamaWordTokenizer {
         self.vocab.contains_key(token)
     }
 
+    /// Encode one vocab token to its tokenizer ID.
+    pub fn encode_token(&self, token: &str) -> Option<u32> {
+        self.vocab.get(token).copied()
+    }
+
+    /// Decode one tokenizer ID to its vocab token.
+    pub fn decode_token(&self, id: u32) -> Option<&str> {
+        self.id_to_token.get(id as usize).map(String::as_str)
+    }
+
+    /// Decode tokenizer IDs to their vocab tokens.
+    pub fn decode<'a>(&'a self, ids: &[u32]) -> Result<Vec<&'a str>, BpeError> {
+        ids.iter()
+            .map(|&id| self.decode_token(id).ok_or(BpeError::UnknownTokenId(id)))
+            .collect()
+    }
+
+    /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
+    pub fn canonical_pair(&self, a: &str, b: &str) -> bool {
+        self.merges.canonical_pair(a, b)
+    }
+
+    /// Iterate over all surface-form tokens in the vocabulary.
+    pub fn vocab_tokens(&self) -> impl Iterator<Item = &str> {
+        self.vocab.keys().map(String::as_str)
+    }
+
     /// Token ids for a single space-free word (no special tokens).
     pub fn encode_word(&self, text: &str) -> Result<Vec<u32>, BpeError> {
-        let pieces = self.tokenize_word(text)?;
-        let mut ids = Vec::with_capacity(pieces.len());
-        for p in pieces {
-            let id = self
-                .vocab
-                .get(&p)
-                .copied()
-                .ok_or_else(|| BpeError::UnknownPiece(p))?;
-            ids.push(id);
+        let piece_ids = self.tokenize_word_piece_ids(text)?;
+        let mut ids = Vec::with_capacity(piece_ids.len());
+        for piece_id in piece_ids {
+            let piece = self
+                .merges
+                .decode_piece(piece_id)
+                .expect("piece ids returned by tokenize_word_piece_ids must decode");
+            let vocab_id = self.piece_id_to_vocab_id[piece_id as usize]
+                .ok_or_else(|| BpeError::UnknownPiece(piece.to_string()))?;
+            ids.push(vocab_id);
         }
         Ok(ids)
     }
 
     /// TinyLlama pieces together with their vocab ids for one space-free word.
     pub fn encode_word_with_pieces(&self, text: &str) -> Result<Vec<(String, u32)>, BpeError> {
-        let pieces = self.tokenize_word(text)?;
-        let mut out = Vec::with_capacity(pieces.len());
-        for piece in pieces {
-            let id = self
-                .vocab
-                .get(&piece)
-                .copied()
-                .ok_or_else(|| BpeError::UnknownPiece(piece.clone()))?;
-            out.push((piece, id));
+        let piece_ids = self.tokenize_word_piece_ids(text)?;
+        let mut out = Vec::with_capacity(piece_ids.len());
+        for piece_id in piece_ids {
+            let piece = self
+                .merges
+                .decode_piece(piece_id)
+                .expect("piece ids returned by tokenize_word_piece_ids must decode");
+            let vocab_id = self.piece_id_to_vocab_id[piece_id as usize]
+                .ok_or_else(|| BpeError::UnknownPiece(piece.to_string()))?;
+            out.push((piece.to_string(), vocab_id));
         }
         Ok(out)
     }
@@ -272,6 +654,29 @@ mod tests {
     }
 
     #[test]
+    fn tokenize_ids_round_trip_to_surface_forms() {
+        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let ids = m.tokenize_ids("abc").unwrap();
+        assert_eq!(m.decode_piece_ids(&ids), Some(vec!["abc"]));
+    }
+
+    #[test]
+    fn merge_lookup_supports_all_three_keyings() {
+        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let a = m.encode_piece("a").unwrap();
+        let b = m.encode_piece("b").unwrap();
+        let ab = m.encode_piece("ab").unwrap();
+
+        let by_pair = m.lookup_merge_by_left_right(a, b).unwrap();
+        assert_eq!(by_pair, m.lookup_merge_by_left_merged(a, ab).unwrap());
+        assert_eq!(by_pair, m.lookup_merge_by_right_merged(b, ab).unwrap());
+        assert_eq!(by_pair.left, a);
+        assert_eq!(by_pair.right, b);
+        assert_eq!(by_pair.merged, ab);
+        assert_eq!(by_pair.rank, 0);
+    }
+
+    #[test]
     fn leftmost_tie() {
         let m = BpeMerges::from_merges_str("a a\n").unwrap();
         assert_eq!(m.tokenize("aa"), vec!["aa".to_string()]);
@@ -283,6 +688,57 @@ mod tests {
         assert!(!m.canonical_pair("a", "b"));
         assert!(m.canonical_pair("ab", "d"));
         assert!(!m.canonical_pair("a", "bc"));
+    }
+
+    #[test]
+    fn left_spine_follows_left_edge_of_merge_tree() {
+        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        let spine = m.left_spine("hell").unwrap();
+        assert_eq!(
+            m.decode_piece_ids(&spine.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            Some(vec!["h", "he", "hell"])
+        );
+        assert_eq!(spine[0].1, Some(0));
+        assert_eq!(spine[1].1, Some(2));
+        assert_eq!(spine[2].1, None);
+    }
+
+    #[test]
+    fn left_spine_uses_actual_bpe_derivation() {
+        let m = BpeMerges::from_merges_str("a b\nb c\nab c\na bc\n").unwrap();
+        let spine = m.left_spine("abc").unwrap();
+        assert_eq!(
+            m.decode_piece_ids(&spine.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            Some(vec!["a", "ab", "abc"])
+        );
+        assert_eq!(spine[0].1, Some(0));
+        assert_eq!(spine[1].1, Some(2));
+        assert_eq!(spine[2].1, None);
+    }
+
+    #[test]
+    fn right_spine_follows_right_edge_of_merge_tree() {
+        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        let spine = m.right_spine("hell").unwrap();
+        assert_eq!(
+            m.decode_piece_ids(&spine.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            Some(vec!["l", "ll", "hell"])
+        );
+        assert_eq!(spine[0].1, Some(1));
+        assert_eq!(spine[1].1, Some(2));
+        assert_eq!(spine[2].1, None);
+    }
+
+    #[test]
+    fn right_spine_is_none_when_string_is_not_a_single_token() {
+        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        assert_eq!(m.right_spine("hel"), None);
+    }
+
+    #[test]
+    fn left_spine_is_none_when_string_is_not_a_single_token() {
+        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        assert_eq!(m.left_spine("hel"), None);
     }
 
     #[test]
@@ -301,7 +757,14 @@ mod tests {
         assert_eq!(tok.encode_word("okay").unwrap(), vec![20759]);
         assert_eq!(tok.encode_word("abcdef").unwrap(), vec![25638, 1753]);
         assert_eq!(tok.encode_word("the").unwrap(), vec![278]);
+        assert_eq!(
+            tok.tokenize_word_piece_ids("abcdef").unwrap().len(),
+            2
+        );
         assert!(tok.is_token("▁hello"));
+        assert_eq!(tok.encode_token("▁hello"), Some(22172));
+        assert_eq!(tok.decode_token(22172), Some("▁hello"));
+        assert_eq!(tok.decode(&[22172]).unwrap(), vec!["▁hello"]);
         assert!(!tok.is_token("not_a_real_token"));
         assert_eq!(
             tok.encode_word_with_pieces("abcdef").unwrap(),

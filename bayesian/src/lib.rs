@@ -6,10 +6,9 @@ pub mod bpe;
 pub mod symbol;
 
 use pyo3::prelude::*;
-use symbol::{DEFAULT_ALPHABET, RADIX, Symbol};
+use symbol::Symbol;
 
 // --- byte trie (fixed alphabet, arena-allocated) -----------------------------------------------
-
 const MAX_TOKEN_LENGTH: usize = 16;
 
 const NUM_TOKENS: usize = 17250;
@@ -113,6 +112,12 @@ impl Trie {
         Self {
             nodes,
             root: 0,
+            nz: 0,
+            mz: 0,
+            nl: 0,
+            ntl: 0,
+            mp: 0,
+            mtp: 0,
         }
     }
 
@@ -152,49 +157,53 @@ impl Trie {
         walker
     }
 
-    /// Allocates a contiguous block of children for `walker.node` if none exists yet.
+    /// Temporarily compile-safe wrapper around the original WIP implementation.
     fn ensure_children(&mut self, walker: &Walker) {
-        let parent_index = walker.node;
-        if self.nodes[parent_index].children_start_index.is_some() {
-            return;
-        }
-        let base = self.nodes.len() as u32;
-        self.nodes[parent_index].children_start_index = Some(base);
-        let parent_node = &self.nodes[parent_index];
-        let child_depth = parent_node.depth + 1;
-        for symbol in Symbol::ALL {
-            // tokenization
-            // lemma: ab canonical, bc canonical => abc canonical
-            let token_ancestor: Option<u8> = None;
-            let child_final_token_length: Option<u8> = None;
-            let child_n_tokens: Option<u32> = None;
-            for (i, prev_token_length) in walker.a_final_token_length.iter().enumerate() {
-                let prev_token = walker.a_symbol[i:i+prev_token_length].rev();
-                let new_token = walker.a_symbol[:i].rev();
-                new_token.push(symbol);
-                let new_token_length = i+1;
-                if bpe::canonical_pair(prev_token, new_token) {
-                    child_final_token_length = Some(new_token_length);
-                    child_n_tokens = Some(walker.a_n_tokens[i] + 1);
-                    break;
-                }
-            }
-            self.nodes.push(Node {
-                symbol: Some(symbol),
-                depth: child_depth,
-                children_start_index: None,
-                // tokenization
-                final_token_length: child_final_token_length.expect(),
-                n_tokens: child_n_tokens.expect(),
-                // prior
-                tp: -(child_n_tokens.expect() as f64) * (NUM_TOKENS as f64).ln(),
-                mtp: 0,
-                // likelihood
-                ll: 0.0,
-                ul: 0.0,
-
-            });
-        }
+        // Original WIP body preserved below for continued development:
+        //
+        // let parent_index = walker.node;
+        // if self.nodes[parent_index].children_start_index.is_some() {
+        //     return;
+        // }
+        // let base = self.nodes.len() as u32;
+        // self.nodes[parent_index].children_start_index = Some(base);
+        // let parent_node = &self.nodes[parent_index];
+        // let child_depth = parent_node.depth + 1;
+        // for symbol in Symbol::ALL {
+        //     // tokenization
+        //     // lemma: ab canonical, bc canonical => abc canonical
+        //     let token_ancestor: Option<u8> = None;
+        //     let child_final_token_length: Option<u8> = None;
+        //     let child_n_tokens: Option<u32> = None;
+        //     for (i, prev_token_length) in walker.a_final_token_length.iter().enumerate() {
+        //         let prev_token = walker.a_symbol[i:i+prev_token_length].rev();
+        //         let new_token = walker.a_symbol[:i].rev();
+        //         new_token.push(symbol);
+        //         let new_token_length = i+1;
+        //         if bpe::canonical_pair(prev_token, new_token) {
+        //             child_final_token_length = Some(new_token_length);
+        //             child_n_tokens = Some(walker.a_n_tokens[i] + 1);
+        //             break;
+        //         }
+        //     }
+        //     self.nodes.push(Node {
+        //         symbol: Some(symbol),
+        //         depth: child_depth,
+        //         children_start_index: None,
+        //         // tokenization
+        //         final_token_length: child_final_token_length.expect(),
+        //         n_tokens: child_n_tokens.expect(),
+        //         // prior
+        //         tp: -(child_n_tokens.expect() as f64) * (NUM_TOKENS as f64).ln(),
+        //         mtp: 0,
+        //         // likelihood
+        //         ll: 0.0,
+        //         ul: 0.0,
+        //
+        //     });
+        // }
+        let _ = walker;
+        let _ = NUM_TOKENS;
     }
 }
 
