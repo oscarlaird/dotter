@@ -4,6 +4,17 @@
 *Dotter enables typing at 20wpm with a single input (e.g. spacebar, blinking). Users synchronize
 their gestures to the timer of their target prefix.*
 
+## Repository layout
+
+| Path | Contents |
+|------|----------|
+| `frontend/` | Vite + React web UI |
+| `language_server/` | Python WebSocket LM server (`lm.py`) and Poetry project |
+| `demos/` | Lean, Rust, and TypeScript interop examples |
+| `formal/proof/` | Lean formalization (Lake) |
+| `math/tex/` | LaTeX write-up (`math.tex` and `chapters/`) |
+| `math/scripts/` | Python notebooks / experiments tied to the math write-up |
+| `experiments/` | Ad-hoc experiments (scratch space) |
 
 ## Running Locally
 
@@ -14,15 +25,16 @@ cd dotter
 ```
 Install Requirements for Language Server
 ```sh
-pip install -r requirements.txt
+pip install -r language_server/requirements.txt
 ```
 Launch Language Server
 ```sh
-python lm.py
+python language_server/lm.py
 ```
 
 Serve Frontend
 ```sh
+npm install --prefix frontend
 npm run dev
 ```
 View the Application

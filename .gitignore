@@ -21,7 +21,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # trie_worker_rust
-static/trie_worker_rust
+frontend/static/trie_worker_rust
 
 # Lean / Lake
 **/.lake/
@@ -79,5 +79,5 @@ poetry.lock
 *.toc
 
 # Local generated project outputs
-lean_python_demo/build/
-rust_aeneas_demo/lean_verify/generated/
+demos/lean_python_demo/build/
+demos/rust_aeneas_demo/lean_verify/generated/
