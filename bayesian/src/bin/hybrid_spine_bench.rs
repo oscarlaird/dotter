@@ -4,7 +4,9 @@ use std::hint::black_box;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use bayesian::bpe::{BpeMerges, PackedSpine, SpineEntry, TinyLlamaWordTokenizer};
+use bayesian::bpe::{
+    BpeMerges, PackedSpine, SpineEntry, TinyLlamaWordTokenizer, MAX_PACKED_SPINE_LEN,
+};
 use serde_json::Value;
 
 #[derive(Clone, Debug)]
@@ -41,6 +43,7 @@ struct RowEntry {
 const SMALL_ROW_LIMIT_15: usize = 15;
 const HEAVY_ROW_SENTINEL: u8 = u8::MAX;
 const EMPTY_HEAVY_SLOT: u16 = u16::MAX;
+const TINYLLAMA_PIECE_COUNT: usize = 32_000;
 
 #[derive(Clone, Copy, Debug)]
 struct SmallRow15 {
@@ -88,6 +91,25 @@ struct SpecializedLookup15HeavyHash {
     heavy_descs: Vec<HeavyRowDesc>,
     heavy_rights: Vec<u16>,
     heavy_ranks: Vec<u32>,
+}
+
+#[derive(Debug)]
+struct MergeRows {
+    rows: Vec<Vec<RowEntry>>,
+    piece_count: usize,
+}
+
+#[derive(Debug)]
+struct PreparedFirstDense {
+    right_spine: PackedSpine,
+    cross_rank_tables: Box<[[u16; TINYLLAMA_PIECE_COUNT]; MAX_PACKED_SPINE_LEN]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CompactLeftSpine {
+    len: u8,
+    ids: [u16; MAX_PACKED_SPINE_LEN],
+    rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
 }
 
 #[derive(Debug, Default)]
@@ -189,6 +211,104 @@ impl HybridLookup {
             }
             None
         }
+    }
+}
+
+impl MergeRows {
+    fn build(tokenizer_path: &str, merges_graph: &BpeMerges) -> Result<Self, String> {
+        let text = std::fs::read_to_string(tokenizer_path)
+            .map_err(|err| format!("failed to read tokenizer json: {err}"))?;
+        let json: Value =
+            serde_json::from_str(&text).map_err(|err| format!("failed to parse tokenizer json: {err}"))?;
+        let merges = json
+            .get("model")
+            .and_then(|model| model.get("merges"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| "missing model.merges array".to_string())?;
+
+        let piece_count = piece_count(merges_graph);
+        let mut rows = vec![Vec::<RowEntry>::new(); piece_count];
+
+        for (rank, item) in merges.iter().enumerate() {
+            let line = item
+                .as_str()
+                .ok_or_else(|| "merge entry is not a string".to_string())?;
+            let (left, right) = line
+                .split_once(' ')
+                .ok_or_else(|| format!("bad merge line: {line:?}"))?;
+            let left_id = merges_graph
+                .encode_piece(left)
+                .ok_or_else(|| format!("unknown left piece in merges graph: {left:?}"))?;
+            let right_id = merges_graph
+                .encode_piece(right)
+                .ok_or_else(|| format!("unknown right piece in merges graph: {right:?}"))?;
+            rows[left_id as usize].push(RowEntry {
+                right: u16::try_from(right_id)
+                    .map_err(|_| "piece ids no longer fit in u16".to_string())?,
+                rank: rank as u32,
+            });
+        }
+
+        Ok(Self { rows, piece_count })
+    }
+}
+
+impl PreparedFirstDense {
+    fn build(
+        first_right_spine: PackedSpine,
+        merge_rows: &MergeRows,
+    ) -> Result<Self, String> {
+        if merge_rows.piece_count != TINYLLAMA_PIECE_COUNT {
+            return Err(format!(
+                "expected TinyLlama piece count {}, got {}",
+                TINYLLAMA_PIECE_COUNT, merge_rows.piece_count
+            ));
+        }
+
+        let mut cross_rank_tables: Box<[[u16; TINYLLAMA_PIECE_COUNT]; MAX_PACKED_SPINE_LEN]> =
+            vec![[0u16; TINYLLAMA_PIECE_COUNT]; MAX_PACKED_SPINE_LEN]
+                .into_boxed_slice()
+                .try_into()
+                .map_err(|_| "failed to allocate fixed TinyLlama cross-rank tables".to_string())?;
+
+        for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
+            let table = &mut cross_rank_tables[spine_idx];
+            for entry in &merge_rows.rows[spine_entry.id as usize] {
+                let rank_plus_one = entry
+                    .rank
+                    .checked_add(1)
+                    .and_then(|value| u16::try_from(value).ok())
+                    .ok_or_else(|| "merge rank no longer fits in u16".to_string())?;
+                table[entry.right as usize] = rank_plus_one;
+            }
+        }
+
+        Ok(Self {
+            right_spine: first_right_spine,
+            cross_rank_tables,
+        })
+    }
+
+    #[inline(always)]
+    fn cross_rank_plus_one(&self, right_spine_idx: usize, left_piece_id: u16) -> u16 {
+        self.cross_rank_tables[right_spine_idx][left_piece_id as usize]
+    }
+}
+
+impl CompactLeftSpine {
+    fn from_packed(packed: PackedSpine) -> Self {
+        let mut compact = Self {
+            len: 0,
+            ids: [0; MAX_PACKED_SPINE_LEN],
+            rank_plus_one: [0; MAX_PACKED_SPINE_LEN],
+        };
+        let entries = packed.as_slice();
+        compact.len = entries.len() as u8;
+        for (idx, entry) in entries.iter().enumerate() {
+            compact.ids[idx] = entry.id;
+            compact.rank_plus_one[idx] = entry.rank_plus_one;
+        }
+        compact
     }
 }
 
@@ -691,6 +811,56 @@ fn canonical_pair_from_spines_specialized_heavy_hash(
     }
 }
 
+fn canonical_pair_from_prepared_first_dense(
+    prepared_first: &PreparedFirstDense,
+    left_spine: &[SpineEntry],
+) -> bool {
+    let right_spine = prepared_first.right_spine.as_slice();
+    if right_spine.is_empty() || left_spine.is_empty() {
+        return false;
+    }
+
+    let mut i = 0usize;
+    let mut j = 0usize;
+
+    loop {
+        let right_rank_plus_one = right_spine[i].rank_plus_one;
+        let left_entry = left_spine[j];
+        let left_rank_plus_one = left_entry.rank_plus_one;
+        let cross_rank_plus_one = prepared_first.cross_rank_plus_one(i, left_entry.id);
+
+        let mut best_rank_plus_one = right_rank_plus_one;
+        if left_rank_plus_one != 0
+            && (best_rank_plus_one == 0 || left_rank_plus_one < best_rank_plus_one)
+        {
+            best_rank_plus_one = left_rank_plus_one;
+        }
+        if cross_rank_plus_one != 0
+            && (best_rank_plus_one == 0 || cross_rank_plus_one < best_rank_plus_one)
+        {
+            best_rank_plus_one = cross_rank_plus_one;
+        }
+
+        if best_rank_plus_one == 0 {
+            return true;
+        }
+
+        if cross_rank_plus_one == best_rank_plus_one {
+            return false;
+        }
+        if right_rank_plus_one == best_rank_plus_one {
+            i += 1;
+            continue;
+        }
+        if left_rank_plus_one == best_rank_plus_one {
+            j += 1;
+            continue;
+        }
+
+        unreachable!("best rank must come from one of the three candidate events");
+    }
+}
+
 fn canonical_pair_from_spines_specialized_collect_stats(
     lookup: &SpecializedLookup15,
     right_spine: &[SpineEntry],
@@ -977,6 +1147,125 @@ fn count_mismatches_specialized_heavy_hash(
     mismatches
 }
 
+fn time_prepared_first_dense_split(
+    tokenizer: &TinyLlamaWordTokenizer,
+    merge_rows: &MergeRows,
+    sampled_first_ids: &[u32],
+    candidate_second_spines: &[PackedSpine],
+) -> Result<(u64, u64, u64, f64, f64, f64), String> {
+    let total_start = Instant::now();
+    let mut pair_count = 0u64;
+    let mut used_first_ids = 0u64;
+    let mut canonical_count = 0u64;
+    let mut prepare_seconds = 0.0f64;
+    let mut scan_seconds = 0.0f64;
+
+    for &first_id in sampled_first_ids {
+        let Some(first_right_spine) = tokenizer.right_packed_spine_for_token_id(first_id) else {
+            continue;
+        };
+        let prepare_start = Instant::now();
+        let prepared_first = PreparedFirstDense::build(first_right_spine, merge_rows)?;
+        prepare_seconds += prepare_start.elapsed().as_secs_f64();
+
+        used_first_ids += 1;
+
+        let scan_start = Instant::now();
+        for second_left_spine in candidate_second_spines {
+            if black_box(canonical_pair_from_prepared_first_dense(
+                &prepared_first,
+                second_left_spine.as_slice(),
+            )) {
+                canonical_count += 1;
+            }
+            pair_count += 1;
+        }
+        scan_seconds += scan_start.elapsed().as_secs_f64();
+    }
+
+    Ok((
+        pair_count,
+        used_first_ids,
+        canonical_count,
+        total_start.elapsed().as_secs_f64(),
+        prepare_seconds,
+        scan_seconds,
+    ))
+}
+
+fn build_prepared_first_dense_batch(
+    tokenizer: &TinyLlamaWordTokenizer,
+    merge_rows: &MergeRows,
+    sampled_first_ids: &[u32],
+) -> Result<Vec<PreparedFirstDense>, String> {
+    let mut prepared = Vec::with_capacity(sampled_first_ids.len());
+    for &first_id in sampled_first_ids {
+        let Some(first_right_spine) = tokenizer.right_packed_spine_for_token_id(first_id) else {
+            continue;
+        };
+        prepared.push(PreparedFirstDense::build(first_right_spine, merge_rows)?);
+    }
+    Ok(prepared)
+}
+
+fn time_prepared_first_dense_scan_only(
+    prepared_first_batch: &[PreparedFirstDense],
+    candidate_second_spines: &[PackedSpine],
+) -> (u64, u64, u64, f64) {
+    let timed_start = Instant::now();
+    let mut pair_count = 0u64;
+    let used_first_ids = prepared_first_batch.len() as u64;
+    let mut canonical_count = 0u64;
+
+    for prepared_first in prepared_first_batch {
+        for second_left_spine in candidate_second_spines {
+            if black_box(canonical_pair_from_prepared_first_dense(
+                prepared_first,
+                second_left_spine.as_slice(),
+            )) {
+                canonical_count += 1;
+            }
+            pair_count += 1;
+        }
+    }
+
+    (
+        pair_count,
+        used_first_ids,
+        canonical_count,
+        timed_start.elapsed().as_secs_f64(),
+    )
+}
+
+fn count_mismatches_prepared_first_dense(
+    tokenizer: &TinyLlamaWordTokenizer,
+    merge_rows: &MergeRows,
+    sampled_first_ids: &[u32],
+    candidate_second_spines: &[PackedSpine],
+) -> Result<u64, String> {
+    let mut mismatches = 0u64;
+
+    for &first_id in sampled_first_ids {
+        let Some(first_right_spine) = tokenizer.right_packed_spine_for_token_id(first_id) else {
+            continue;
+        };
+        let prepared_first = PreparedFirstDense::build(first_right_spine, merge_rows)?;
+        for second_left_spine in candidate_second_spines {
+            let baseline =
+                tokenizer.canonical_pair_from_packed_spines(&prepared_first.right_spine, second_left_spine);
+            let prepared = canonical_pair_from_prepared_first_dense(
+                &prepared_first,
+                second_left_spine.as_slice(),
+            );
+            if baseline != prepared {
+                mismatches += 1;
+            }
+        }
+    }
+
+    Ok(mismatches)
+}
+
 fn print_timing(label: &str, pair_count: u64, used_first_ids: u64, elapsed_seconds: f64) {
     println!("{label}:");
     println!("  pair_count = {pair_count}");
@@ -1157,6 +1446,13 @@ fn main() -> ExitCode {
         Ok(merges_graph) => merges_graph,
         Err(err) => {
             eprintln!("failed to load merge graph: {err}");
+            return ExitCode::from(1);
+        }
+    };
+    let merge_rows = match MergeRows::build(&tokenizer_path, &merges_graph) {
+        Ok(merge_rows) => merge_rows,
+        Err(err) => {
+            eprintln!("failed to build merge rows: {err}");
             return ExitCode::from(1);
         }
     };
@@ -1346,6 +1642,76 @@ fn main() -> ExitCode {
         println!("  heavy_slots = {heavy_slots}");
         println!("  canonical_count = {canonical_count}");
         println!("  mismatches_vs_baseline = {mismatches}");
+        print_timing("  timing", pair_count, used_first_ids, elapsed_seconds);
+    }
+
+    if mode == "all" || mode == "preparedfirstdense" {
+        let (pair_count, used_first_ids, canonical_count, elapsed_seconds, prepare_seconds, scan_seconds) =
+            match time_prepared_first_dense_split(
+                &tokenizer,
+                &merge_rows,
+                &sampled_first_ids,
+                &candidate_second_spines,
+            ) {
+                Ok(values) => values,
+                Err(err) => {
+                    eprintln!("failed to time prepared-first dense mode: {err}");
+                    return ExitCode::from(1);
+                }
+            };
+        let mismatches = if run_mismatch_checks {
+            match count_mismatches_prepared_first_dense(
+                &tokenizer,
+                &merge_rows,
+                &sampled_first_ids,
+                &candidate_second_spines,
+            ) {
+                Ok(mismatches) => mismatches,
+                Err(err) => {
+                    eprintln!("failed to compare prepared-first dense mode: {err}");
+                    return ExitCode::from(1);
+                }
+            }
+        } else {
+            0
+        };
+
+        println!("prepared_first_dense:");
+        println!("  piece_count = {}", merge_rows.piece_count);
+        println!("  canonical_count = {canonical_count}");
+        println!("  mismatches_vs_baseline = {mismatches}");
+        print_timing("  timing", pair_count, used_first_ids, elapsed_seconds);
+        println!("  prepare_seconds = {prepare_seconds:.6}");
+        println!("  scan_seconds = {scan_seconds:.6}");
+        println!(
+            "  prepare_micros_per_first_token = {:.3}",
+            prepare_seconds * 1_000_000.0 / used_first_ids as f64
+        );
+        println!(
+            "  scan_micros_per_candidate = {:.3}",
+            scan_seconds * 1_000_000.0 / pair_count as f64
+        );
+    }
+
+    if mode == "all" || mode == "preparedfirstdense_scan" {
+        let build_start = Instant::now();
+        let prepared_first_batch =
+            match build_prepared_first_dense_batch(&tokenizer, &merge_rows, &sampled_first_ids) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!("failed to prebuild prepared-first dense batch: {err}");
+                    return ExitCode::from(1);
+                }
+            };
+        let build_seconds = build_start.elapsed().as_secs_f64();
+        let (pair_count, used_first_ids, canonical_count, elapsed_seconds) =
+            time_prepared_first_dense_scan_only(&prepared_first_batch, &candidate_second_spines);
+
+        println!("prepared_first_dense_scan:");
+        println!("  piece_count = {}", merge_rows.piece_count);
+        println!("  prepared_first_count = {}", prepared_first_batch.len());
+        println!("  build_seconds = {build_seconds:.6}");
+        println!("  canonical_count = {canonical_count}");
         print_timing("  timing", pair_count, used_first_ids, elapsed_seconds);
     }
 
