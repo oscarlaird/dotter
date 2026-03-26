@@ -271,6 +271,11 @@ impl TinyLlamaWordTokenizer {
         &self.prepared_second_buckets
     }
 
+    #[doc(hidden)]
+    pub fn prepared_merge_rows(&self) -> &MergeRows {
+        &self.prepared_merge_rows
+    }
+
     pub fn canonical_pair_batch_with_packed_right_spine_into(
         &self,
         first_right_spine: &PackedSpine,

@@ -148,6 +148,23 @@ proved most effective in benchmarking were the following:
     tokens in lexicographic order of their left-spine ID tuples. This improves locality for the
     earliest frontier states, which are visited most often, and reduces effective cache pressure on
     the dense cross-rank rows.
+
+    \item \textbf{Swapped-tight dense layout for unknown frontier index.} At each step the kernel
+    needs values of the form
+    \[
+        \texttt{cross\_rank[left\_id, i]}
+    \]
+    where $left\_id$ is known from the second-token spine, but the needed right-spine index $i$ is
+    not known in advance because it depends on prior rank comparisons. A layout that keeps all $i$
+    values for one fixed left ID close together is therefore preferable. Concretely, store
+    cross-ranks in left-ID-major order with stride equal to the \emph{actual} right-spine length of
+    the prepared first token (``swapped-tight'').
+
+    \item \textbf{Lookahead prefetch on swapped-tight rows.} Because the dominant stall risk is
+    memory latency on future cross-rank row touches, issue a short lookahead prefetch over upcoming
+    left-spine IDs. In swapped-tight layout this prefetch targets compact left-ID rows, so one
+    prefetch often covers several candidate $i$ loads for that row. In practice this is treated as
+    a policy knob (by bucket and workload), not as a correctness requirement.
 \end{enumerate}
 
 These optimizations do not change the correctness argument of
