@@ -10,6 +10,7 @@ use std::io;
 use std::path::Path;
 
 #[doc(hidden)]
+#[path = "bpe/prepared_dense_experiments.rs"]
 pub mod prepared_dense;
 
 mod tinyllama;

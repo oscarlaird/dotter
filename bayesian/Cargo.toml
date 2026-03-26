@@ -13,3 +13,7 @@ serde_json = "1"
 [[bin]]
 name = "bayesian"
 path = "src/main.rs"
+
+[[bin]]
+name = "hybrid_spine_bench"
+path = "src/bin/hybrid_spine_bench_experiments.rs"
