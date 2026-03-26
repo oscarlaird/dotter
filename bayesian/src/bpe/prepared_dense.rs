@@ -52,6 +52,16 @@ pub struct PreparedFirstDenseContiguousSwappedTight<const PIECE_COUNT: usize> {
     dense_matrix_u32: Box<[u32]>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedFirstDenseContiguousSwappedTightAllPairs<const PIECE_COUNT: usize> {
+    right_len: u8,
+    // Allpairs-only convention: score that formed right piece i (i=0 => +inf sentinel).
+    // Includes one padded tail slot at index right_len with score 0.
+    right_piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
+    // Same layout as swapped-tight dense matrix.
+    dense_matrix: Box<[u16]>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CompactLeftSpine {
     pub len: u8,
@@ -66,6 +76,24 @@ pub struct PreparedSecondToken {
 }
 
 pub type PreparedSecondBuckets = [Vec<PreparedSecondToken>; MAX_PACKED_SPINE_LEN + 1];
+
+#[derive(Clone, Copy, Debug)]
+pub struct CompactLeftSpineAllPairs {
+    pub len: u8,
+    pub ids: [u16; MAX_PACKED_SPINE_LEN],
+    // Priority score of merge that formed left piece j.
+    // For j=0 this is sentinel +inf (u16::MAX).
+    // Includes one padded tail slot at index len with score 0.
+    pub piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PreparedSecondTokenAllPairs {
+    pub token_id: u32,
+    pub left_spine: CompactLeftSpineAllPairs,
+}
+
+pub type PreparedSecondBucketsAllPairs = [Vec<PreparedSecondTokenAllPairs>; MAX_PACKED_SPINE_LEN + 1];
 
 pub const PREFETCH_CHUNK_WIDTH: usize = 4;
 pub const MAX_PREFETCH_LEFT_IDS_PER_CHUNK: usize = PREFETCH_CHUNK_WIDTH * MAX_PACKED_SPINE_LEN;
@@ -296,12 +324,54 @@ impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwappedTight<PIECE_CO
                 dense_matrix_u32[idx] = entry.priority_score as u32;
             }
         }
-
         Ok(Self {
             right_len: right_len as u8,
             right_priority_score,
             dense_matrix,
             dense_matrix_u32,
+        })
+    }
+}
+
+impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwappedTightAllPairs<PIECE_COUNT> {
+    pub fn build(first_right_spine: PackedSpine, merge_rows: &MergeRows) -> Result<Self, BpeError> {
+        if PIECE_COUNT > MAX_PREPARED_DENSE_PIECE_COUNT {
+            return Err(BpeError::UnsupportedPreparedDense(
+                "prepared dense table exceeds the maximum supported piece-id width",
+            ));
+        }
+        if merge_rows.piece_count > PIECE_COUNT {
+            return Err(BpeError::UnsupportedPreparedDense(
+                "prepared dense fast path expects piece ids to fit within the configured table",
+            ));
+        }
+
+        let right_len = first_right_spine.as_slice().len();
+        let mut right_piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
+        let mut dense_matrix = vec![0u16; PIECE_COUNT * right_len].into_boxed_slice();
+
+        for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
+            let row = &merge_rows.rows[spine_entry.id as usize];
+            if row.is_empty() {
+                continue;
+            }
+            for entry in row {
+                let idx = entry.right as usize * right_len + spine_idx;
+                dense_matrix[idx] = entry.priority_score;
+            }
+        }
+        if right_len > 0 {
+            right_piece_formed_priority_score[0] = u16::MAX;
+            for idx in 1..right_len {
+                right_piece_formed_priority_score[idx] = first_right_spine.as_slice()[idx - 1].priority_score;
+            }
+            right_piece_formed_priority_score[right_len] = 0;
+        }
+
+        Ok(Self {
+            right_len: right_len as u8,
+            right_piece_formed_priority_score,
+            dense_matrix,
         })
     }
 }
@@ -337,6 +407,34 @@ pub fn bucket_prepared_second_tokens(entries: &[PreparedSecondToken]) -> Prepare
         buckets[entry.left_spine.len as usize].push(entry);
     }
     buckets
+}
+
+pub fn build_prepared_second_buckets_allpairs(
+    buckets: &PreparedSecondBuckets,
+) -> PreparedSecondBucketsAllPairs {
+    let mut out: PreparedSecondBucketsAllPairs = std::array::from_fn(|_| Vec::new());
+    for left_len in 1..=MAX_PACKED_SPINE_LEN {
+        let src = &buckets[left_len];
+        let mut dst = Vec::with_capacity(src.len());
+        for entry in src {
+            let mut piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
+            piece_formed_priority_score[0] = u16::MAX;
+            for idx in 1..left_len {
+                piece_formed_priority_score[idx] = entry.left_spine.priority_score[idx - 1];
+            }
+            piece_formed_priority_score[left_len] = 0;
+            dst.push(PreparedSecondTokenAllPairs {
+                token_id: entry.token_id,
+                left_spine: CompactLeftSpineAllPairs {
+                    len: entry.left_spine.len,
+                    ids: entry.left_spine.ids,
+                    piece_formed_priority_score,
+                },
+            });
+        }
+        out[left_len] = dst;
+    }
+    out
 }
 
 #[inline(always)]
@@ -637,8 +735,8 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
-    left_spine: &CompactLeftSpine,
+    prepared_first: &PreparedFirstDenseContiguousSwappedTightAllPairs<PIECE_COUNT>,
+    left_spine: &CompactLeftSpineAllPairs,
 ) -> bool {
     debug_assert_eq!(left_spine.len as usize, LEFT_LEN);
     debug_assert_eq!(prepared_first.right_len as usize, RIGHT_LEN);
@@ -646,40 +744,36 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
         return false;
     }
 
-    let right_priority_score = &prepared_first.right_priority_score;
+    let right_piece_formed_priority_score = &prepared_first.right_piece_formed_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let left_ids = &left_spine.ids;
-    let left_priority_score = &left_spine.priority_score;
+    let left_piece_formed_priority_score = &left_spine.piece_formed_priority_score;
 
     for j in 0..LEFT_LEN {
-        let l_cur = unsafe { *left_priority_score.get_unchecked(j) };
-        let l_prev = if j == 0 {
-            u16::MAX
-        } else {
-            unsafe { *left_priority_score.get_unchecked(j - 1) }
-        };
+        let l_next = unsafe { *left_piece_formed_priority_score.get_unchecked(j + 1) };
+        let l_cur = unsafe { *left_piece_formed_priority_score.get_unchecked(j) };
         let left_id = unsafe { *left_ids.get_unchecked(j) } as usize;
         debug_assert!(left_id < PIECE_COUNT);
         let row_base = left_id * RIGHT_LEN;
 
         for i in 0..RIGHT_LEN {
-            let r_cur = unsafe { *right_priority_score.get_unchecked(i) };
-            let r_prev = if i == 0 {
-                u16::MAX
-            } else {
-                unsafe { *right_priority_score.get_unchecked(i - 1) }
-            };
+            let r_cur = unsafe { *right_piece_formed_priority_score.get_unchecked(i) };
+            let r_next = unsafe { *right_piece_formed_priority_score.get_unchecked(i + 1) };
 
+            // Reindexed allpairs convention:
+            // r_cur/l_cur = score that formed the current piece,
+            // r_next/l_next = next competing internal merge score (0 at edge).
             // Boundary (i,j) exists iff alive intervals overlap:
-            // max(r_i, l_j) < min(r_{i-1}, l_{j-1}), with sentinels r_-1=l_-1=+inf.
-            let exists_ij = r_cur.max(l_cur) < r_prev.min(l_prev);
+            // max(r_next, l_next) < min(r_cur, l_cur).
+            // Direct-comparison form (no max/min): r_next < l_cur && l_next < r_cur.
+            let exists_ij = (r_next < l_cur) && (l_next < r_cur);
             if !exists_ij {
                 continue;
             }
             let c = unsafe { *dense_matrix.get_unchecked(row_base + i) };
 
             // Reject when cross is a present merge and at least as eager as both competitors.
-            if c != 0 && c >= r_cur && c >= l_cur {
+            if c != 0 && c >= r_next && c >= l_next {
                 return false;
             }
         }
@@ -692,8 +786,8 @@ pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small<
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
-    entries: &[PreparedSecondToken],
+    prepared_first: &PreparedFirstDenseContiguousSwappedTightAllPairs<PIECE_COUNT>,
+    entries: &[PreparedSecondTokenAllPairs],
 ) -> u64 {
     debug_assert_eq!(prepared_first.right_len as usize, RIGHT_LEN);
     let mut canonical_count = 0u64;
@@ -712,10 +806,12 @@ pub fn count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_all
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
-    entries: &[PreparedSecondToken],
+    prepared_first: &PreparedFirstDenseContiguousSwappedTightAllPairs<PIECE_COUNT>,
+    prepared_first_reference: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondTokenAllPairs],
 ) -> u64 {
     debug_assert_eq!(prepared_first.right_len as usize, RIGHT_LEN);
+    debug_assert_eq!(prepared_first_reference.right_len as usize, RIGHT_LEN);
     let mut mismatches = 0u64;
     for entry in entries {
         let allpairs = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_right_len_allpairs_small::<
@@ -723,10 +819,18 @@ pub fn count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_all
             LEFT_LEN,
             RIGHT_LEN,
         >(prepared_first, &entry.left_spine);
+        let mut next_priority_score = [0u16; MAX_PACKED_SPINE_LEN];
+        for idx in 0..LEFT_LEN {
+            next_priority_score[idx] = entry.left_spine.piece_formed_priority_score[idx + 1];
+        }
         let lockstep = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
             PIECE_COUNT,
             LEFT_LEN,
-        >(prepared_first, &entry.left_spine);
+        >(prepared_first_reference, &CompactLeftSpine {
+            len: entry.left_spine.len,
+            ids: entry.left_spine.ids,
+            priority_score: next_priority_score,
+        });
         if allpairs != lockstep {
             mismatches += 1;
         }

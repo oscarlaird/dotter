@@ -4,11 +4,13 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use bayesian::bpe::prepared_dense::{
+    build_prepared_second_buckets_allpairs,
     build_prefetch_left_id_chunks,
     build_prepared_second_simd4_chunks,
     build_prepared_second_simd8_chunks,
     build_prepared_second_simd16_chunks,
     canonical_pair_from_prepared_first_dense_left_len,
+    canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len,
     count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small,
     count_mismatches_prepared_first_dense_bucket_lockstep4,
     count_mismatches_prepared_first_dense_contiguous_swapped_bucket_lockstep4_prefetch2,
@@ -36,7 +38,8 @@ use bayesian::bpe::prepared_dense::{
     PrefetchConfig, PrefetchHint, PrefetchLeftIdChunk, PreparedSecondSimd4Chunk,
     PreparedSecondSimd8Chunk, PreparedSecondSimd16Chunk,
     PreparedFirstDenseContiguousSwapped, PreparedFirstDenseContiguousSwappedTight,
-    PreparedSecondBuckets, PreparedSecondToken,
+    PreparedFirstDenseContiguousSwappedTightAllPairs,
+    PreparedSecondBuckets, PreparedSecondBucketsAllPairs, PreparedSecondToken, PreparedSecondTokenAllPairs,
 };
 use bayesian::bpe::{
     PackedSpine, TINYLLAMA_PIECE_COUNT, TinyLlamaPreparedFirstDense, TinyLlamaWordTokenizer,
@@ -275,6 +278,32 @@ fn build_prepared_first_dense_contiguous_swapped_tight_batches_by_right_len(
         }
         buckets[right_len].push(
             PreparedFirstDenseContiguousSwappedTight::<TINYLLAMA_PIECE_COUNT>::build(
+                first_right_spine,
+                merge_rows,
+            )?,
+        );
+    }
+    Ok(buckets)
+}
+
+fn build_prepared_first_dense_contiguous_swapped_tight_allpairs_batches_by_right_len(
+    tokenizer: &TinyLlamaWordTokenizer,
+    sampled_first_ids: &[u32],
+) -> Result<[Vec<PreparedFirstDenseContiguousSwappedTightAllPairs<TINYLLAMA_PIECE_COUNT>>; 9], bayesian::bpe::BpeError>
+{
+    let mut buckets: [Vec<PreparedFirstDenseContiguousSwappedTightAllPairs<TINYLLAMA_PIECE_COUNT>>; 9] =
+        std::array::from_fn(|_| Vec::new());
+    let merge_rows = tokenizer.prepared_merge_rows();
+    for &first_id in sampled_first_ids {
+        let Some(first_right_spine) = tokenizer.right_packed_spine_for_token_id(first_id) else {
+            continue;
+        };
+        let right_len = first_right_spine.as_slice().len();
+        if right_len > 8 {
+            continue;
+        }
+        buckets[right_len].push(
+            PreparedFirstDenseContiguousSwappedTightAllPairs::<TINYLLAMA_PIECE_COUNT>::build(
                 first_right_spine,
                 merge_rows,
             )?,
@@ -709,6 +738,27 @@ fn time_bucket_lockstep4_contiguous_swapped_tight<const LEFT_LEN: usize>(
     )
 }
 
+fn time_bucket_scalar_contiguous_swapped_tight<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+) -> (u64, u64, f64) {
+    let timed_start = Instant::now();
+    let mut canonical_count = 0u64;
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        for entry in entries {
+            canonical_count += canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, &entry.left_spine) as u64;
+        }
+    }
+    (
+        (prepared_first_contiguous_swapped_tight_batch.len() * entries.len()) as u64,
+        canonical_count,
+        timed_start.elapsed().as_secs_f64(),
+    )
+}
+
 fn count_bucket_lockstep4_contiguous_swapped_tight_mismatches<const LEFT_LEN: usize>(
     prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
     entries: &[PreparedSecondToken],
@@ -724,8 +774,8 @@ fn count_bucket_lockstep4_contiguous_swapped_tight_mismatches<const LEFT_LEN: us
 }
 
 fn time_bucket_allpairs_small_contiguous_swapped_tight<const LEFT_LEN: usize, const RIGHT_LEN: usize>(
-    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
-    entries: &[PreparedSecondToken],
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTightAllPairs<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondTokenAllPairs],
 ) -> (u64, u64, f64) {
     let timed_start = Instant::now();
     let mut canonical_count = 0u64;
@@ -751,17 +801,27 @@ fn count_bucket_allpairs_small_contiguous_swapped_tight_mismatches<
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
-    entries: &[PreparedSecondToken],
+    prepared_first_contiguous_swapped_tight_allpairs_batch: &[PreparedFirstDenseContiguousSwappedTightAllPairs<TINYLLAMA_PIECE_COUNT>],
+    prepared_first_contiguous_swapped_tight_reference_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondTokenAllPairs],
 ) -> u64 {
     let mut mismatches = 0u64;
-    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+    debug_assert_eq!(
+        prepared_first_contiguous_swapped_tight_allpairs_batch.len(),
+        prepared_first_contiguous_swapped_tight_reference_batch.len()
+    );
+    for idx in 0..prepared_first_contiguous_swapped_tight_allpairs_batch.len() {
+        let prepared_first_allpairs =
+            unsafe { prepared_first_contiguous_swapped_tight_allpairs_batch.get_unchecked(idx) };
+        let prepared_first_reference = unsafe {
+            prepared_first_contiguous_swapped_tight_reference_batch.get_unchecked(idx)
+        };
         mismatches +=
             count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small::<
                 TINYLLAMA_PIECE_COUNT,
                 LEFT_LEN,
                 RIGHT_LEN,
-            >(prepared_first, entries);
+            >(prepared_first_allpairs, prepared_first_reference, entries);
     }
     mismatches
 }
@@ -3267,6 +3327,69 @@ fn main() -> ExitCode {
         }
     }
 
+    if mode == "preparedfirstdense_scalar_swappedtight_bybucket" {
+        let prepared_first_contiguous_swapped_tight_batch =
+            match build_prepared_first_dense_contiguous_swapped_tight_batch(&tokenizer, &sampled_first_ids) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!("failed to prebuild swapped-tight contiguous prepared-first dense batch: {err}");
+                    return ExitCode::from(1);
+                }
+            };
+        println!("prepared_first_dense_scalar_swappedtight_bybucket:");
+        println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
+        println!(
+            "  swapped_tight_prepared_first_count = {}",
+            prepared_first_contiguous_swapped_tight_batch.len()
+        );
+
+        let mut total_pair_count = 0u64;
+        let mut total_scalar_seconds = 0.0f64;
+
+        macro_rules! bench_bucket_scalar_swappedtight {
+            ($left_len:literal) => {{
+                let entries = &candidate_second_buckets[$left_len];
+                if entries.is_empty() {
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = 0");
+                } else {
+                    let (pair_count, scalar_canonical_count, scalar_seconds) =
+                        time_bucket_scalar_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                        );
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = {pair_count}");
+                    println!("    scalar_canonical_count = {scalar_canonical_count}");
+                    println!("    scalar_seconds = {scalar_seconds:.12}");
+                    println!(
+                        "    scalar_ns_per_candidate = {:.12}",
+                        scalar_seconds * 1_000_000_000.0 / pair_count as f64
+                    );
+                    total_pair_count += pair_count;
+                    total_scalar_seconds += scalar_seconds;
+                }
+            }};
+        }
+
+        bench_bucket_scalar_swappedtight!(1);
+        bench_bucket_scalar_swappedtight!(2);
+        bench_bucket_scalar_swappedtight!(3);
+        bench_bucket_scalar_swappedtight!(4);
+        bench_bucket_scalar_swappedtight!(5);
+        bench_bucket_scalar_swappedtight!(6);
+        bench_bucket_scalar_swappedtight!(7);
+        bench_bucket_scalar_swappedtight!(8);
+
+        if total_pair_count > 0 {
+            println!("  overall_pair_count = {total_pair_count}");
+            println!(
+                "  overall_scalar_ns_per_candidate = {:.12}",
+                total_scalar_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+        }
+    }
+
     if mode == "preparedfirstdense_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket" {
         let prepared_first_contiguous_swapped_tight_batch =
             match build_prepared_first_dense_contiguous_swapped_tight_batch(&tokenizer, &sampled_first_ids) {
@@ -3746,6 +3869,21 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
+        let prepared_first_tight_allpairs_by_right_len =
+            match build_prepared_first_dense_contiguous_swapped_tight_allpairs_batches_by_right_len(
+                &tokenizer,
+                &sampled_first_ids,
+            ) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!(
+                        "failed to prebuild swapped-tight allpairs prepared-first dense batches by right_len: {err}"
+                    );
+                    return ExitCode::from(1);
+                }
+            };
+        let candidate_second_buckets_allpairs: PreparedSecondBucketsAllPairs =
+            build_prepared_second_buckets_allpairs(candidate_second_buckets);
 
         println!("prepared_first_dense_allpairs_small_vs_lockstep4_matrix_by_len:");
         println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
@@ -3769,8 +3907,10 @@ fn main() -> ExitCode {
         for left_len in 1..=8usize {
             println!("  left_len = {left_len}");
             let entries = &candidate_second_buckets[left_len];
+            let entries_allpairs = &candidate_second_buckets_allpairs[left_len];
             for right_len in 1..=8usize {
                 let prepared_batch = &prepared_first_tight_by_right_len[right_len];
+                let prepared_allpairs_batch = &prepared_first_tight_allpairs_by_right_len[right_len];
                 if entries.is_empty() || prepared_batch.is_empty() {
                     println!(
                         "    cell(left_len={left_len}, right_len={right_len}): pair_count=0"
@@ -3803,108 +3943,108 @@ fn main() -> ExitCode {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<2, 2>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<2, 2>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (2, 3) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<2, 3>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<2, 3>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (2, 4) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<2, 4>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<2, 4>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (3, 2) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<3, 2>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<3, 2>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (3, 3) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<3, 3>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<3, 3>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (3, 4) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<3, 4>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<3, 4>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (4, 2) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<4, 2>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<4, 2>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (4, 3) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<4, 3>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<4, 3>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     (4, 4) => {
                         used_allpairs = true;
                         let (_, canonical_count, seconds) =
                             time_bucket_allpairs_small_contiguous_swapped_tight::<4, 4>(
-                                prepared_batch, entries,
+                                prepared_allpairs_batch, entries_allpairs,
                             );
                         allpairs_seconds = seconds;
                         allpairs_canonical_count = canonical_count;
                         mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<4, 4>(
-                            prepared_batch, entries,
+                            prepared_allpairs_batch, prepared_batch, entries_allpairs,
                         );
                     }
                     _ => {}
