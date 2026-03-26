@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::env;
 use std::hint::black_box;
 use std::process::ExitCode;
@@ -102,7 +103,10 @@ struct MergeRows {
 #[derive(Debug)]
 struct PreparedFirstDense {
     right_spine: PackedSpine,
-    cross_rank_tables: Box<[[u16; TINYLLAMA_PIECE_COUNT]; MAX_PACKED_SPINE_LEN]>,
+    right_len: u8,
+    right_rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
+    cross_rank_row_ptrs: [*const u16; MAX_PACKED_SPINE_LEN],
+    _cross_rank_tables: Box<[[u16; TINYLLAMA_PIECE_COUNT]; MAX_PACKED_SPINE_LEN]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -111,6 +115,8 @@ struct CompactLeftSpine {
     ids: [u16; MAX_PACKED_SPINE_LEN],
     rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
 }
+
+type CompactLeftSpineBuckets = [Vec<CompactLeftSpine>; MAX_PACKED_SPINE_LEN + 1];
 
 #[derive(Debug, Default)]
 struct LookupStats32 {
@@ -270,9 +276,13 @@ impl PreparedFirstDense {
                 .into_boxed_slice()
                 .try_into()
                 .map_err(|_| "failed to allocate fixed TinyLlama cross-rank tables".to_string())?;
+        let mut right_rank_plus_one = [0u16; MAX_PACKED_SPINE_LEN];
+        let mut cross_rank_row_ptrs = [std::ptr::null(); MAX_PACKED_SPINE_LEN];
 
         for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
             let table = &mut cross_rank_tables[spine_idx];
+            right_rank_plus_one[spine_idx] = spine_entry.rank_plus_one;
+            cross_rank_row_ptrs[spine_idx] = table.as_ptr();
             for entry in &merge_rows.rows[spine_entry.id as usize] {
                 let rank_plus_one = entry
                     .rank
@@ -285,13 +295,11 @@ impl PreparedFirstDense {
 
         Ok(Self {
             right_spine: first_right_spine,
-            cross_rank_tables,
+            right_len: first_right_spine.as_slice().len() as u8,
+            right_rank_plus_one,
+            cross_rank_row_ptrs,
+            _cross_rank_tables: cross_rank_tables,
         })
-    }
-
-    #[inline(always)]
-    fn cross_rank_plus_one(&self, right_spine_idx: usize, left_piece_id: u16) -> u16 {
-        self.cross_rank_tables[right_spine_idx][left_piece_id as usize]
     }
 }
 
@@ -310,6 +318,14 @@ impl CompactLeftSpine {
         }
         compact
     }
+}
+
+fn bucket_compact_left_spines(spines: &[CompactLeftSpine]) -> CompactLeftSpineBuckets {
+    let mut buckets: CompactLeftSpineBuckets = std::array::from_fn(|_| Vec::new());
+    for &spine in spines {
+        buckets[spine.len as usize].push(spine);
+    }
+    buckets
 }
 
 impl SpecializedLookup15 {
@@ -811,22 +827,35 @@ fn canonical_pair_from_spines_specialized_heavy_hash(
     }
 }
 
-fn canonical_pair_from_prepared_first_dense(
+#[inline(always)]
+fn canonical_pair_from_prepared_first_dense_left_len<const LEFT_LEN: usize>(
     prepared_first: &PreparedFirstDense,
     left_spine: &CompactLeftSpine,
 ) -> bool {
-    let right_spine = prepared_first.right_spine.as_slice();
-    if right_spine.is_empty() || left_spine.len == 0 {
+    debug_assert_eq!(left_spine.len as usize, LEFT_LEN);
+    if prepared_first.right_len == 0 || LEFT_LEN == 0 {
         return false;
     }
 
+    let right_spine_len = prepared_first.right_len as usize;
+    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let cross_rank_row_ptrs = &prepared_first.cross_rank_row_ptrs;
+    let left_ids = &left_spine.ids;
+    let left_rank_plus_one = &left_spine.rank_plus_one;
     let mut i = 0usize;
     let mut j = 0usize;
 
     loop {
-        let right_rank_plus_one = right_spine[i].rank_plus_one;
-        let left_rank_plus_one = left_spine.rank_plus_one[j];
-        let cross_rank_plus_one = prepared_first.cross_rank_plus_one(i, left_spine.ids[j]);
+        debug_assert!(i < right_spine_len);
+        debug_assert!(j < LEFT_LEN);
+
+        // These indices only advance when the current node exposes a next rank.
+        let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i) };
+        let left_id = unsafe { *left_ids.get_unchecked(j) };
+        let left_rank_plus_one = unsafe { *left_rank_plus_one.get_unchecked(j) };
+        debug_assert!((left_id as usize) < TINYLLAMA_PIECE_COUNT);
+        let cross_rank_plus_one =
+            unsafe { *(*cross_rank_row_ptrs.get_unchecked(i)).add(left_id as usize) };
 
         let mut best_rank_plus_one = right_rank_plus_one;
         if left_rank_plus_one != 0
@@ -857,6 +886,25 @@ fn canonical_pair_from_prepared_first_dense(
         }
 
         unreachable!("best rank must come from one of the three candidate events");
+    }
+}
+
+#[inline(always)]
+fn canonical_pair_from_prepared_first_dense(
+    prepared_first: &PreparedFirstDense,
+    left_spine: &CompactLeftSpine,
+) -> bool {
+    match left_spine.len {
+        0 => false,
+        1 => canonical_pair_from_prepared_first_dense_left_len::<1>(prepared_first, left_spine),
+        2 => canonical_pair_from_prepared_first_dense_left_len::<2>(prepared_first, left_spine),
+        3 => canonical_pair_from_prepared_first_dense_left_len::<3>(prepared_first, left_spine),
+        4 => canonical_pair_from_prepared_first_dense_left_len::<4>(prepared_first, left_spine),
+        5 => canonical_pair_from_prepared_first_dense_left_len::<5>(prepared_first, left_spine),
+        6 => canonical_pair_from_prepared_first_dense_left_len::<6>(prepared_first, left_spine),
+        7 => canonical_pair_from_prepared_first_dense_left_len::<7>(prepared_first, left_spine),
+        8 => canonical_pair_from_prepared_first_dense_left_len::<8>(prepared_first, left_spine),
+        _ => unreachable!("packed spine len must fit MAX_PACKED_SPINE_LEN"),
     }
 }
 
@@ -1150,7 +1198,7 @@ fn time_prepared_first_dense_split(
     tokenizer: &TinyLlamaWordTokenizer,
     merge_rows: &MergeRows,
     sampled_first_ids: &[u32],
-    candidate_second_spines: &[CompactLeftSpine],
+    candidate_second_buckets: &CompactLeftSpineBuckets,
 ) -> Result<(u64, u64, u64, f64, f64, f64), String> {
     let total_start = Instant::now();
     let mut pair_count = 0u64;
@@ -1170,12 +1218,27 @@ fn time_prepared_first_dense_split(
         used_first_ids += 1;
 
         let scan_start = Instant::now();
-        for second_left_spine in candidate_second_spines {
-            if black_box(canonical_pair_from_prepared_first_dense(&prepared_first, second_left_spine)) {
-                canonical_count += 1;
-            }
-            pair_count += 1;
+        macro_rules! scan_bucket {
+            ($left_len:literal) => {
+                for second_left_spine in &candidate_second_buckets[$left_len] {
+                    if black_box(canonical_pair_from_prepared_first_dense_left_len::<$left_len>(
+                        &prepared_first,
+                        second_left_spine,
+                    )) {
+                        canonical_count += 1;
+                    }
+                    pair_count += 1;
+                }
+            };
         }
+        scan_bucket!(1);
+        scan_bucket!(2);
+        scan_bucket!(3);
+        scan_bucket!(4);
+        scan_bucket!(5);
+        scan_bucket!(6);
+        scan_bucket!(7);
+        scan_bucket!(8);
         scan_seconds += scan_start.elapsed().as_secs_f64();
     }
 
@@ -1206,7 +1269,7 @@ fn build_prepared_first_dense_batch(
 
 fn time_prepared_first_dense_scan_only(
     prepared_first_batch: &[PreparedFirstDense],
-    candidate_second_spines: &[CompactLeftSpine],
+    candidate_second_buckets: &CompactLeftSpineBuckets,
 ) -> (u64, u64, u64, f64) {
     let timed_start = Instant::now();
     let mut pair_count = 0u64;
@@ -1214,12 +1277,27 @@ fn time_prepared_first_dense_scan_only(
     let mut canonical_count = 0u64;
 
     for prepared_first in prepared_first_batch {
-        for second_left_spine in candidate_second_spines {
-            if black_box(canonical_pair_from_prepared_first_dense(prepared_first, second_left_spine)) {
-                canonical_count += 1;
-            }
-            pair_count += 1;
+        macro_rules! scan_bucket {
+            ($left_len:literal) => {
+                for second_left_spine in &candidate_second_buckets[$left_len] {
+                    if black_box(canonical_pair_from_prepared_first_dense_left_len::<$left_len>(
+                        prepared_first,
+                        second_left_spine,
+                    )) {
+                        canonical_count += 1;
+                    }
+                    pair_count += 1;
+                }
+            };
         }
+        scan_bucket!(1);
+        scan_bucket!(2);
+        scan_bucket!(3);
+        scan_bucket!(4);
+        scan_bucket!(5);
+        scan_bucket!(6);
+        scan_bucket!(7);
+        scan_bucket!(8);
     }
 
     (
@@ -1272,6 +1350,52 @@ fn print_timing(label: &str, pair_count: u64, used_first_ids: u64, elapsed_secon
         "  millis_per_first_token = {:.3}",
         elapsed_seconds * 1_000.0 / used_first_ids as f64
     );
+}
+
+fn analyze_prepared_dense_row_popcounts(
+    tokenizer: &TinyLlamaWordTokenizer,
+    merge_rows: &MergeRows,
+    sampled_first_ids: &[u32],
+) {
+    let mut hist = BTreeMap::<usize, u64>::new();
+    let mut total_rows = 0u64;
+    let mut total_popcount = 0u64;
+    let mut min_popcount = usize::MAX;
+    let mut max_popcount = 0usize;
+
+    for &first_id in sampled_first_ids {
+        let Some(first_right_spine) = tokenizer.right_packed_spine_for_token_id(first_id) else {
+            continue;
+        };
+        for entry in first_right_spine.as_slice() {
+            let popcount = merge_rows.rows[entry.id as usize].len();
+            *hist.entry(popcount).or_insert(0) += 1;
+            total_rows += 1;
+            total_popcount += popcount as u64;
+            min_popcount = min_popcount.min(popcount);
+            max_popcount = max_popcount.max(popcount);
+        }
+    }
+
+    println!("prepared_first_dense_row_popcount_hist:");
+    println!("  sampled_first_ids = {}", sampled_first_ids.len());
+    println!("  total_active_dense_rows = {total_rows}");
+    if total_rows == 0 {
+        return;
+    }
+    println!(
+        "  avg_popcount = {:.3}",
+        total_popcount as f64 / total_rows as f64
+    );
+    println!("  min_popcount = {min_popcount}");
+    println!("  max_popcount = {max_popcount}");
+    println!("  histogram:");
+    for (popcount, count) in hist {
+        println!(
+            "    popcount={popcount:>4} rows={count:>8} fraction={:.6}",
+            count as f64 / total_rows as f64
+        );
+    }
 }
 
 fn replay_fallback_32(
@@ -1467,6 +1591,7 @@ fn main() -> ExitCode {
         .copied()
         .map(CompactLeftSpine::from_packed)
         .collect();
+    let candidate_second_compact_buckets = bucket_compact_left_spines(&candidate_second_compact_spines);
     let mut rng = XorShift64::new(seed);
     let sampled_first_ids: Vec<u32> = (0..samples)
         .map(|_| candidate_second_ids[rng.gen_index(candidate_second_ids.len())])
@@ -1649,7 +1774,7 @@ fn main() -> ExitCode {
                 &tokenizer,
                 &merge_rows,
                 &sampled_first_ids,
-                &candidate_second_compact_spines,
+                &candidate_second_compact_buckets,
             ) {
                 Ok(values) => values,
                 Err(err) => {
@@ -1704,7 +1829,7 @@ fn main() -> ExitCode {
             };
         let build_seconds = build_start.elapsed().as_secs_f64();
         let (pair_count, used_first_ids, canonical_count, elapsed_seconds) =
-            time_prepared_first_dense_scan_only(&prepared_first_batch, &candidate_second_compact_spines);
+            time_prepared_first_dense_scan_only(&prepared_first_batch, &candidate_second_compact_buckets);
 
         println!("prepared_first_dense_scan:");
         println!("  piece_count = {}", merge_rows.piece_count);
@@ -1712,6 +1837,10 @@ fn main() -> ExitCode {
         println!("  build_seconds = {build_seconds:.6}");
         println!("  canonical_count = {canonical_count}");
         print_timing("  timing", pair_count, used_first_ids, elapsed_seconds);
+    }
+
+    if mode == "preparedfirstdense_rowhist" {
+        analyze_prepared_dense_row_popcounts(&tokenizer, &merge_rows, &sampled_first_ids);
     }
 
     ExitCode::SUCCESS
