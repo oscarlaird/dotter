@@ -9,6 +9,7 @@ use bayesian::bpe::prepared_dense::{
     build_prepared_second_simd8_chunks,
     build_prepared_second_simd16_chunks,
     canonical_pair_from_prepared_first_dense_left_len,
+    count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small,
     count_mismatches_prepared_first_dense_bucket_lockstep4,
     count_mismatches_prepared_first_dense_contiguous_swapped_bucket_lockstep4_prefetch2,
     count_mismatches_prepared_first_dense_contiguous_swapped_bucket_lockstep4_prefetch,
@@ -27,6 +28,7 @@ use bayesian::bpe::prepared_dense::{
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd4,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd8,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd16,
+    scan_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch_prebuilt_param,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch_prebuilt,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4,
@@ -717,6 +719,49 @@ fn count_bucket_lockstep4_contiguous_swapped_tight_mismatches<const LEFT_LEN: us
             TINYLLAMA_PIECE_COUNT,
             LEFT_LEN,
         >(prepared_first, entries);
+    }
+    mismatches
+}
+
+fn time_bucket_allpairs_small_contiguous_swapped_tight<const LEFT_LEN: usize, const RIGHT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+) -> (u64, u64, f64) {
+    let timed_start = Instant::now();
+    let mut canonical_count = 0u64;
+
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        canonical_count += black_box(
+            scan_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+                RIGHT_LEN,
+            >(prepared_first, entries),
+        );
+    }
+
+    (
+        (prepared_first_contiguous_swapped_tight_batch.len() * entries.len()) as u64,
+        canonical_count,
+        timed_start.elapsed().as_secs_f64(),
+    )
+}
+
+fn count_bucket_allpairs_small_contiguous_swapped_tight_mismatches<
+    const LEFT_LEN: usize,
+    const RIGHT_LEN: usize,
+>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+) -> u64 {
+    let mut mismatches = 0u64;
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        mismatches +=
+            count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+                RIGHT_LEN,
+            >(prepared_first, entries);
     }
     mismatches
 }
@@ -3683,6 +3728,237 @@ fn main() -> ExitCode {
             println!(
                 "  overall_simd8_vs_simd16_speedup = {:.12}x",
                 total_simd8_seconds / total_simd16_seconds
+            );
+        }
+    }
+
+    if mode == "preparedfirstdense_allpairs_small_vs_lockstep4_matrix_by_len" {
+        let prepared_first_tight_by_right_len =
+            match build_prepared_first_dense_contiguous_swapped_tight_batches_by_right_len(
+                &tokenizer,
+                &sampled_first_ids,
+            ) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!(
+                        "failed to prebuild swapped-tight contiguous prepared-first dense batches by right_len: {err}"
+                    );
+                    return ExitCode::from(1);
+                }
+            };
+
+        println!("prepared_first_dense_allpairs_small_vs_lockstep4_matrix_by_len:");
+        println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
+        println!("  prototype_cells = left_len,right_len in [2..4]");
+        println!("  allpairs prototype uses boundary-overlap existence + reject(c >= r && c >= l)");
+        for right_len in 0..=8 {
+            println!(
+                "  right_len = {right_len}, tight_prepared_first_count = {}",
+                prepared_first_tight_by_right_len[right_len].len()
+            );
+        }
+
+        let mut total_pair_count = 0u64;
+        let mut total_lockstep_seconds = 0.0f64;
+        let mut total_hybrid_seconds = 0.0f64;
+        let mut target_pair_count = 0u64;
+        let mut target_lockstep_seconds = 0.0f64;
+        let mut target_allpairs_seconds = 0.0f64;
+        let mut target_mismatches = 0u64;
+
+        for left_len in 1..=8usize {
+            println!("  left_len = {left_len}");
+            let entries = &candidate_second_buckets[left_len];
+            for right_len in 1..=8usize {
+                let prepared_batch = &prepared_first_tight_by_right_len[right_len];
+                if entries.is_empty() || prepared_batch.is_empty() {
+                    println!(
+                        "    cell(left_len={left_len}, right_len={right_len}): pair_count=0"
+                    );
+                    continue;
+                }
+
+                let (pair_count, lockstep_canonical_count, lockstep_seconds) = match left_len {
+                    1 => time_bucket_lockstep4_contiguous_swapped_tight::<1>(prepared_batch, entries),
+                    2 => time_bucket_lockstep4_contiguous_swapped_tight::<2>(prepared_batch, entries),
+                    3 => time_bucket_lockstep4_contiguous_swapped_tight::<3>(prepared_batch, entries),
+                    4 => time_bucket_lockstep4_contiguous_swapped_tight::<4>(prepared_batch, entries),
+                    5 => time_bucket_lockstep4_contiguous_swapped_tight::<5>(prepared_batch, entries),
+                    6 => time_bucket_lockstep4_contiguous_swapped_tight::<6>(prepared_batch, entries),
+                    7 => time_bucket_lockstep4_contiguous_swapped_tight::<7>(prepared_batch, entries),
+                    8 => time_bucket_lockstep4_contiguous_swapped_tight::<8>(prepared_batch, entries),
+                    _ => unreachable!(),
+                };
+
+                total_pair_count += pair_count;
+                total_lockstep_seconds += lockstep_seconds;
+
+                let mut used_allpairs = false;
+                let mut allpairs_seconds = lockstep_seconds;
+                let mut allpairs_canonical_count = lockstep_canonical_count;
+                let mut mismatches = 0u64;
+
+                match (left_len, right_len) {
+                    (2, 2) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<2, 2>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<2, 2>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (2, 3) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<2, 3>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<2, 3>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (2, 4) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<2, 4>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<2, 4>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (3, 2) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<3, 2>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<3, 2>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (3, 3) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<3, 3>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<3, 3>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (3, 4) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<3, 4>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<3, 4>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (4, 2) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<4, 2>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<4, 2>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (4, 3) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<4, 3>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<4, 3>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    (4, 4) => {
+                        used_allpairs = true;
+                        let (_, canonical_count, seconds) =
+                            time_bucket_allpairs_small_contiguous_swapped_tight::<4, 4>(
+                                prepared_batch, entries,
+                            );
+                        allpairs_seconds = seconds;
+                        allpairs_canonical_count = canonical_count;
+                        mismatches = count_bucket_allpairs_small_contiguous_swapped_tight_mismatches::<4, 4>(
+                            prepared_batch, entries,
+                        );
+                    }
+                    _ => {}
+                }
+
+                if used_allpairs {
+                    target_pair_count += pair_count;
+                    target_lockstep_seconds += lockstep_seconds;
+                    target_allpairs_seconds += allpairs_seconds;
+                    target_mismatches += mismatches;
+                    total_hybrid_seconds += allpairs_seconds;
+                    println!(
+                        "    cell(left_len={left_len}, right_len={right_len}): pair_count={pair_count}, lockstep_canonical_count={lockstep_canonical_count}, allpairs_canonical_count={allpairs_canonical_count}, mismatches={mismatches}, lockstep_seconds={lockstep_seconds:.12}, allpairs_seconds={allpairs_seconds:.12}, lockstep_vs_allpairs_speedup={:.12}x",
+                        lockstep_seconds / allpairs_seconds
+                    );
+                } else {
+                    total_hybrid_seconds += lockstep_seconds;
+                    println!(
+                        "    cell(left_len={left_len}, right_len={right_len}): pair_count={pair_count}, lockstep_canonical_count={lockstep_canonical_count}, lockstep_seconds={lockstep_seconds:.12}, allpairs=not_applied"
+                    );
+                }
+            }
+        }
+
+        if target_pair_count > 0 {
+            println!("  target_pair_count = {target_pair_count}");
+            println!(
+                "  target_lockstep_ns_per_candidate = {:.12}",
+                target_lockstep_seconds * 1_000_000_000.0 / target_pair_count as f64
+            );
+            println!(
+                "  target_allpairs_ns_per_candidate = {:.12}",
+                target_allpairs_seconds * 1_000_000_000.0 / target_pair_count as f64
+            );
+            println!(
+                "  target_lockstep_vs_allpairs_speedup = {:.12}x",
+                target_lockstep_seconds / target_allpairs_seconds
+            );
+            println!("  target_mismatches = {target_mismatches}");
+        }
+
+        if total_pair_count > 0 {
+            println!("  overall_pair_count = {total_pair_count}");
+            println!(
+                "  overall_lockstep_ns_per_candidate = {:.12}",
+                total_lockstep_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_hybrid_ns_per_candidate = {:.12}",
+                total_hybrid_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_lockstep_vs_hybrid_speedup = {:.12}x",
+                total_lockstep_seconds / total_hybrid_seconds
             );
         }
     }

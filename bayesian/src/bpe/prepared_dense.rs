@@ -631,6 +631,109 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
     }
 }
 
+#[inline(always)]
+pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_right_len_allpairs_small<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+    const RIGHT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    left_spine: &CompactLeftSpine,
+) -> bool {
+    debug_assert_eq!(left_spine.len as usize, LEFT_LEN);
+    debug_assert_eq!(prepared_first.right_len as usize, RIGHT_LEN);
+    if prepared_first.right_len == 0 || LEFT_LEN == 0 {
+        return false;
+    }
+
+    let right_priority_score = &prepared_first.right_priority_score;
+    let dense_matrix = &prepared_first.dense_matrix;
+    let left_ids = &left_spine.ids;
+    let left_priority_score = &left_spine.priority_score;
+
+    for j in 0..LEFT_LEN {
+        let l_cur = unsafe { *left_priority_score.get_unchecked(j) };
+        let l_prev = if j == 0 {
+            u16::MAX
+        } else {
+            unsafe { *left_priority_score.get_unchecked(j - 1) }
+        };
+        let left_id = unsafe { *left_ids.get_unchecked(j) } as usize;
+        debug_assert!(left_id < PIECE_COUNT);
+        let row_base = left_id * RIGHT_LEN;
+
+        for i in 0..RIGHT_LEN {
+            let r_cur = unsafe { *right_priority_score.get_unchecked(i) };
+            let r_prev = if i == 0 {
+                u16::MAX
+            } else {
+                unsafe { *right_priority_score.get_unchecked(i - 1) }
+            };
+
+            // Boundary (i,j) exists iff alive intervals overlap:
+            // max(r_i, l_j) < min(r_{i-1}, l_{j-1}), with sentinels r_-1=l_-1=+inf.
+            let exists_ij = r_cur.max(l_cur) < r_prev.min(l_prev);
+            if !exists_ij {
+                continue;
+            }
+            let c = unsafe { *dense_matrix.get_unchecked(row_base + i) };
+
+            // Reject when cross is a present merge and at least as eager as both competitors.
+            if c != 0 && c >= r_cur && c >= l_cur {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+    const RIGHT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+) -> u64 {
+    debug_assert_eq!(prepared_first.right_len as usize, RIGHT_LEN);
+    let mut canonical_count = 0u64;
+    for entry in entries {
+        canonical_count += canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_right_len_allpairs_small::<
+            PIECE_COUNT,
+            LEFT_LEN,
+            RIGHT_LEN,
+        >(prepared_first, &entry.left_spine) as u64;
+    }
+    canonical_count
+}
+
+pub fn count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_allpairs_small<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+    const RIGHT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+) -> u64 {
+    debug_assert_eq!(prepared_first.right_len as usize, RIGHT_LEN);
+    let mut mismatches = 0u64;
+    for entry in entries {
+        let allpairs = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_right_len_allpairs_small::<
+            PIECE_COUNT,
+            LEFT_LEN,
+            RIGHT_LEN,
+        >(prepared_first, &entry.left_spine);
+        let lockstep = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        if allpairs != lockstep {
+            mismatches += 1;
+        }
+    }
+    mismatches
+}
+
 pub fn fill_canonical_pair_mask<const PIECE_COUNT: usize>(
     prepared_first: &PreparedFirstDense<PIECE_COUNT>,
     candidate_second_buckets: &PreparedSecondBuckets,
