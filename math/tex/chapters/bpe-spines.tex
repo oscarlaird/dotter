@@ -107,3 +107,50 @@ O(|\operatorname{rspine}(\boldsymbol{\tau_1})| + |\operatorname{lspine}(\boldsym
 with one merge-table lookup per iteration.
 In practice this is substantially cheaper than retokenizing the concatenated string
 $\rho(\boldsymbol{\tau_1}) + \rho(\boldsymbol{\tau_2})$ from scratch.
+
+\subsection{Implementation Optimizations}
+
+The proposition above only describes the logical decision procedure. In a high-throughput setting,
+especially when one fixed first token must be tested against many possible second tokens, the main
+engineering work lies in lowering the constant factors of this frontier walk. The optimizations that
+proved most effective in benchmarking were the following:
+
+\begin{enumerate}
+    \item \textbf{Prepared-first dense tables.} For one fixed first token, precompute the dense
+    cross-rank arrays needed by its right-spine nodes and reuse them across all candidate second
+    tokens, rather than performing a fresh merge-table lookup on every frontier step.
+
+    \item \textbf{Raw \texttt{u16} \texttt{rank\_plus\_one} state.} Store ranks in a sentinel
+    encoding with \texttt{0} meaning ``no rank'' and positive entries meaning
+    \texttt{rank + 1}. This avoids repeated \texttt{Option}-level branching in the hot loop.
+
+    \item \textbf{Unchecked indexing in the hot path.} Once the spine-length and ID bounds are
+    established by construction, the inner loop can use unchecked array access. This removes a
+    measurable amount of bounds-check overhead from the per-candidate kernel.
+
+    \item \textbf{Compact left-spine representation.} Represent each candidate second token by
+    fixed-size arrays of boundary IDs and \texttt{rank\_plus\_one} values, rather than by a more
+    general vector-like structure. This keeps the frontier state small and cache-friendly.
+
+    \item \textbf{Per-first-token row pointers and right-rank arrays.} During preparation, extract
+    the right-spine ranks and pointers to the relevant dense cross-rank rows for the current first
+    token. The kernel can then load exactly the few scalar values it needs at each frontier step.
+
+    \item \textbf{Specialization by exact left-spine length.} Bucket the candidate second tokens by
+    exact left-spine length and dispatch to length-specialized kernels. Since the spines are very
+    short, this removes a substantial amount of generic control-flow overhead.
+
+    \item \textbf{A shared zero row for empty prepared rows.} When a prepared right-spine node has
+    no possible merge partners, point it at one global zero-filled dense row. This preserves a
+    branch-free inner loop while avoiding needless per-token allocation for empty rows.
+
+    \item \textbf{Lexicographic ordering by left-spine ID sequence.} Process candidate second
+    tokens in lexicographic order of their left-spine ID tuples. This improves locality for the
+    earliest frontier states, which are visited most often, and reduces effective cache pressure on
+    the dense cross-rank rows.
+\end{enumerate}
+
+These optimizations do not change the correctness argument of
+Proposition~\ref{prop:spine-based-canonicality}; they only refine the data layout and the order in
+which the frontier states are evaluated. The resulting implementation still performs the same
+logical three-way comparison at each frontier state, but with much lower constant cost.
