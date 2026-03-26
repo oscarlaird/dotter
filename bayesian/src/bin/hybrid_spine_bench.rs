@@ -813,10 +813,10 @@ fn canonical_pair_from_spines_specialized_heavy_hash(
 
 fn canonical_pair_from_prepared_first_dense(
     prepared_first: &PreparedFirstDense,
-    left_spine: &[SpineEntry],
+    left_spine: &CompactLeftSpine,
 ) -> bool {
     let right_spine = prepared_first.right_spine.as_slice();
-    if right_spine.is_empty() || left_spine.is_empty() {
+    if right_spine.is_empty() || left_spine.len == 0 {
         return false;
     }
 
@@ -825,9 +825,8 @@ fn canonical_pair_from_prepared_first_dense(
 
     loop {
         let right_rank_plus_one = right_spine[i].rank_plus_one;
-        let left_entry = left_spine[j];
-        let left_rank_plus_one = left_entry.rank_plus_one;
-        let cross_rank_plus_one = prepared_first.cross_rank_plus_one(i, left_entry.id);
+        let left_rank_plus_one = left_spine.rank_plus_one[j];
+        let cross_rank_plus_one = prepared_first.cross_rank_plus_one(i, left_spine.ids[j]);
 
         let mut best_rank_plus_one = right_rank_plus_one;
         if left_rank_plus_one != 0
@@ -1151,7 +1150,7 @@ fn time_prepared_first_dense_split(
     tokenizer: &TinyLlamaWordTokenizer,
     merge_rows: &MergeRows,
     sampled_first_ids: &[u32],
-    candidate_second_spines: &[PackedSpine],
+    candidate_second_spines: &[CompactLeftSpine],
 ) -> Result<(u64, u64, u64, f64, f64, f64), String> {
     let total_start = Instant::now();
     let mut pair_count = 0u64;
@@ -1172,10 +1171,7 @@ fn time_prepared_first_dense_split(
 
         let scan_start = Instant::now();
         for second_left_spine in candidate_second_spines {
-            if black_box(canonical_pair_from_prepared_first_dense(
-                &prepared_first,
-                second_left_spine.as_slice(),
-            )) {
+            if black_box(canonical_pair_from_prepared_first_dense(&prepared_first, second_left_spine)) {
                 canonical_count += 1;
             }
             pair_count += 1;
@@ -1210,7 +1206,7 @@ fn build_prepared_first_dense_batch(
 
 fn time_prepared_first_dense_scan_only(
     prepared_first_batch: &[PreparedFirstDense],
-    candidate_second_spines: &[PackedSpine],
+    candidate_second_spines: &[CompactLeftSpine],
 ) -> (u64, u64, u64, f64) {
     let timed_start = Instant::now();
     let mut pair_count = 0u64;
@@ -1219,10 +1215,7 @@ fn time_prepared_first_dense_scan_only(
 
     for prepared_first in prepared_first_batch {
         for second_left_spine in candidate_second_spines {
-            if black_box(canonical_pair_from_prepared_first_dense(
-                prepared_first,
-                second_left_spine.as_slice(),
-            )) {
+            if black_box(canonical_pair_from_prepared_first_dense(prepared_first, second_left_spine)) {
                 canonical_count += 1;
             }
             pair_count += 1;
@@ -1242,6 +1235,7 @@ fn count_mismatches_prepared_first_dense(
     merge_rows: &MergeRows,
     sampled_first_ids: &[u32],
     candidate_second_spines: &[PackedSpine],
+    candidate_second_compact_spines: &[CompactLeftSpine],
 ) -> Result<u64, String> {
     let mut mismatches = 0u64;
 
@@ -1250,13 +1244,12 @@ fn count_mismatches_prepared_first_dense(
             continue;
         };
         let prepared_first = PreparedFirstDense::build(first_right_spine, merge_rows)?;
-        for second_left_spine in candidate_second_spines {
+        for (second_left_spine, second_left_compact_spine) in
+            candidate_second_spines.iter().zip(candidate_second_compact_spines.iter())
+        {
             let baseline =
                 tokenizer.canonical_pair_from_packed_spines(&prepared_first.right_spine, second_left_spine);
-            let prepared = canonical_pair_from_prepared_first_dense(
-                &prepared_first,
-                second_left_spine.as_slice(),
-            );
+            let prepared = canonical_pair_from_prepared_first_dense(&prepared_first, second_left_compact_spine);
             if baseline != prepared {
                 mismatches += 1;
             }
@@ -1469,6 +1462,11 @@ fn main() -> ExitCode {
                 .to_owned()
         })
         .collect();
+    let candidate_second_compact_spines: Vec<CompactLeftSpine> = candidate_second_spines
+        .iter()
+        .copied()
+        .map(CompactLeftSpine::from_packed)
+        .collect();
     let mut rng = XorShift64::new(seed);
     let sampled_first_ids: Vec<u32> = (0..samples)
         .map(|_| candidate_second_ids[rng.gen_index(candidate_second_ids.len())])
@@ -1651,7 +1649,7 @@ fn main() -> ExitCode {
                 &tokenizer,
                 &merge_rows,
                 &sampled_first_ids,
-                &candidate_second_spines,
+                &candidate_second_compact_spines,
             ) {
                 Ok(values) => values,
                 Err(err) => {
@@ -1665,6 +1663,7 @@ fn main() -> ExitCode {
                 &merge_rows,
                 &sampled_first_ids,
                 &candidate_second_spines,
+                &candidate_second_compact_spines,
             ) {
                 Ok(mismatches) => mismatches,
                 Err(err) => {
@@ -1705,7 +1704,7 @@ fn main() -> ExitCode {
             };
         let build_seconds = build_start.elapsed().as_secs_f64();
         let (pair_count, used_first_ids, canonical_count, elapsed_seconds) =
-            time_prepared_first_dense_scan_only(&prepared_first_batch, &candidate_second_spines);
+            time_prepared_first_dense_scan_only(&prepared_first_batch, &candidate_second_compact_spines);
 
         println!("prepared_first_dense_scan:");
         println!("  piece_count = {}", merge_rows.piece_count);
