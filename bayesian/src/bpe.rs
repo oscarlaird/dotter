@@ -13,6 +13,77 @@ use std::path::Path;
 pub const SPACESYMBOL: char = '\u{2581}';
 
 type PieceId = u32;
+pub const MAX_PACKED_SPINE_LEN: usize = 8;
+const NO_PACKED_SPINE_INDEX: u16 = u16::MAX;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpineEntry {
+    pub id: u16,
+    /// Encodes the rank of the merge that produces the next spine node.
+    /// A value of `0` means there is no next merge on this spine.
+    pub rank_plus_one: u16,
+}
+
+impl SpineEntry {
+    fn new(id: u32, rank: Option<u32>) -> Option<Self> {
+        let id = u16::try_from(id).ok()?;
+        let rank_plus_one = match rank {
+            None => 0,
+            Some(rank) => u16::try_from(rank.checked_add(1)?).ok()?,
+        };
+        Some(Self { id, rank_plus_one })
+    }
+
+    fn next_rank(self) -> Option<u32> {
+        if self.rank_plus_one == 0 {
+            None
+        } else {
+            Some((self.rank_plus_one - 1) as u32)
+        }
+    }
+
+    fn id_u32(self) -> u32 {
+        self.id as u32
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackedSpine {
+    len: u8,
+    entries: [SpineEntry; MAX_PACKED_SPINE_LEN],
+}
+
+impl PackedSpine {
+    const EMPTY_ENTRY: SpineEntry = SpineEntry {
+        id: 0,
+        rank_plus_one: 0,
+    };
+
+    const fn empty() -> Self {
+        Self {
+            len: 0,
+            entries: [Self::EMPTY_ENTRY; MAX_PACKED_SPINE_LEN],
+        }
+    }
+
+    fn from_entries(entries: &[SpineEntry]) -> Option<Self> {
+        if entries.len() > MAX_PACKED_SPINE_LEN {
+            return None;
+        }
+        let mut packed = Self::empty();
+        packed.len = entries.len() as u8;
+        packed.entries[..entries.len()].copy_from_slice(entries);
+        Some(packed)
+    }
+
+    pub fn as_slice(&self) -> &[SpineEntry] {
+        &self.entries[..self.len as usize]
+    }
+
+    fn is_present(&self) -> bool {
+        self.len != 0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MergeEntry {
@@ -27,9 +98,7 @@ pub struct MergeEntry {
 pub struct BpeMerges {
     piece_to_id: HashMap<String, PieceId>,
     pieces: Vec<String>,
-    merges_by_left_right: HashMap<(PieceId, PieceId), MergeEntry>,
-    merges_by_left_merged: HashMap<(PieceId, PieceId), MergeEntry>,
-    merges_by_right_merged: HashMap<(PieceId, PieceId), MergeEntry>,
+    merges: HashMap<(PieceId, PieceId), MergeEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,9 +178,7 @@ impl BpeMerges {
         Self {
             piece_to_id: HashMap::new(),
             pieces: Vec::new(),
-            merges_by_left_right: HashMap::new(),
-            merges_by_left_merged: HashMap::new(),
-            merges_by_right_merged: HashMap::new(),
+            merges: HashMap::new(),
         }
     }
 
@@ -156,28 +223,15 @@ impl BpeMerges {
             merged,
             rank,
         };
-        debug_assert!(
-            self.merges_by_left_right
-                .insert((left, right), entry)
-                .is_none()
-        );
-        debug_assert!(
-            self.merges_by_left_merged
-                .insert((left, merged), entry)
-                .is_none()
-        );
-        debug_assert!(
-            self.merges_by_right_merged
-                .insert((right, merged), entry)
-                .is_none()
-        );
+        let previous = self.merges.insert((left, right), entry);
+        debug_assert!(previous.is_none());
     }
 
     fn lookup_merge(&self, left: &PieceRef, right: &PieceRef) -> Option<MergeEntry> {
         let (PieceRef::Known(left_id), PieceRef::Known(right_id)) = (left, right) else {
             return None;
         };
-        self.lookup_merge_by_left_right(*left_id, *right_id)
+        self.lookup_merge_by_pair(*left_id, *right_id)
     }
 
     fn best_merge(&self, symbols: &[PieceRef]) -> Option<(usize, MergeEntry)> {
@@ -232,7 +286,7 @@ impl BpeMerges {
             merged.push_str(left);
             merged.push_str(right);
             let merged_id = out.intern_owned_piece(merged);
-            let rank = out.merges_by_left_right.len() as u32;
+            let rank = out.merges.len() as u32;
             out.insert_merge(left_id, right_id, merged_id, rank);
         }
         Ok(out)
@@ -278,16 +332,8 @@ impl BpeMerges {
         Ok(out)
     }
 
-    pub fn lookup_merge_by_left_right(&self, left: u32, right: u32) -> Option<MergeEntry> {
-        self.merges_by_left_right.get(&(left, right)).copied()
-    }
-
-    pub fn lookup_merge_by_left_merged(&self, left: u32, merged: u32) -> Option<MergeEntry> {
-        self.merges_by_left_merged.get(&(left, merged)).copied()
-    }
-
-    pub fn lookup_merge_by_right_merged(&self, right: u32, merged: u32) -> Option<MergeEntry> {
-        self.merges_by_right_merged.get(&(right, merged)).copied()
+    pub fn lookup_merge_by_pair(&self, left: u32, right: u32) -> Option<MergeEntry> {
+        self.merges.get(&(left, right)).copied()
     }
 
     /// Encode an interned BPE piece to its internal ID.
@@ -328,6 +374,10 @@ impl BpeMerges {
 
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
     pub fn canonical_pair(&self, a: &str, b: &str) -> bool {
+        if let (Some(right_spine), Some(left_spine)) = (self.right_spine(a), self.left_spine(b)) {
+            return self.canonical_pair_from_spines(&right_spine, &left_spine);
+        }
+
         let mut text = String::with_capacity(a.len() + b.len());
         text.push_str(a);
         text.push_str(b);
@@ -337,11 +387,66 @@ impl BpeMerges {
             && pieces[1].text(&self.pieces) == b
     }
 
+    /// Decide canonicality from the right spine of the first token and the left spine of the
+    /// second token.
+    ///
+    /// The spine entries are assumed to be ordered leaf-to-root, with each rank denoting the
+    /// merge that produces the next spine entry. The final entry must therefore carry `None`.
+    ///
+    /// See `math/tex/chapters/bpe-spines.tex` for the corresponding proof sketch and algorithmic
+    /// description.
+    pub fn canonical_pair_from_spines(
+        &self,
+        right_spine: &[SpineEntry],
+        left_spine: &[SpineEntry],
+    ) -> bool {
+        if right_spine.is_empty() || left_spine.is_empty() {
+            return false;
+        }
+
+        let mut i = 0usize;
+        let mut j = 0usize;
+
+        loop {
+            let right_rank = right_spine[i].next_rank();
+            let left_rank = left_spine[j].next_rank();
+            let cross_rank = self
+                .lookup_merge_by_pair(right_spine[i].id_u32(), left_spine[j].id_u32())
+                .map(|entry| entry.rank);
+
+            let mut best = right_rank;
+            if left_rank.is_some() && (best.is_none() || left_rank < best) {
+                best = left_rank;
+            }
+            if cross_rank.is_some() && (best.is_none() || cross_rank < best) {
+                best = cross_rank;
+            }
+
+            let Some(best_rank) = best else {
+                return true;
+            };
+
+            if cross_rank == Some(best_rank) {
+                return false;
+            }
+            if right_rank == Some(best_rank) {
+                i += 1;
+                continue;
+            }
+            if left_rank == Some(best_rank) {
+                j += 1;
+                continue;
+            }
+
+            unreachable!("best rank must come from one of the three candidate events");
+        }
+    }
+
     /// The leftmost root-to-leaf path in the merge tree for `token`, reported leaf-to-root.
     ///
     /// For example, if `hell` is built as `(he, ll)` with `he = (h, e)`, this returns the IDs
     /// for `[h, he, hell]`, together with the merge rank that produces the next spine node.
-    pub fn left_spine(&self, token: &str) -> Option<Vec<(u32, Option<u32>)>> {
+    pub fn left_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
         self.spine(token, true)
     }
 
@@ -349,11 +454,11 @@ impl BpeMerges {
     ///
     /// For example, if `hell` is built as `(he, ll)` with `ll = (l, l)`, this returns the IDs
     /// for `[l, ll, hell]`, together with the merge rank that produces the next spine node.
-    pub fn right_spine(&self, token: &str) -> Option<Vec<(u32, Option<u32>)>> {
+    pub fn right_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
         self.spine(token, false)
     }
 
-    fn spine(&self, token: &str, take_left: bool) -> Option<Vec<(u32, Option<u32>)>> {
+    fn spine(&self, token: &str, take_left: bool) -> Option<Vec<SpineEntry>> {
         let (nodes, root) = self.tokenize_tree(token)?;
         let mut spine = Vec::new();
         let mut cursor = root;
@@ -362,7 +467,7 @@ impl BpeMerges {
             let PieceRef::Known(id) = nodes[cursor].piece else {
                 return None;
             };
-            spine.push((id, rank_to_next));
+            spine.push(SpineEntry::new(id, rank_to_next)?);
             let next = if take_left {
                 nodes[cursor].left
             } else {
@@ -376,6 +481,14 @@ impl BpeMerges {
         }
         spine.reverse();
         Some(spine)
+    }
+
+    pub fn canonical_pair_from_packed_spines(
+        &self,
+        right_spine: &PackedSpine,
+        left_spine: &PackedSpine,
+    ) -> bool {
+        self.canonical_pair_from_spines(right_spine.as_slice(), left_spine.as_slice())
     }
 
     fn tokenize_tree(&self, text: &str) -> Option<(Vec<DerivationNode>, usize)> {
@@ -447,6 +560,9 @@ pub struct TinyLlamaWordTokenizer {
     vocab: HashMap<String, u32>,
     id_to_token: Vec<String>,
     piece_id_to_vocab_id: Vec<Option<u32>>,
+    left_spine_index_by_token_id: Vec<u16>,
+    packed_left_spines: Vec<PackedSpine>,
+    token_ids_with_left_spines: Vec<u32>,
 }
 
 impl TinyLlamaWordTokenizer {
@@ -502,11 +618,29 @@ impl TinyLlamaWordTokenizer {
             }
         }
 
+        let mut left_spine_index_by_token_id = vec![NO_PACKED_SPINE_INDEX; id_to_token.len()];
+        let mut packed_left_spines = Vec::new();
+        let mut token_ids_with_left_spines = Vec::new();
+        for (token, &id) in &vocab {
+            if let Some(left_spine) = merges.left_spine(token) {
+                if let Some(packed_left_spine) = PackedSpine::from_entries(&left_spine) {
+                    let spine_index =
+                        u16::try_from(packed_left_spines.len()).expect("TinyLlama spine count fits in u16");
+                    token_ids_with_left_spines.push(id);
+                    left_spine_index_by_token_id[id as usize] = spine_index;
+                    packed_left_spines.push(packed_left_spine);
+                }
+            }
+        }
+
         Ok(Self {
             merges,
             vocab,
             id_to_token,
             piece_id_to_vocab_id,
+            left_spine_index_by_token_id,
+            packed_left_spines,
+            token_ids_with_left_spines,
         })
     }
 
@@ -581,9 +715,109 @@ impl TinyLlamaWordTokenizer {
             .collect()
     }
 
+    /// Compute the right spine for a token surface form.
+    pub fn right_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
+        self.merges.right_spine(token)
+    }
+
+    /// Compute a packed right spine for a token surface form.
+    pub fn right_packed_spine(&self, token: &str) -> Option<PackedSpine> {
+        PackedSpine::from_entries(&self.right_spine(token)?)
+    }
+
+    /// Compute the right spine for a tokenizer vocab ID.
+    pub fn right_spine_for_token_id(&self, token_id: u32) -> Option<Vec<SpineEntry>> {
+        let token = self.decode_token(token_id)?;
+        self.right_spine(token)
+    }
+
+    /// Compute a packed right spine for a tokenizer vocab ID.
+    pub fn right_packed_spine_for_token_id(&self, token_id: u32) -> Option<PackedSpine> {
+        let token = self.decode_token(token_id)?;
+        self.right_packed_spine(token)
+    }
+
+    /// Returns the precomputed left spine for a tokenizer vocab ID, if that token has a BPE
+    /// derivation tree.
+    pub fn left_spine_for_token_id(&self, token_id: u32) -> Option<&[SpineEntry]> {
+        self.left_packed_spine_for_token_id(token_id)
+            .map(PackedSpine::as_slice)
+    }
+
+    pub fn left_packed_spine_for_token_id(&self, token_id: u32) -> Option<&PackedSpine> {
+        let spine_index = *self.left_spine_index_by_token_id.get(token_id as usize)?;
+        if spine_index == NO_PACKED_SPINE_INDEX {
+            None
+        } else {
+            self.packed_left_spines.get(spine_index as usize)
+        }
+    }
+
+    /// Tokenizer vocab IDs for which a left spine was successfully precomputed.
+    pub fn token_ids_with_left_spines(&self) -> &[u32] {
+        &self.token_ids_with_left_spines
+    }
+
+    pub fn packed_left_spines(&self) -> &[PackedSpine] {
+        &self.packed_left_spines
+    }
+
+    /// Decide canonicality for many second tokens after computing the first token's right spine
+    /// once.
+    pub fn canonical_pair_with_right_spine_and_token_id(
+        &self,
+        first_right_spine: &[SpineEntry],
+        second_token_id: u32,
+    ) -> Option<bool> {
+        let left_spine = self.left_spine_for_token_id(second_token_id)?;
+        Some(
+            self.merges
+                .canonical_pair_from_spines(first_right_spine, left_spine),
+        )
+    }
+
+    pub fn canonical_pair_with_packed_right_spine_and_token_id(
+        &self,
+        first_right_spine: &PackedSpine,
+        second_token_id: u32,
+    ) -> Option<bool> {
+        let left_spine = self.left_packed_spine_for_token_id(second_token_id)?;
+        Some(
+            self.merges
+                .canonical_pair_from_packed_spines(first_right_spine, left_spine),
+        )
+    }
+
+    pub fn canonical_pair_from_packed_spines(
+        &self,
+        first_right_spine: &PackedSpine,
+        second_left_spine: &PackedSpine,
+    ) -> bool {
+        self.merges
+            .canonical_pair_from_packed_spines(first_right_spine, second_left_spine)
+    }
+
+    /// Like [`Self::canonical_pair_with_right_spine_and_token_id`], but looks up the second token
+    /// by surface form first.
+    pub fn canonical_pair_with_right_spine(
+        &self,
+        first_right_spine: &[SpineEntry],
+        second_token: &str,
+    ) -> Option<bool> {
+        let second_token_id = self.encode_token(second_token)?;
+        self.canonical_pair_with_right_spine_and_token_id(first_right_spine, second_token_id)
+    }
+
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
     pub fn canonical_pair(&self, a: &str, b: &str) -> bool {
-        self.merges.canonical_pair(a, b)
+        let Some(first_right_spine) = self.right_packed_spine(a) else {
+            return self.merges.canonical_pair(a, b);
+        };
+        let Some(second_token_id) = self.encode_token(b) else {
+            return self.merges.canonical_pair(a, b);
+        };
+        self.canonical_pair_with_packed_right_spine_and_token_id(&first_right_spine, second_token_id)
+            .unwrap_or_else(|| self.merges.canonical_pair(a, b))
     }
 
     /// Iterate over all surface-form tokens in the vocabulary.
@@ -661,15 +895,13 @@ mod tests {
     }
 
     #[test]
-    fn merge_lookup_supports_all_three_keyings() {
+    fn merge_lookup_by_pair_returns_expected_entry() {
         let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
         let a = m.encode_piece("a").unwrap();
         let b = m.encode_piece("b").unwrap();
         let ab = m.encode_piece("ab").unwrap();
 
-        let by_pair = m.lookup_merge_by_left_right(a, b).unwrap();
-        assert_eq!(by_pair, m.lookup_merge_by_left_merged(a, ab).unwrap());
-        assert_eq!(by_pair, m.lookup_merge_by_right_merged(b, ab).unwrap());
+        let by_pair = m.lookup_merge_by_pair(a, b).unwrap();
         assert_eq!(by_pair.left, a);
         assert_eq!(by_pair.right, b);
         assert_eq!(by_pair.merged, ab);
@@ -691,16 +923,58 @@ mod tests {
     }
 
     #[test]
+    fn canonical_pair_from_spines_detects_boundary_crossing() {
+        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let right = m.right_spine("a").unwrap();
+        let left = m.left_spine("b").unwrap();
+        assert!(!m.canonical_pair_from_spines(&right, &left));
+    }
+
+    #[test]
+    fn canonical_pair_from_spines_accepts_safe_boundary() {
+        let m = BpeMerges::from_merges_str("a b\nab c\nx y\n").unwrap();
+        let right = m.right_spine("ab").unwrap();
+        let left = m.left_spine("x").unwrap();
+        assert!(m.canonical_pair_from_spines(&right, &left));
+        assert_eq!(m.canonical_pair_from_spines(&right, &left), m.canonical_pair("ab", "x"));
+    }
+
+    #[test]
+    fn canonical_pair_from_spines_matches_string_check_on_known_pieces() {
+        let m = BpeMerges::from_merges_str("a b\nb c\nab c\na bc\nx y\n").unwrap();
+        for a in &m.pieces {
+            let Some(right) = m.right_spine(a) else {
+                continue;
+            };
+            for b in &m.pieces {
+                let Some(left) = m.left_spine(b) else {
+                    continue;
+                };
+                assert_eq!(
+                    m.canonical_pair_from_spines(&right, &left),
+                    m.canonical_pair(a, b),
+                    "mismatch for pair ({a:?}, {b:?})"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn left_spine_follows_left_edge_of_merge_tree() {
         let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
         let spine = m.left_spine("hell").unwrap();
         assert_eq!(
-            m.decode_piece_ids(&spine.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            m.decode_piece_ids(
+                &spine
+                    .iter()
+                    .map(|entry| entry.id as u32)
+                    .collect::<Vec<_>>(),
+            ),
             Some(vec!["h", "he", "hell"])
         );
-        assert_eq!(spine[0].1, Some(0));
-        assert_eq!(spine[1].1, Some(2));
-        assert_eq!(spine[2].1, None);
+        assert_eq!(spine[0].next_rank(), Some(0));
+        assert_eq!(spine[1].next_rank(), Some(2));
+        assert_eq!(spine[2].next_rank(), None);
     }
 
     #[test]
@@ -708,12 +982,17 @@ mod tests {
         let m = BpeMerges::from_merges_str("a b\nb c\nab c\na bc\n").unwrap();
         let spine = m.left_spine("abc").unwrap();
         assert_eq!(
-            m.decode_piece_ids(&spine.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            m.decode_piece_ids(
+                &spine
+                    .iter()
+                    .map(|entry| entry.id as u32)
+                    .collect::<Vec<_>>(),
+            ),
             Some(vec!["a", "ab", "abc"])
         );
-        assert_eq!(spine[0].1, Some(0));
-        assert_eq!(spine[1].1, Some(2));
-        assert_eq!(spine[2].1, None);
+        assert_eq!(spine[0].next_rank(), Some(0));
+        assert_eq!(spine[1].next_rank(), Some(2));
+        assert_eq!(spine[2].next_rank(), None);
     }
 
     #[test]
@@ -721,12 +1000,17 @@ mod tests {
         let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
         let spine = m.right_spine("hell").unwrap();
         assert_eq!(
-            m.decode_piece_ids(&spine.iter().map(|(id, _)| *id).collect::<Vec<_>>()),
+            m.decode_piece_ids(
+                &spine
+                    .iter()
+                    .map(|entry| entry.id as u32)
+                    .collect::<Vec<_>>(),
+            ),
             Some(vec!["l", "ll", "hell"])
         );
-        assert_eq!(spine[0].1, Some(1));
-        assert_eq!(spine[1].1, Some(2));
-        assert_eq!(spine[2].1, None);
+        assert_eq!(spine[0].next_rank(), Some(1));
+        assert_eq!(spine[1].next_rank(), Some(2));
+        assert_eq!(spine[2].next_rank(), None);
     }
 
     #[test]
@@ -765,6 +1049,19 @@ mod tests {
         assert_eq!(tok.encode_token("▁hello"), Some(22172));
         assert_eq!(tok.decode_token(22172), Some("▁hello"));
         assert_eq!(tok.decode(&[22172]).unwrap(), vec!["▁hello"]);
+        let first_right_spine = tok.right_spine("▁abc").unwrap();
+        let first_right_spine_by_id = tok.right_spine_for_token_id(25638).unwrap();
+        assert_eq!(
+            tok.canonical_pair_with_right_spine(&first_right_spine, "def"),
+            Some(true)
+        );
+        assert_eq!(first_right_spine, first_right_spine_by_id);
+        assert_eq!(
+            tok.canonical_pair_with_right_spine_and_token_id(&first_right_spine, 1753),
+            Some(true)
+        );
+        assert!(tok.left_spine_for_token_id(1753).is_some());
+        assert!(tok.token_ids_with_left_spines().contains(&1753));
         assert!(!tok.is_token("not_a_real_token"));
         assert_eq!(
             tok.encode_word_with_pieces("abcdef").unwrap(),

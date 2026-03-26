@@ -8,17 +8,8 @@ For implementation purposes it is useful to represent a BPE merge rule as a tupl
 \]
 where $\iota_1$ and $\iota_2$ are the IDs of the two child tokens, $\iota_3$ is the ID of
 their merged token, and $r$ is the merge rank. Lower rank means higher priority.
-
-This gives three natural lookup views of the same merge:
-\[
-(\iota_1,\iota_2) \mapsto (\iota_3,r),
-\qquad
-(\iota_1,\iota_3) \mapsto (\iota_2,r),
-\qquad
-(\iota_2,\iota_3) \mapsto (\iota_1,r).
-\]
-The first view answers the usual forward question, while the latter two answer
-``one child plus the parent'' queries that arise when reconstructing derivations.
+In code, the merge table is keyed by the child pair $(\iota_1,\iota_2)$ and returns the merged
+ID $\iota_3$ together with its rank $r$.
 
 \begin{definition}[Left and right spines]
     Let $\boldsymbol{\tau}$ be a BPE token, and let its binary merge tree be the unique tree whose

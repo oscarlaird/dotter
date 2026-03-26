@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.10)  25 MAR 2026 17:22
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Debian) (preloaded format=pdflatex 2026.3.10)  25 MAR 2026 17:28
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1071,7 +1071,7 @@ pdfTeX warning (ext4): destination with the same identifier (name{page.1}) has
 been already used, duplicate ignored
 <to be read again> 
                    \relax 
-l.45 ...berline {7}Render Stimulus}{53}{chapter.7}
+l.45 ...berline {7}Render Stimulus}{54}{chapter.7}
                                                   % [1
 
 
@@ -1239,9 +1239,6 @@ L3 programming layer <2024-01-22>
 
 LaTeX Warning: There were undefined references.
 
-
-LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
-
 Package rerunfilecheck Info: File `math.out' has not changed.
 (rerunfilecheck)             Checksum: A8E89E2514FE33438DEC0D08DC99669A;8610.
  ) 
@@ -1281,7 +1278,7 @@ ts/cm/cmsy5.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/c
 msy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.p
 fb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb></u
 sr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on math.pdf (62 pages, 539253 bytes).
+Output written on math.pdf (62 pages, 539119 bytes).
 PDF statistics:
  1060 PDF objects out of 1200 (max. 8388607)
  913 compressed objects within 10 object streams
