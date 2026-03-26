@@ -12,7 +12,11 @@ struct XorShift64 {
 
 impl XorShift64 {
     fn new(seed: u64) -> Self {
-        let state = if seed == 0 { 0xdead_beef_cafe_babe } else { seed };
+        let state = if seed == 0 {
+            0xdead_beef_cafe_babe
+        } else {
+            seed
+        };
         Self { state }
     }
 
@@ -33,7 +37,9 @@ impl XorShift64 {
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
     let Some(tokenizer_path) = args.next() else {
-        eprintln!("usage: cargo run --release --bin spine_bench -- <tokenizer.json> [samples] [seed]");
+        eprintln!(
+            "usage: cargo run --release --bin spine_bench -- <tokenizer.json> [samples] [seed]"
+        );
         return ExitCode::from(2);
     };
     let samples = match args.next() {
@@ -85,10 +91,9 @@ fn main() -> ExitCode {
         };
         used_first_ids += 1;
         for second_left_spine in candidate_second_spines {
-            if black_box(tokenizer.canonical_pair_from_packed_spines(
-                &first_right_spine,
-                second_left_spine,
-            )) {
+            if black_box(
+                tokenizer.canonical_pair_from_packed_spines(&first_right_spine, second_left_spine),
+            ) {
                 canonical_count += 1;
             }
             pair_count += 1;

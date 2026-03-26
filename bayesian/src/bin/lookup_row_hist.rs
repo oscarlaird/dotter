@@ -13,7 +13,11 @@ struct XorShift64 {
 
 impl XorShift64 {
     fn new(seed: u64) -> Self {
-        let state = if seed == 0 { 0xdead_beef_cafe_babe } else { seed };
+        let state = if seed == 0 {
+            0xdead_beef_cafe_babe
+        } else {
+            seed
+        };
         Self { state }
     }
 
@@ -181,10 +185,14 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn load_degrees(path: &str, merges_graph: &BpeMerges) -> Result<(Vec<String>, Vec<u32>, Vec<u32>), String> {
-    let text = fs::read_to_string(path).map_err(|err| format!("failed to read tokenizer json: {err}"))?;
-    let json: Value =
-        serde_json::from_str(&text).map_err(|err| format!("failed to parse tokenizer json: {err}"))?;
+fn load_degrees(
+    path: &str,
+    merges_graph: &BpeMerges,
+) -> Result<(Vec<String>, Vec<u32>, Vec<u32>), String> {
+    let text =
+        fs::read_to_string(path).map_err(|err| format!("failed to read tokenizer json: {err}"))?;
+    let json: Value = serde_json::from_str(&text)
+        .map_err(|err| format!("failed to parse tokenizer json: {err}"))?;
 
     let merges = json
         .get("model")
@@ -229,7 +237,10 @@ fn print_weighted_side(
     id_to_piece: &[String],
     total_hits: u64,
 ) {
-    let weighted_sum: u64 = hist.iter().map(|(row_size, count)| *row_size as u64 * *count).sum();
+    let weighted_sum: u64 = hist
+        .iter()
+        .map(|(row_size, count)| *row_size as u64 * *count)
+        .sum();
     println!("{label}:");
     println!(
         "  avg_row_size_seen = {:.6}",

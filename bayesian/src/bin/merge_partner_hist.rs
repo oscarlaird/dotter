@@ -113,15 +113,17 @@ fn print_side(label: &str, degrees: &[u32], id_to_piece: &[String]) {
     println!("{label}:");
     println!("  total_pieces = {}", degrees.len());
     println!("  pieces_with_at_least_one_partner = {nonzero}");
-    println!("  avg_partners_over_all_pieces = {:.6}", sum as f64 / degrees.len() as f64);
+    println!(
+        "  avg_partners_over_all_pieces = {:.6}",
+        sum as f64 / degrees.len() as f64
+    );
     println!(
         "  avg_partners_over_nonzero_pieces = {:.6}",
         sum as f64 / nonzero as f64
     );
     println!(
         "  max_partners = {} ({:?})",
-        max_degree,
-        id_to_piece[max_piece_id]
+        max_degree, id_to_piece[max_piece_id]
     );
 
     println!("  histogram:");

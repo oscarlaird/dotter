@@ -3,8 +3,8 @@
 //!   `cargo run -- canonical-pair-rate <tokenizer.json> [samples] [seed] [--first-no-sp] [--first-has-sp] [--second-no-space] [--second-no-sp] [--second-has-sp]`
 
 use std::env;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bayesian::bpe::TinyLlamaWordTokenizer;
 
@@ -163,7 +163,11 @@ fn canonical_pair_rate_cli(mut args: impl Iterator<Item = String>) -> ExitCode {
     }
 
     let second_vocab: Vec<&str> = if second_no_space {
-        vocab.iter().copied().filter(|token| !token.contains(' ')).collect()
+        vocab
+            .iter()
+            .copied()
+            .filter(|token| !token.contains(' '))
+            .collect()
     } else if second_no_sp {
         vocab
             .iter()
@@ -212,7 +216,11 @@ fn canonical_pair_rate_cli(mut args: impl Iterator<Item = String>) -> ExitCode {
     println!("canonical: {canonical}");
     println!("rate: {rate:.6}");
     println!("stderr: {stderr:.6}");
-    println!("ci95: [{:.6}, {:.6}]", rate - 1.96 * stderr, rate + 1.96 * stderr);
+    println!(
+        "ci95: [{:.6}, {:.6}]",
+        rate - 1.96 * stderr,
+        rate + 1.96 * stderr
+    );
 
     ExitCode::SUCCESS
 }
@@ -231,7 +239,11 @@ struct XorShift64 {
 
 impl XorShift64 {
     fn new(seed: u64) -> Self {
-        let state = if seed == 0 { 0xdead_beef_cafe_babe } else { seed };
+        let state = if seed == 0 {
+            0xdead_beef_cafe_babe
+        } else {
+            seed
+        };
         Self { state }
     }
 

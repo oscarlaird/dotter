@@ -9,6 +9,15 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+#[doc(hidden)]
+pub mod prepared_dense;
+
+mod tinyllama;
+
+pub use self::tinyllama::{
+    TINYLLAMA_PIECE_COUNT, TinyLlamaPreparedFirstDense, TinyLlamaWordTokenizer,
+};
+
 /// SentencePiece “space” / word-boundary marker used in TinyLlama vocab and merges.
 pub const SPACESYMBOL: char = '\u{2581}';
 
@@ -130,6 +139,8 @@ pub enum BpeError {
     Json(serde_json::Error),
     BadMergeLine { line_no: usize, line: String },
     InvalidTokenizerJson(&'static str),
+    UnsupportedPreparedDense(&'static str),
+    InvalidPreparedDenseMaskLen { expected: usize, got: usize },
     WhitespaceInWord,
     UnknownPiece(String),
     UnknownTokenId(u32),
@@ -144,7 +155,15 @@ impl std::fmt::Display for BpeError {
                 write!(f, "bad merge line {line_no}: {line:?}")
             }
             BpeError::InvalidTokenizerJson(msg) => write!(f, "invalid tokenizer.json: {msg}"),
-            BpeError::WhitespaceInWord => write!(f, "input contains whitespace (use one word only)"),
+            BpeError::UnsupportedPreparedDense(msg) => {
+                write!(f, "unsupported prepared dense fast path: {msg}")
+            }
+            BpeError::InvalidPreparedDenseMaskLen { expected, got } => {
+                write!(f, "prepared dense mask has len {got}, expected {expected}")
+            }
+            BpeError::WhitespaceInWord => {
+                write!(f, "input contains whitespace (use one word only)")
+            }
             BpeError::UnknownPiece(s) => write!(f, "piece not in vocab: {s:?}"),
             BpeError::UnknownTokenId(id) => write!(f, "unknown token id: {id}"),
         }
@@ -316,9 +335,9 @@ impl BpeMerges {
             .and_then(|m| m.as_array())
             .ok_or(BpeError::InvalidTokenizerJson("missing model.merges array"))?;
         for (idx, item) in merges.iter().enumerate() {
-            let line = item
-                .as_str()
-                .ok_or(BpeError::InvalidTokenizerJson("merge entry is not a string"))?;
+            let line = item.as_str().ok_or(BpeError::InvalidTokenizerJson(
+                "merge entry is not a string",
+            ))?;
             let line_no = idx + 1;
             let (left, right) = parse_merge_line(line, line_no)?;
             let left_id = out.intern_piece(left);
@@ -382,9 +401,7 @@ impl BpeMerges {
         text.push_str(a);
         text.push_str(b);
         let pieces = self.tokenize_piece_refs(&text);
-        pieces.len() == 2
-            && pieces[0].text(&self.pieces) == a
-            && pieces[1].text(&self.pieces) == b
+        pieces.len() == 2 && pieces[0].text(&self.pieces) == a && pieces[1].text(&self.pieces) == b
     }
 
     /// Decide canonicality from the right spine of the first token and the left spine of the
@@ -552,312 +569,6 @@ impl BpeMerges {
     }
 }
 
-/// TinyLlama-compatible encoding for a **single word**: no whitespace in `text`.
-/// Matches `transformers.AutoTokenizer.encode(text, add_special_tokens=False)` for such strings.
-#[derive(Debug, Clone)]
-pub struct TinyLlamaWordTokenizer {
-    merges: BpeMerges,
-    vocab: HashMap<String, u32>,
-    id_to_token: Vec<String>,
-    piece_id_to_vocab_id: Vec<Option<u32>>,
-    left_spine_index_by_token_id: Vec<u16>,
-    packed_left_spines: Vec<PackedSpine>,
-    token_ids_with_left_spines: Vec<u32>,
-}
-
-impl TinyLlamaWordTokenizer {
-    pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Result<Self, BpeError> {
-        let text = fs::read_to_string(path.as_ref())?;
-        Self::from_tokenizer_json_str(&text)
-    }
-
-    pub fn from_tokenizer_json_str(content: &str) -> Result<Self, BpeError> {
-        let merges = BpeMerges::from_tokenizer_json_str(content)?;
-        let v: serde_json::Value = serde_json::from_str(content)?;
-        let vocab_obj = v
-            .get("model")
-            .and_then(|m| m.get("vocab"))
-            .and_then(|m| m.as_object())
-            .ok_or(BpeError::InvalidTokenizerJson("missing model.vocab object"))?;
-
-        let mut vocab = HashMap::with_capacity(vocab_obj.len());
-        let mut entries = Vec::with_capacity(vocab_obj.len());
-        let mut max_id = 0usize;
-        for (token, id_val) in vocab_obj {
-            let id = id_val
-                .as_u64()
-                .or_else(|| id_val.as_i64().map(|i| i as u64))
-                .ok_or(BpeError::InvalidTokenizerJson("vocab id is not an integer"))?;
-            if id > u32::MAX as u64 {
-                return Err(BpeError::InvalidTokenizerJson("vocab id does not fit u32"));
-            }
-            let id = id as u32;
-            max_id = max_id.max(id as usize);
-            vocab.insert(token.clone(), id);
-            entries.push((token.as_str(), id));
-        }
-
-        let mut id_to_token = vec![String::new(); max_id + 1];
-        let mut seen = vec![false; max_id + 1];
-        for (token, id) in entries {
-            let slot = &mut seen[id as usize];
-            if *slot {
-                return Err(BpeError::InvalidTokenizerJson("duplicate vocab id"));
-            }
-            *slot = true;
-            id_to_token[id as usize] = token.to_string();
-        }
-        if seen.iter().any(|present| !present) {
-            return Err(BpeError::InvalidTokenizerJson("vocab ids must be dense from 0..max"));
-        }
-
-        let mut piece_id_to_vocab_id = vec![None; merges.pieces.len()];
-        for (token, &id) in &vocab {
-            if let Some(piece_id) = merges.encode_piece(token) {
-                piece_id_to_vocab_id[piece_id as usize] = Some(id);
-            }
-        }
-
-        let mut left_spine_index_by_token_id = vec![NO_PACKED_SPINE_INDEX; id_to_token.len()];
-        let mut packed_left_spines = Vec::new();
-        let mut token_ids_with_left_spines = Vec::new();
-        for (token, &id) in &vocab {
-            if let Some(left_spine) = merges.left_spine(token) {
-                if let Some(packed_left_spine) = PackedSpine::from_entries(&left_spine) {
-                    let spine_index =
-                        u16::try_from(packed_left_spines.len()).expect("TinyLlama spine count fits in u16");
-                    token_ids_with_left_spines.push(id);
-                    left_spine_index_by_token_id[id as usize] = spine_index;
-                    packed_left_spines.push(packed_left_spine);
-                }
-            }
-        }
-
-        Ok(Self {
-            merges,
-            vocab,
-            id_to_token,
-            piece_id_to_vocab_id,
-            left_spine_index_by_token_id,
-            packed_left_spines,
-            token_ids_with_left_spines,
-        })
-    }
-
-    fn word_with_space_symbol(&self, text: &str) -> Result<String, BpeError> {
-        if text.is_empty() {
-            return Ok(String::new());
-        }
-        if text.chars().any(|c| c.is_whitespace()) {
-            return Err(BpeError::WhitespaceInWord);
-        }
-        let mut s = String::with_capacity(text.len() + 4);
-        if !text.starts_with(SPACESYMBOL) {
-            s.push(SPACESYMBOL);
-        }
-        s.push_str(text);
-        Ok(s)
-    }
-
-    /// BPE surface strings (e.g. `▁hello`, or `▁abc` + `def` for `abcdef`).
-    pub fn tokenize_word(&self, text: &str) -> Result<Vec<String>, BpeError> {
-        let s = self.word_with_space_symbol(text)?;
-        if s.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(self
-            .tokenize_word_piece_ids(text)?
-            .into_iter()
-            .map(|piece_id| {
-                self.merges
-                    .decode_piece(piece_id)
-                    .expect("piece ids returned by tokenize_word_piece_ids must decode")
-                    .to_string()
-            })
-            .collect())
-    }
-
-    /// Internal BPE piece IDs for a single space-free word.
-    pub fn tokenize_word_piece_ids(&self, text: &str) -> Result<Vec<u32>, BpeError> {
-        let s = self.word_with_space_symbol(text)?;
-        if s.is_empty() {
-            return Ok(Vec::new());
-        }
-        for c in s.chars() {
-            if self.merges.piece_id_char(c).is_none() {
-                return Err(BpeError::UnknownPiece(c.to_string()));
-            }
-        }
-        self.merges
-            .tokenize_ids(&s)
-            .ok_or_else(|| BpeError::UnknownPiece(s))
-    }
-
-    /// True iff `token` is present in the tokenizer vocabulary.
-    pub fn is_token(&self, token: &str) -> bool {
-        self.vocab.contains_key(token)
-    }
-
-    /// Encode one vocab token to its tokenizer ID.
-    pub fn encode_token(&self, token: &str) -> Option<u32> {
-        self.vocab.get(token).copied()
-    }
-
-    /// Decode one tokenizer ID to its vocab token.
-    pub fn decode_token(&self, id: u32) -> Option<&str> {
-        self.id_to_token.get(id as usize).map(String::as_str)
-    }
-
-    /// Decode tokenizer IDs to their vocab tokens.
-    pub fn decode<'a>(&'a self, ids: &[u32]) -> Result<Vec<&'a str>, BpeError> {
-        ids.iter()
-            .map(|&id| self.decode_token(id).ok_or(BpeError::UnknownTokenId(id)))
-            .collect()
-    }
-
-    /// Compute the right spine for a token surface form.
-    pub fn right_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
-        self.merges.right_spine(token)
-    }
-
-    /// Compute a packed right spine for a token surface form.
-    pub fn right_packed_spine(&self, token: &str) -> Option<PackedSpine> {
-        PackedSpine::from_entries(&self.right_spine(token)?)
-    }
-
-    /// Compute the right spine for a tokenizer vocab ID.
-    pub fn right_spine_for_token_id(&self, token_id: u32) -> Option<Vec<SpineEntry>> {
-        let token = self.decode_token(token_id)?;
-        self.right_spine(token)
-    }
-
-    /// Compute a packed right spine for a tokenizer vocab ID.
-    pub fn right_packed_spine_for_token_id(&self, token_id: u32) -> Option<PackedSpine> {
-        let token = self.decode_token(token_id)?;
-        self.right_packed_spine(token)
-    }
-
-    /// Returns the precomputed left spine for a tokenizer vocab ID, if that token has a BPE
-    /// derivation tree.
-    pub fn left_spine_for_token_id(&self, token_id: u32) -> Option<&[SpineEntry]> {
-        self.left_packed_spine_for_token_id(token_id)
-            .map(PackedSpine::as_slice)
-    }
-
-    pub fn left_packed_spine_for_token_id(&self, token_id: u32) -> Option<&PackedSpine> {
-        let spine_index = *self.left_spine_index_by_token_id.get(token_id as usize)?;
-        if spine_index == NO_PACKED_SPINE_INDEX {
-            None
-        } else {
-            self.packed_left_spines.get(spine_index as usize)
-        }
-    }
-
-    /// Tokenizer vocab IDs for which a left spine was successfully precomputed.
-    pub fn token_ids_with_left_spines(&self) -> &[u32] {
-        &self.token_ids_with_left_spines
-    }
-
-    pub fn packed_left_spines(&self) -> &[PackedSpine] {
-        &self.packed_left_spines
-    }
-
-    /// Decide canonicality for many second tokens after computing the first token's right spine
-    /// once.
-    pub fn canonical_pair_with_right_spine_and_token_id(
-        &self,
-        first_right_spine: &[SpineEntry],
-        second_token_id: u32,
-    ) -> Option<bool> {
-        let left_spine = self.left_spine_for_token_id(second_token_id)?;
-        Some(
-            self.merges
-                .canonical_pair_from_spines(first_right_spine, left_spine),
-        )
-    }
-
-    pub fn canonical_pair_with_packed_right_spine_and_token_id(
-        &self,
-        first_right_spine: &PackedSpine,
-        second_token_id: u32,
-    ) -> Option<bool> {
-        let left_spine = self.left_packed_spine_for_token_id(second_token_id)?;
-        Some(
-            self.merges
-                .canonical_pair_from_packed_spines(first_right_spine, left_spine),
-        )
-    }
-
-    pub fn canonical_pair_from_packed_spines(
-        &self,
-        first_right_spine: &PackedSpine,
-        second_left_spine: &PackedSpine,
-    ) -> bool {
-        self.merges
-            .canonical_pair_from_packed_spines(first_right_spine, second_left_spine)
-    }
-
-    /// Like [`Self::canonical_pair_with_right_spine_and_token_id`], but looks up the second token
-    /// by surface form first.
-    pub fn canonical_pair_with_right_spine(
-        &self,
-        first_right_spine: &[SpineEntry],
-        second_token: &str,
-    ) -> Option<bool> {
-        let second_token_id = self.encode_token(second_token)?;
-        self.canonical_pair_with_right_spine_and_token_id(first_right_spine, second_token_id)
-    }
-
-    /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
-    pub fn canonical_pair(&self, a: &str, b: &str) -> bool {
-        let Some(first_right_spine) = self.right_packed_spine(a) else {
-            return self.merges.canonical_pair(a, b);
-        };
-        let Some(second_token_id) = self.encode_token(b) else {
-            return self.merges.canonical_pair(a, b);
-        };
-        self.canonical_pair_with_packed_right_spine_and_token_id(&first_right_spine, second_token_id)
-            .unwrap_or_else(|| self.merges.canonical_pair(a, b))
-    }
-
-    /// Iterate over all surface-form tokens in the vocabulary.
-    pub fn vocab_tokens(&self) -> impl Iterator<Item = &str> {
-        self.vocab.keys().map(String::as_str)
-    }
-
-    /// Token ids for a single space-free word (no special tokens).
-    pub fn encode_word(&self, text: &str) -> Result<Vec<u32>, BpeError> {
-        let piece_ids = self.tokenize_word_piece_ids(text)?;
-        let mut ids = Vec::with_capacity(piece_ids.len());
-        for piece_id in piece_ids {
-            let piece = self
-                .merges
-                .decode_piece(piece_id)
-                .expect("piece ids returned by tokenize_word_piece_ids must decode");
-            let vocab_id = self.piece_id_to_vocab_id[piece_id as usize]
-                .ok_or_else(|| BpeError::UnknownPiece(piece.to_string()))?;
-            ids.push(vocab_id);
-        }
-        Ok(ids)
-    }
-
-    /// TinyLlama pieces together with their vocab ids for one space-free word.
-    pub fn encode_word_with_pieces(&self, text: &str) -> Result<Vec<(String, u32)>, BpeError> {
-        let piece_ids = self.tokenize_word_piece_ids(text)?;
-        let mut out = Vec::with_capacity(piece_ids.len());
-        for piece_id in piece_ids {
-            let piece = self
-                .merges
-                .decode_piece(piece_id)
-                .expect("piece ids returned by tokenize_word_piece_ids must decode");
-            let vocab_id = self.piece_id_to_vocab_id[piece_id as usize]
-                .ok_or_else(|| BpeError::UnknownPiece(piece.to_string()))?;
-            out.push((piece.to_string(), vocab_id));
-        }
-        Ok(out)
-    }
-}
-
 fn parse_merge_line(line: &str, line_no: usize) -> Result<(&str, &str), BpeError> {
     let (left, right) = line.split_once(' ').ok_or_else(|| BpeError::BadMergeLine {
         line_no,
@@ -875,6 +586,23 @@ fn parse_merge_line(line: &str, line_no: usize) -> Result<(&str, &str), BpeError
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tiny_tokenizer_json_for_tests() -> &'static str {
+        r#"{
+            "model": {
+                "type": "BPE",
+                "vocab": {
+                    "a": 0,
+                    "b": 1,
+                    "ab": 2,
+                    "c": 3,
+                    "abc": 4,
+                    "<s>": 5
+                },
+                "merges": ["a b", "ab c"]
+            }
+        }"#
+    }
 
     #[test]
     fn merges_order() {
@@ -936,7 +664,10 @@ mod tests {
         let right = m.right_spine("ab").unwrap();
         let left = m.left_spine("x").unwrap();
         assert!(m.canonical_pair_from_spines(&right, &left));
-        assert_eq!(m.canonical_pair_from_spines(&right, &left), m.canonical_pair("ab", "x"));
+        assert_eq!(
+            m.canonical_pair_from_spines(&right, &left),
+            m.canonical_pair("ab", "x")
+        );
     }
 
     #[test]
@@ -1041,10 +772,7 @@ mod tests {
         assert_eq!(tok.encode_word("okay").unwrap(), vec![20759]);
         assert_eq!(tok.encode_word("abcdef").unwrap(), vec![25638, 1753]);
         assert_eq!(tok.encode_word("the").unwrap(), vec![278]);
-        assert_eq!(
-            tok.tokenize_word_piece_ids("abcdef").unwrap().len(),
-            2
-        );
+        assert_eq!(tok.tokenize_word_piece_ids("abcdef").unwrap().len(), 2);
         assert!(tok.is_token("▁hello"));
         assert_eq!(tok.encode_token("▁hello"), Some(22172));
         assert_eq!(tok.decode_token(22172), Some("▁hello"));
@@ -1067,5 +795,59 @@ mod tests {
             tok.encode_word_with_pieces("abcdef").unwrap(),
             vec![("▁abc".to_string(), 25638), ("def".to_string(), 1753)]
         );
+    }
+
+    #[test]
+    fn canonical_pair_batch_matches_scalar_reference_on_ordinary_token_domain() {
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests())
+            .unwrap();
+
+        for &first_id in tok.token_ids_with_left_spines() {
+            let Some(mask) = tok.canonical_pair_batch_for_token_id(first_id).unwrap() else {
+                panic!("ordinary token id {first_id} should support batch canonicality");
+            };
+            let first_right_spine = tok
+                .right_packed_spine_for_token_id(first_id)
+                .expect("ordinary token ids must have packed right spines");
+            assert_eq!(mask.len(), 6);
+
+            for &second_id in tok.token_ids_with_left_spines() {
+                let second_left_spine = tok
+                    .left_packed_spine_for_token_id(second_id)
+                    .expect("ordinary token ids must have packed left spines");
+                let expected =
+                    tok.canonical_pair_from_packed_spines(&first_right_spine, second_left_spine);
+                assert_eq!(
+                    mask[second_id as usize], expected,
+                    "mismatch for pair ({first_id}, {second_id})"
+                );
+            }
+
+            assert!(!mask[5], "special token ids stay outside the batch domain");
+        }
+    }
+
+    #[test]
+    fn canonical_pair_batch_rejects_special_first_token() {
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests())
+            .unwrap();
+        assert_eq!(tok.canonical_pair_batch_for_token_id(5).unwrap(), None);
+    }
+
+    #[test]
+    fn canonical_pair_batch_into_validates_output_len() {
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests())
+            .unwrap();
+        let first_right_spine = tok.right_packed_spine_for_token_id(2).unwrap();
+        let err = tok
+            .canonical_pair_batch_with_packed_right_spine_into(&first_right_spine, &mut [false; 3])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            BpeError::InvalidPreparedDenseMaskLen {
+                expected: 6,
+                got: 3,
+            }
+        ));
     }
 }

@@ -20,18 +20,18 @@ struct Node {
     nz: u32, // posterior likelihood time
     mz: u32, // posterior prior time
     // likelihood
-    ll: f64, // log lower likelihood
-    ul: f64, // log upper likelihood
-    nl: u32, // likelihood tracking time
+    ll: f64,                     // log lower likelihood
+    ul: f64,                     // log upper likelihood
+    nl: u32,                     // likelihood tracking time
     tl: [f64; MAX_TOKEN_LENGTH], // log token branch likelihood for each ancestor i,  i.e., log "Maximum Truncation Compatible Descendant Likelihood", for each ancestor i
-    ntl: u32, // token branch likelihood tracking time
+    ntl: u32,                    // token branch likelihood tracking time
     cum_likelihood_frontier: bool,
     // prior
-    p: f64, // log string branch prior
-    mp: u32, // prior tracking time
+    p: f64,                      // log string branch prior
+    mp: u32,                     // prior tracking time
     fp: [f64; MAX_TOKEN_LENGTH], // token fans for each ancestor i
-    tp: f64, // log token branch prior
-    mtp: u32, // token branch prior tracking time
+    tp: f64,                     // log token branch prior
+    mtp: u32,                    // token branch prior tracking time
     // tokenization
     final_token_length: u8,
     n_tokens: u32,
@@ -39,7 +39,7 @@ struct Node {
     /// Index in `Trie::nodes` of the first of `RADIX` consecutive child nodes (slot `s` → `nodes[base + s]`).
     /// `None` if no child block has been allocated for this node yet.
     symbol: Option<Symbol>,
-    depth: u32, 
+    depth: u32,
     children_start_index: Option<u32>,
 }
 
@@ -47,10 +47,10 @@ struct Node {
 struct Walker {
     node: usize,
     depth: u32,
-    a_symbol: [Option<Symbol>; 2 * MAX_TOKEN_LENGTH],  // symbol for each ancestor i
-    a_tp: [f64; MAX_TOKEN_LENGTH], // token branch prior for each ancestor i
-    a_n_tokens: [u32; MAX_TOKEN_LENGTH], // number of tokens for each ancestor i
-    a_final_token_length: [u8; MAX_TOKEN_LENGTH], // final token length for each ancestor i
+    a_symbol: [Option<Symbol>; 2 * MAX_TOKEN_LENGTH], // symbol for each ancestor i
+    a_tp: [f64; MAX_TOKEN_LENGTH],                    // token branch prior for each ancestor i
+    a_n_tokens: [u32; MAX_TOKEN_LENGTH],              // number of tokens for each ancestor i
+    a_final_token_length: [u8; MAX_TOKEN_LENGTH],     // final token length for each ancestor i
 }
 
 impl Node {
@@ -213,7 +213,6 @@ impl Trie {
 pub fn add(a: i64, b: i64) -> i64 {
     a + b + 20
 }
-
 
 // get trie
 // expand trie
