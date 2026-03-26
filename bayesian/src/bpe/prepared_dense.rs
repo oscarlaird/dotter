@@ -288,3 +288,141 @@ pub fn fill_canonical_pair_mask<const PIECE_COUNT: usize>(
 
     canonical_count
 }
+
+fn canonical_pair_from_prepared_first_dense_left_len_lockstep4_chunk<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDense<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 4],
+) -> [bool; 4] {
+    debug_assert!(entries
+        .iter()
+        .all(|entry| entry.left_spine.len as usize == LEFT_LEN));
+    if prepared_first.right_len == 0 || LEFT_LEN == 0 {
+        return [false; 4];
+    }
+
+    let right_spine_len = prepared_first.right_len as usize;
+    let stages = right_spine_len + LEFT_LEN - 1;
+    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let cross_rank_row_ptrs = &prepared_first.cross_rank_row_ptrs;
+    let mut i = [0usize; 4];
+    let mut j = [0usize; 4];
+    let mut rejected = [false; 4];
+
+    for _ in 0..stages {
+        macro_rules! step_lane {
+            ($lane:literal) => {{
+                let active = !rejected[$lane];
+                debug_assert!(i[$lane] < right_spine_len);
+                debug_assert!(j[$lane] < LEFT_LEN);
+
+                let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i[$lane]) };
+                let left_id = unsafe { *entries[$lane].left_spine.ids.get_unchecked(j[$lane]) };
+                let left_rank_plus_one =
+                    unsafe { *entries[$lane].left_spine.rank_plus_one.get_unchecked(j[$lane]) };
+                debug_assert!((left_id as usize) < PIECE_COUNT);
+                let cross_rank_plus_one =
+                    unsafe { *(*cross_rank_row_ptrs.get_unchecked(i[$lane])).add(left_id as usize) };
+
+                let reject_now = active
+                    && cross_rank_plus_one != 0
+                    && (right_rank_plus_one == 0 || cross_rank_plus_one <= right_rank_plus_one)
+                    && (left_rank_plus_one == 0 || cross_rank_plus_one <= left_rank_plus_one);
+                let accept_now = active
+                    && !reject_now
+                    && right_rank_plus_one == 0
+                    && left_rank_plus_one == 0;
+                let step_now = active && !reject_now && !accept_now;
+                let take_right = left_rank_plus_one == 0
+                    || (right_rank_plus_one != 0
+                        && right_rank_plus_one <= left_rank_plus_one);
+
+                rejected[$lane] |= reject_now;
+                i[$lane] += (step_now && take_right) as usize;
+                j[$lane] += (step_now && !take_right) as usize;
+            }};
+        }
+
+        step_lane!(0);
+        step_lane!(1);
+        step_lane!(2);
+        step_lane!(3);
+    }
+
+    [
+        !rejected[0],
+        !rejected[1],
+        !rejected[2],
+        !rejected[3],
+    ]
+}
+
+pub fn scan_prepared_first_dense_bucket_lockstep4<const PIECE_COUNT: usize, const LEFT_LEN: usize>(
+    prepared_first: &PreparedFirstDense<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+) -> u64 {
+    let mut canonical_count = 0u64;
+    let mut chunks = entries.chunks_exact(4);
+    for chunk in &mut chunks {
+        let chunk: &[PreparedSecondToken; 4] = chunk
+            .try_into()
+            .expect("chunks_exact(4) must yield 4-lane chunks");
+        let results = canonical_pair_from_prepared_first_dense_left_len_lockstep4_chunk::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, chunk);
+        canonical_count += results.iter().map(|&accepted| accepted as u64).sum::<u64>();
+    }
+    for entry in chunks.remainder() {
+        canonical_count += canonical_pair_from_prepared_first_dense_left_len::<PIECE_COUNT, LEFT_LEN>(
+            prepared_first,
+            &entry.left_spine,
+        ) as u64;
+    }
+    canonical_count
+}
+
+pub fn count_mismatches_prepared_first_dense_bucket_lockstep4<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDense<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+) -> u64 {
+    let mut mismatches = 0u64;
+    let mut chunks = entries.chunks_exact(4);
+    for chunk in &mut chunks {
+        let chunk: &[PreparedSecondToken; 4] = chunk
+            .try_into()
+            .expect("chunks_exact(4) must yield 4-lane chunks");
+        let results = canonical_pair_from_prepared_first_dense_left_len_lockstep4_chunk::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, chunk);
+        for (lane, entry) in chunk.iter().enumerate() {
+            let scalar = canonical_pair_from_prepared_first_dense_left_len::<PIECE_COUNT, LEFT_LEN>(
+                prepared_first,
+                &entry.left_spine,
+            );
+            if scalar != results[lane] {
+                mismatches += 1;
+            }
+        }
+    }
+    for entry in chunks.remainder() {
+        let scalar = canonical_pair_from_prepared_first_dense_left_len::<PIECE_COUNT, LEFT_LEN>(
+            prepared_first,
+            &entry.left_spine,
+        );
+        let lockstep = canonical_pair_from_prepared_first_dense_left_len::<PIECE_COUNT, LEFT_LEN>(
+            prepared_first,
+            &entry.left_spine,
+        );
+        if scalar != lockstep {
+            mismatches += 1;
+        }
+    }
+    mismatches
+}
