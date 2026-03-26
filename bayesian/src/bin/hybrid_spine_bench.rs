@@ -5,11 +5,17 @@ use std::time::Instant;
 
 use bayesian::bpe::prepared_dense::{
     build_prefetch_left_id_chunks,
+    build_prepared_second_simd4_chunks,
+    build_prepared_second_simd8_chunks,
+    build_prepared_second_simd16_chunks,
     canonical_pair_from_prepared_first_dense_left_len,
     count_mismatches_prepared_first_dense_bucket_lockstep4,
     count_mismatches_prepared_first_dense_contiguous_swapped_bucket_lockstep4_prefetch2,
     count_mismatches_prepared_first_dense_contiguous_swapped_bucket_lockstep4_prefetch,
     count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch,
+    count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd4,
+    count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd8,
+    count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd16,
     count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4,
     count_mismatches_prepared_first_dense_contiguous_swapped_bucket_lockstep4,
     count_mismatches_prepared_first_dense_contiguous_bucket_lockstep4,
@@ -18,11 +24,15 @@ use bayesian::bpe::prepared_dense::{
     scan_prepared_first_dense_contiguous_swapped_bucket_lockstep4_prefetch,
     scan_prepared_first_dense_contiguous_swapped_bucket_lockstep4,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch,
+    scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd4,
+    scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd8,
+    scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd16,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch_prebuilt_param,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch_prebuilt,
     scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4,
     scan_prepared_first_dense_contiguous_bucket_lockstep4, PreparedFirstDenseContiguous,
-    PrefetchConfig, PrefetchHint, PrefetchLeftIdChunk,
+    PrefetchConfig, PrefetchHint, PrefetchLeftIdChunk, PreparedSecondSimd4Chunk,
+    PreparedSecondSimd8Chunk, PreparedSecondSimd16Chunk,
     PreparedFirstDenseContiguousSwapped, PreparedFirstDenseContiguousSwappedTight,
     PreparedSecondBuckets, PreparedSecondToken,
 };
@@ -798,6 +808,126 @@ fn count_bucket_lockstep4_contiguous_swapped_tight_prefetch_mismatches<const LEF
     mismatches
 }
 
+fn time_bucket_simd8_contiguous_swapped_tight<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd8Chunk],
+) -> (u64, u64, f64) {
+    let timed_start = Instant::now();
+    let mut canonical_count = 0u64;
+
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        canonical_count += black_box(
+            scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd8::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, entries, simd_chunks),
+        );
+    }
+
+    (
+        (prepared_first_contiguous_swapped_tight_batch.len() * entries.len()) as u64,
+        canonical_count,
+        timed_start.elapsed().as_secs_f64(),
+    )
+}
+
+fn time_bucket_simd4_contiguous_swapped_tight<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd4Chunk],
+) -> (u64, u64, f64) {
+    let timed_start = Instant::now();
+    let mut canonical_count = 0u64;
+
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        canonical_count += black_box(
+            scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd4::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, entries, simd_chunks),
+        );
+    }
+
+    (
+        (prepared_first_contiguous_swapped_tight_batch.len() * entries.len()) as u64,
+        canonical_count,
+        timed_start.elapsed().as_secs_f64(),
+    )
+}
+
+fn count_bucket_simd8_contiguous_swapped_tight_mismatches<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd8Chunk],
+) -> u64 {
+    let mut mismatches = 0u64;
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        mismatches +=
+            count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd8::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, entries, simd_chunks);
+    }
+    mismatches
+}
+
+fn count_bucket_simd4_contiguous_swapped_tight_mismatches<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd4Chunk],
+) -> u64 {
+    let mut mismatches = 0u64;
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        mismatches +=
+            count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd4::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, entries, simd_chunks);
+    }
+    mismatches
+}
+
+fn time_bucket_simd16_contiguous_swapped_tight<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd16Chunk],
+) -> (u64, u64, f64) {
+    let timed_start = Instant::now();
+    let mut canonical_count = 0u64;
+
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        canonical_count += black_box(
+            scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd16::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, entries, simd_chunks),
+        );
+    }
+
+    (
+        (prepared_first_contiguous_swapped_tight_batch.len() * entries.len()) as u64,
+        canonical_count,
+        timed_start.elapsed().as_secs_f64(),
+    )
+}
+
+fn count_bucket_simd16_contiguous_swapped_tight_mismatches<const LEFT_LEN: usize>(
+    prepared_first_contiguous_swapped_tight_batch: &[PreparedFirstDenseContiguousSwappedTight<TINYLLAMA_PIECE_COUNT>],
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd16Chunk],
+) -> u64 {
+    let mut mismatches = 0u64;
+    for prepared_first in prepared_first_contiguous_swapped_tight_batch {
+        mismatches +=
+            count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd16::<
+                TINYLLAMA_PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, entries, simd_chunks);
+    }
+    mismatches
+}
+
 #[inline(always)]
 fn use_prefetch2_for_left_len(left_len: usize) -> bool {
     matches!(left_len, 1 | 2 | 4 | 5)
@@ -999,6 +1129,51 @@ fn build_prefetch_chunks_by_left_len(
     chunks
 }
 
+fn build_simd8_chunks_by_left_len(
+    candidate_second_buckets: &PreparedSecondBuckets,
+) -> [Vec<PreparedSecondSimd8Chunk>; 9] {
+    let mut chunks: [Vec<PreparedSecondSimd8Chunk>; 9] = std::array::from_fn(|_| Vec::new());
+    chunks[1] = build_prepared_second_simd8_chunks::<1>(&candidate_second_buckets[1]);
+    chunks[2] = build_prepared_second_simd8_chunks::<2>(&candidate_second_buckets[2]);
+    chunks[3] = build_prepared_second_simd8_chunks::<3>(&candidate_second_buckets[3]);
+    chunks[4] = build_prepared_second_simd8_chunks::<4>(&candidate_second_buckets[4]);
+    chunks[5] = build_prepared_second_simd8_chunks::<5>(&candidate_second_buckets[5]);
+    chunks[6] = build_prepared_second_simd8_chunks::<6>(&candidate_second_buckets[6]);
+    chunks[7] = build_prepared_second_simd8_chunks::<7>(&candidate_second_buckets[7]);
+    chunks[8] = build_prepared_second_simd8_chunks::<8>(&candidate_second_buckets[8]);
+    chunks
+}
+
+fn build_simd4_chunks_by_left_len(
+    candidate_second_buckets: &PreparedSecondBuckets,
+) -> [Vec<PreparedSecondSimd4Chunk>; 9] {
+    let mut chunks: [Vec<PreparedSecondSimd4Chunk>; 9] = std::array::from_fn(|_| Vec::new());
+    chunks[1] = build_prepared_second_simd4_chunks::<1>(&candidate_second_buckets[1]);
+    chunks[2] = build_prepared_second_simd4_chunks::<2>(&candidate_second_buckets[2]);
+    chunks[3] = build_prepared_second_simd4_chunks::<3>(&candidate_second_buckets[3]);
+    chunks[4] = build_prepared_second_simd4_chunks::<4>(&candidate_second_buckets[4]);
+    chunks[5] = build_prepared_second_simd4_chunks::<5>(&candidate_second_buckets[5]);
+    chunks[6] = build_prepared_second_simd4_chunks::<6>(&candidate_second_buckets[6]);
+    chunks[7] = build_prepared_second_simd4_chunks::<7>(&candidate_second_buckets[7]);
+    chunks[8] = build_prepared_second_simd4_chunks::<8>(&candidate_second_buckets[8]);
+    chunks
+}
+
+fn build_simd16_chunks_by_left_len(
+    candidate_second_buckets: &PreparedSecondBuckets,
+) -> [Vec<PreparedSecondSimd16Chunk>; 9] {
+    let mut chunks: [Vec<PreparedSecondSimd16Chunk>; 9] = std::array::from_fn(|_| Vec::new());
+    chunks[1] = build_prepared_second_simd16_chunks::<1>(&candidate_second_buckets[1]);
+    chunks[2] = build_prepared_second_simd16_chunks::<2>(&candidate_second_buckets[2]);
+    chunks[3] = build_prepared_second_simd16_chunks::<3>(&candidate_second_buckets[3]);
+    chunks[4] = build_prepared_second_simd16_chunks::<4>(&candidate_second_buckets[4]);
+    chunks[5] = build_prepared_second_simd16_chunks::<5>(&candidate_second_buckets[5]);
+    chunks[6] = build_prepared_second_simd16_chunks::<6>(&candidate_second_buckets[6]);
+    chunks[7] = build_prepared_second_simd16_chunks::<7>(&candidate_second_buckets[7]);
+    chunks[8] = build_prepared_second_simd16_chunks::<8>(&candidate_second_buckets[8]);
+    chunks
+}
+
 fn prefetch_hint_name(hint: PrefetchHint) -> &'static str {
     match hint {
         PrefetchHint::T0 => "t0",
@@ -1105,6 +1280,43 @@ fn main() -> ExitCode {
 
     if mode == "firsttoken_len_hist" {
         print_first_token_spine_len_histogram(&tokenizer, &sampled_first_ids);
+    }
+
+    if mode == "firsttoken_leftlen_rightlen_matrix" {
+        let mut matrix = [[0u64; 9]; 9];
+        let mut used = 0u64;
+        let all_ids: Vec<u32> = (0..TINYLLAMA_PIECE_COUNT as u32).collect();
+        for &id in &all_ids {
+            let Some(right) = tokenizer.right_packed_spine_for_token_id(id) else {
+                continue;
+            };
+            let Some(left) = tokenizer.left_packed_spine_for_token_id(id) else {
+                continue;
+            };
+            let r = right.as_slice().len().min(8);
+            let l = left.as_slice().len().min(8);
+            matrix[l][r] += 1;
+            used += 1;
+        }
+        println!("first_token_left_len_vs_right_len_matrix:");
+        println!("  total_tokens_with_both_spines = {used}");
+        print!("  {:>8}", "");
+        for r in 0..=8 {
+            print!("  r={r:>3}");
+        }
+        println!();
+        for l in 0..=8 {
+            print!("  l={l:<5}");
+            for r in 0..=8 {
+                let pct = if used > 0 {
+                    matrix[l][r] as f64 / used as f64 * 100.0
+                } else {
+                    0.0
+                };
+                print!("  {:>5.1}%", pct);
+            }
+            println!("    (count: {})", (0..=8).map(|r| matrix[l][r]).sum::<u64>());
+        }
     }
 
     if mode == "prefetch_dedup_overlap_bybucket" {
@@ -3006,6 +3218,471 @@ fn main() -> ExitCode {
             println!(
                 "  overall_plain_vs_noprefetch_speedup = {:.12}x",
                 total_plain_seconds / total_noprefetch_seconds
+            );
+        }
+    }
+
+    if mode == "preparedfirstdense_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket" {
+        let prepared_first_contiguous_swapped_tight_batch =
+            match build_prepared_first_dense_contiguous_swapped_tight_batch(&tokenizer, &sampled_first_ids) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!("failed to prebuild swapped-tight contiguous prepared-first dense batch: {err}");
+                    return ExitCode::from(1);
+                }
+            };
+        let prefetch_chunks_by_left_len = build_prefetch_chunks_by_left_len(candidate_second_buckets);
+        let simd8_chunks_by_left_len = build_simd8_chunks_by_left_len(candidate_second_buckets);
+        let noprefetch = PrefetchConfig {
+            enabled: false,
+            lookahead_chunks: 1,
+            budget: 0,
+            scope: 8,
+            hint: PrefetchHint::T0,
+        };
+
+        println!("prepared_first_dense_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket:");
+        println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
+        println!(
+            "  swapped_tight_prepared_first_count = {}",
+            prepared_first_contiguous_swapped_tight_batch.len()
+        );
+
+        let mut total_pair_count = 0u64;
+        let mut total_lockstep4_seconds = 0.0f64;
+        let mut total_simd8_seconds = 0.0f64;
+
+        macro_rules! bench_bucket_simd8_vs_lockstep4 {
+            ($left_len:literal) => {{
+                let entries = &candidate_second_buckets[$left_len];
+                let prefetch_chunks = &prefetch_chunks_by_left_len[$left_len];
+                let simd_chunks = &simd8_chunks_by_left_len[$left_len];
+                if entries.is_empty() {
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = 0");
+                } else {
+                    let (pair_count, lockstep4_canonical_count, lockstep4_seconds) =
+                        time_bucket_lockstep4_contiguous_swapped_tight_prefetch_param::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            prefetch_chunks,
+                            noprefetch,
+                        );
+                    let (_simd_pair_count, simd8_canonical_count, simd8_seconds) =
+                        time_bucket_simd8_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd_chunks,
+                        );
+                    let lockstep4_mismatches =
+                        count_bucket_lockstep4_contiguous_swapped_tight_mismatches::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                        );
+                    let simd8_mismatches =
+                        count_bucket_simd8_contiguous_swapped_tight_mismatches::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd_chunks,
+                        );
+
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = {pair_count}");
+                    println!("    lockstep4_canonical_count = {lockstep4_canonical_count}");
+                    println!("    simd8_canonical_count = {simd8_canonical_count}");
+                    println!("    lockstep4_mismatches = {lockstep4_mismatches}");
+                    println!("    simd8_mismatches = {simd8_mismatches}");
+                    println!("    lockstep4_seconds = {lockstep4_seconds:.12}");
+                    println!("    simd8_seconds = {simd8_seconds:.12}");
+                    println!(
+                        "    lockstep4_vs_simd8_speedup = {:.12}x",
+                        lockstep4_seconds / simd8_seconds
+                    );
+
+                    total_pair_count += pair_count;
+                    total_lockstep4_seconds += lockstep4_seconds;
+                    total_simd8_seconds += simd8_seconds;
+                }
+            }};
+        }
+
+        bench_bucket_simd8_vs_lockstep4!(1);
+        bench_bucket_simd8_vs_lockstep4!(2);
+        bench_bucket_simd8_vs_lockstep4!(3);
+        bench_bucket_simd8_vs_lockstep4!(4);
+        bench_bucket_simd8_vs_lockstep4!(5);
+        bench_bucket_simd8_vs_lockstep4!(6);
+        bench_bucket_simd8_vs_lockstep4!(7);
+        bench_bucket_simd8_vs_lockstep4!(8);
+
+        if total_pair_count > 0 {
+            println!("  overall_pair_count = {total_pair_count}");
+            println!(
+                "  overall_lockstep4_ns_per_candidate = {:.12}",
+                total_lockstep4_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_simd8_ns_per_candidate = {:.12}",
+                total_simd8_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_lockstep4_vs_simd8_speedup = {:.12}x",
+                total_lockstep4_seconds / total_simd8_seconds
+            );
+        }
+    }
+
+    if mode == "preparedfirstdense_simd8_vs_lockstep4_swappedtight_noprefetch_matrix_by_len" {
+        let prepared_first_tight_by_right_len =
+            match build_prepared_first_dense_contiguous_swapped_tight_batches_by_right_len(
+                &tokenizer,
+                &sampled_first_ids,
+            ) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!(
+                        "failed to prebuild swapped-tight contiguous prepared-first dense batches by right_len: {err}"
+                    );
+                    return ExitCode::from(1);
+                }
+            };
+        let prefetch_chunks_by_left_len = build_prefetch_chunks_by_left_len(candidate_second_buckets);
+        let simd8_chunks_by_left_len = build_simd8_chunks_by_left_len(candidate_second_buckets);
+        let noprefetch = PrefetchConfig {
+            enabled: false,
+            lookahead_chunks: 1,
+            budget: 0,
+            scope: 8,
+            hint: PrefetchHint::T0,
+        };
+
+        println!("prepared_first_dense_simd8_vs_lockstep4_swappedtight_noprefetch_matrix_by_len:");
+        println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
+        for right_len in 0..=8 {
+            println!(
+                "  right_len = {right_len}, tight_prepared_first_count = {}",
+                prepared_first_tight_by_right_len[right_len].len()
+            );
+        }
+        println!("  speedup cell = lockstep4_seconds / simd8_seconds");
+
+        let mut total_pair_count = 0u64;
+        let mut total_lockstep4_seconds = 0.0f64;
+        let mut total_simd8_seconds = 0.0f64;
+
+        macro_rules! bench_left_len_matrix {
+            ($left_len:literal) => {{
+                let entries = &candidate_second_buckets[$left_len];
+                let prefetch_chunks = &prefetch_chunks_by_left_len[$left_len];
+                let simd_chunks = &simd8_chunks_by_left_len[$left_len];
+
+                for right_len in 1..=8usize {
+                    let prepared_batch = &prepared_first_tight_by_right_len[right_len];
+                    if entries.is_empty() || prepared_batch.is_empty() {
+                        println!(
+                            "    cell(left_len={}, right_len={}): pair_count=0",
+                            $left_len, right_len
+                        );
+                        continue;
+                    }
+
+                    let (pair_count, lockstep4_canonical_count, lockstep4_seconds) =
+                        time_bucket_lockstep4_contiguous_swapped_tight_prefetch_param::<$left_len>(
+                            prepared_batch,
+                            entries,
+                            prefetch_chunks,
+                            noprefetch,
+                        );
+                    let (_simd_pair_count, simd8_canonical_count, simd8_seconds) =
+                        time_bucket_simd8_contiguous_swapped_tight::<$left_len>(
+                            prepared_batch,
+                            entries,
+                            simd_chunks,
+                        );
+                    let lockstep4_mismatches =
+                        count_bucket_lockstep4_contiguous_swapped_tight_mismatches::<$left_len>(
+                            prepared_batch,
+                            entries,
+                        );
+                    let simd8_mismatches =
+                        count_bucket_simd8_contiguous_swapped_tight_mismatches::<$left_len>(
+                            prepared_batch,
+                            entries,
+                            simd_chunks,
+                        );
+
+                    println!(
+                        "    cell(left_len={}, right_len={}): pair_count={pair_count}, lockstep4_canonical_count={lockstep4_canonical_count}, simd8_canonical_count={simd8_canonical_count}, lockstep4_mismatches={lockstep4_mismatches}, simd8_mismatches={simd8_mismatches}, lockstep4_seconds={lockstep4_seconds:.12}, simd8_seconds={simd8_seconds:.12}, lockstep4_vs_simd8_speedup={:.12}x",
+                        $left_len,
+                        right_len,
+                        lockstep4_seconds / simd8_seconds
+                    );
+
+                    total_pair_count += pair_count;
+                    total_lockstep4_seconds += lockstep4_seconds;
+                    total_simd8_seconds += simd8_seconds;
+                }
+            }};
+        }
+
+        for left_len in 1..=8usize {
+            println!("  left_len = {left_len}");
+            match left_len {
+                1 => bench_left_len_matrix!(1),
+                2 => bench_left_len_matrix!(2),
+                3 => bench_left_len_matrix!(3),
+                4 => bench_left_len_matrix!(4),
+                5 => bench_left_len_matrix!(5),
+                6 => bench_left_len_matrix!(6),
+                7 => bench_left_len_matrix!(7),
+                8 => bench_left_len_matrix!(8),
+                _ => unreachable!(),
+            }
+        }
+
+        if total_pair_count > 0 {
+            println!("  overall_pair_count = {total_pair_count}");
+            println!(
+                "  overall_lockstep4_ns_per_candidate = {:.12}",
+                total_lockstep4_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_simd8_ns_per_candidate = {:.12}",
+                total_simd8_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_lockstep4_vs_simd8_speedup = {:.12}x",
+                total_lockstep4_seconds / total_simd8_seconds
+            );
+        }
+    }
+
+    if mode == "preparedfirstdense_simd4_vs_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket" {
+        let prepared_first_contiguous_swapped_tight_batch =
+            match build_prepared_first_dense_contiguous_swapped_tight_batch(
+                &tokenizer,
+                &sampled_first_ids,
+            ) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!(
+                        "failed to prebuild swapped-tight contiguous prepared-first dense batch: {err}"
+                    );
+                    return ExitCode::from(1);
+                }
+            };
+        let simd4_chunks_by_left_len = build_simd4_chunks_by_left_len(candidate_second_buckets);
+        let simd8_chunks_by_left_len = build_simd8_chunks_by_left_len(candidate_second_buckets);
+        println!("prepared_first_dense_simd4_vs_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket:");
+        println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
+        println!(
+            "  swapped_tight_prepared_first_count = {}",
+            prepared_first_contiguous_swapped_tight_batch.len()
+        );
+
+        macro_rules! bench_bucket_simd4_vs_simd8_vs_lockstep4 {
+            ($left_len:literal) => {{
+                let entries = &candidate_second_buckets[$left_len];
+                let simd4_chunks = &simd4_chunks_by_left_len[$left_len];
+                let simd8_chunks = &simd8_chunks_by_left_len[$left_len];
+                if entries.is_empty() {
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = 0");
+                } else {
+                    let (pair_count, lockstep4_canonical_count, lockstep4_seconds) =
+                        time_bucket_lockstep4_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                        );
+                    let (_simd4_pair_count, simd4_canonical_count, simd4_seconds) =
+                        time_bucket_simd4_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd4_chunks,
+                        );
+                    let (_simd8_pair_count, simd8_canonical_count, simd8_seconds) =
+                        time_bucket_simd8_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd8_chunks,
+                        );
+                    let simd4_mismatches =
+                        count_bucket_simd4_contiguous_swapped_tight_mismatches::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd4_chunks,
+                        );
+                    let simd8_mismatches =
+                        count_bucket_simd8_contiguous_swapped_tight_mismatches::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd8_chunks,
+                        );
+
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = {pair_count}");
+                    println!("    lockstep4_canonical_count = {lockstep4_canonical_count}");
+                    println!("    simd4_canonical_count = {simd4_canonical_count}");
+                    println!("    simd8_canonical_count = {simd8_canonical_count}");
+                    println!("    simd4_mismatches = {simd4_mismatches}");
+                    println!("    simd8_mismatches = {simd8_mismatches}");
+                    println!("    lockstep4_seconds = {lockstep4_seconds:.12}");
+                    println!("    simd4_seconds = {simd4_seconds:.12}");
+                    println!("    simd8_seconds = {simd8_seconds:.12}");
+                    println!(
+                        "    lockstep4_vs_simd4_speedup = {:.12}x",
+                        lockstep4_seconds / simd4_seconds
+                    );
+                    println!(
+                        "    lockstep4_vs_simd8_speedup = {:.12}x",
+                        lockstep4_seconds / simd8_seconds
+                    );
+                    println!(
+                        "    simd4_vs_simd8_speedup = {:.12}x",
+                        simd4_seconds / simd8_seconds
+                    );
+                }
+            }};
+        }
+
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(1);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(2);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(3);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(4);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(5);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(6);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(7);
+        bench_bucket_simd4_vs_simd8_vs_lockstep4!(8);
+    }
+
+    if mode == "preparedfirstdense_simd16_vs_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket" {
+        let prepared_first_contiguous_swapped_tight_batch =
+            match build_prepared_first_dense_contiguous_swapped_tight_batch(
+                &tokenizer,
+                &sampled_first_ids,
+            ) {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    eprintln!(
+                        "failed to prebuild swapped-tight contiguous prepared-first dense batch: {err}"
+                    );
+                    return ExitCode::from(1);
+                }
+            };
+        let simd8_chunks_by_left_len = build_simd8_chunks_by_left_len(candidate_second_buckets);
+        let simd16_chunks_by_left_len = build_simd16_chunks_by_left_len(candidate_second_buckets);
+        println!("prepared_first_dense_simd16_vs_simd8_vs_lockstep4_swappedtight_noprefetch_bybucket:");
+        println!("  piece_count = {}", TINYLLAMA_PIECE_COUNT);
+        println!(
+            "  swapped_tight_prepared_first_count = {}",
+            prepared_first_contiguous_swapped_tight_batch.len()
+        );
+
+        let mut total_pair_count = 0u64;
+        let mut total_lockstep4_seconds = 0.0f64;
+        let mut total_simd8_seconds = 0.0f64;
+        let mut total_simd16_seconds = 0.0f64;
+
+        macro_rules! bench_bucket_simd16_vs_simd8_vs_lockstep4 {
+            ($left_len:literal) => {{
+                let entries = &candidate_second_buckets[$left_len];
+                let simd8_chunks = &simd8_chunks_by_left_len[$left_len];
+                let simd16_chunks = &simd16_chunks_by_left_len[$left_len];
+                if entries.is_empty() {
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = 0");
+                } else {
+                    let (pair_count, lockstep4_canonical_count, lockstep4_seconds) =
+                        time_bucket_lockstep4_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                        );
+                    let (_simd8_pair_count, simd8_canonical_count, simd8_seconds) =
+                        time_bucket_simd8_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd8_chunks,
+                        );
+                    let (_simd16_pair_count, simd16_canonical_count, simd16_seconds) =
+                        time_bucket_simd16_contiguous_swapped_tight::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd16_chunks,
+                        );
+                    let simd8_mismatches =
+                        count_bucket_simd8_contiguous_swapped_tight_mismatches::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd8_chunks,
+                        );
+                    let simd16_mismatches =
+                        count_bucket_simd16_contiguous_swapped_tight_mismatches::<$left_len>(
+                            &prepared_first_contiguous_swapped_tight_batch,
+                            entries,
+                            simd16_chunks,
+                        );
+
+                    println!("  left_len = {}", $left_len);
+                    println!("    pair_count = {pair_count}");
+                    println!("    lockstep4_canonical_count = {lockstep4_canonical_count}");
+                    println!("    simd8_canonical_count = {simd8_canonical_count}");
+                    println!("    simd16_canonical_count = {simd16_canonical_count}");
+                    println!("    simd8_mismatches = {simd8_mismatches}");
+                    println!("    simd16_mismatches = {simd16_mismatches}");
+                    println!("    lockstep4_seconds = {lockstep4_seconds:.12}");
+                    println!("    simd8_seconds = {simd8_seconds:.12}");
+                    println!("    simd16_seconds = {simd16_seconds:.12}");
+                    println!(
+                        "    lockstep4_vs_simd8_speedup = {:.12}x",
+                        lockstep4_seconds / simd8_seconds
+                    );
+                    println!(
+                        "    lockstep4_vs_simd16_speedup = {:.12}x",
+                        lockstep4_seconds / simd16_seconds
+                    );
+                    println!(
+                        "    simd8_vs_simd16_speedup = {:.12}x",
+                        simd8_seconds / simd16_seconds
+                    );
+
+                    total_pair_count += pair_count;
+                    total_lockstep4_seconds += lockstep4_seconds;
+                    total_simd8_seconds += simd8_seconds;
+                    total_simd16_seconds += simd16_seconds;
+                }
+            }};
+        }
+
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(1);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(2);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(3);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(4);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(5);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(6);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(7);
+        bench_bucket_simd16_vs_simd8_vs_lockstep4!(8);
+
+        if total_pair_count > 0 {
+            println!("  overall_pair_count = {total_pair_count}");
+            println!(
+                "  overall_lockstep4_ns_per_candidate = {:.12}",
+                total_lockstep4_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_simd8_ns_per_candidate = {:.12}",
+                total_simd8_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_simd16_ns_per_candidate = {:.12}",
+                total_simd16_seconds * 1_000_000_000.0 / total_pair_count as f64
+            );
+            println!(
+                "  overall_lockstep4_vs_simd16_speedup = {:.12}x",
+                total_lockstep4_seconds / total_simd16_seconds
+            );
+            println!(
+                "  overall_simd8_vs_simd16_speedup = {:.12}x",
+                total_simd8_seconds / total_simd16_seconds
             );
         }
     }

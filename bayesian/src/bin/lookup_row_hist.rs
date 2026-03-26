@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-use bayesian::bpe::{BpeMerges, SpineEntry, TinyLlamaWordTokenizer};
+use bayesian::bpe::{BpeMerges, TinyLlamaWordTokenizer};
 use serde_json::Value;
 
 #[derive(Clone, Debug)]
@@ -32,14 +32,6 @@ impl XorShift64 {
 
     fn gen_index(&mut self, len: usize) -> usize {
         (self.next_u64() % len as u64) as usize
-    }
-}
-
-fn next_rank(entry: SpineEntry) -> Option<u32> {
-    if entry.rank_plus_one == 0 {
-        None
-    } else {
-        Some((entry.rank_plus_one - 1) as u32)
     }
 }
 
@@ -130,36 +122,36 @@ fn main() -> ExitCode {
                 second_piece_hits[left_id] += 1;
                 lookup_events += 1;
 
-                let right_rank = next_rank(right_spine[i]);
-                let left_rank = next_rank(left_spine[j]);
-                let cross_rank = merges
+                let right_priority_score = right_spine[i].priority_score as u32;
+                let left_priority_score = left_spine[j].priority_score as u32;
+                let cross_priority_score = merges
                     .lookup_merge_by_pair(right_spine[i].id as u32, left_spine[j].id as u32)
-                    .map(|entry| entry.rank);
-                let mut best = right_rank;
-                if left_rank.is_some() && (best.is_none() || left_rank < best) {
-                    best = left_rank;
+                    .map_or(0, |entry| u32::MAX - entry.rank);
+                let mut best_priority_score = right_priority_score;
+                if left_priority_score > best_priority_score {
+                    best_priority_score = left_priority_score;
                 }
-                if cross_rank.is_some() && (best.is_none() || cross_rank < best) {
-                    best = cross_rank;
+                if cross_priority_score > best_priority_score {
+                    best_priority_score = cross_priority_score;
                 }
 
-                let Some(best_rank) = best else {
-                    break;
-                };
-
-                if cross_rank == Some(best_rank) {
+                if best_priority_score == 0 {
                     break;
                 }
-                if right_rank == Some(best_rank) {
+
+                if cross_priority_score == best_priority_score {
+                    break;
+                }
+                if right_priority_score == best_priority_score {
                     i += 1;
                     continue;
                 }
-                if left_rank == Some(best_rank) {
+                if left_priority_score == best_priority_score {
                     j += 1;
                     continue;
                 }
 
-                unreachable!("best rank must come from one of the spine ranks");
+                unreachable!("best score must come from one of the spine scores");
             }
         }
     }

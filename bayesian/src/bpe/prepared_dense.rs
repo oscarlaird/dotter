@@ -7,7 +7,7 @@ static ZERO_CROSS_RANK_ROW: [u16; MAX_PREPARED_DENSE_PIECE_COUNT] =
 #[derive(Clone, Copy, Debug)]
 struct RowEntry {
     right: u16,
-    rank_plus_one: u16,
+    priority_score: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct MergeRows {
 pub struct PreparedFirstDense<const PIECE_COUNT: usize> {
     right_spine: PackedSpine,
     right_len: u8,
-    right_rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
+    right_priority_score: [u16; MAX_PACKED_SPINE_LEN],
     cross_rank_row_ptrs: [*const u16; MAX_PACKED_SPINE_LEN],
     _dense_rows: [Option<Box<[u16; PIECE_COUNT]>>; MAX_PACKED_SPINE_LEN],
 }
@@ -28,7 +28,7 @@ pub struct PreparedFirstDense<const PIECE_COUNT: usize> {
 #[derive(Debug, Clone)]
 pub struct PreparedFirstDenseContiguous<const PIECE_COUNT: usize> {
     right_len: u8,
-    right_rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
+    right_priority_score: [u16; MAX_PACKED_SPINE_LEN],
     // Row-major matrix over right-spine index (rows) x left-piece-id (columns).
     dense_matrix: Box<[u16]>,
 }
@@ -36,7 +36,7 @@ pub struct PreparedFirstDenseContiguous<const PIECE_COUNT: usize> {
 #[derive(Debug, Clone)]
 pub struct PreparedFirstDenseContiguousSwapped<const PIECE_COUNT: usize> {
     right_len: u8,
-    right_rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
+    right_priority_score: [u16; MAX_PACKED_SPINE_LEN],
     // Left-id-major matrix: columns are right-spine indices.
     // Index as dense_matrix[left_id * MAX_PACKED_SPINE_LEN + right_idx].
     dense_matrix: Box<[u16]>,
@@ -45,17 +45,18 @@ pub struct PreparedFirstDenseContiguousSwapped<const PIECE_COUNT: usize> {
 #[derive(Debug, Clone)]
 pub struct PreparedFirstDenseContiguousSwappedTight<const PIECE_COUNT: usize> {
     right_len: u8,
-    right_rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
+    right_priority_score: [u16; MAX_PACKED_SPINE_LEN],
     // Left-id-major matrix with dynamic row stride = right_len for this prepared first token.
     // Index as dense_matrix[left_id * right_len + right_idx].
     dense_matrix: Box<[u16]>,
+    dense_matrix_u32: Box<[u32]>,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct CompactLeftSpine {
     pub len: u8,
     pub ids: [u16; MAX_PACKED_SPINE_LEN],
-    pub rank_plus_one: [u16; MAX_PACKED_SPINE_LEN],
+    pub priority_score: [u16; MAX_PACKED_SPINE_LEN],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -74,6 +75,29 @@ pub struct PrefetchLeftIdChunk {
     pub count: u8,
     pub counts_by_scope: [u8; MAX_PACKED_SPINE_LEN + 1],
     pub ids: [u16; MAX_PREFETCH_LEFT_IDS_PER_CHUNK],
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedSecondSimd8Chunk {
+    // Per-depth vectors for 8 lanes.
+    pub left_priority_scores_by_depth: [[u32; 8]; MAX_PACKED_SPINE_LEN],
+    // Precomputed row bases per possible first right_len (1..=8), per depth, per lane.
+    pub row_base_by_right_len_by_depth:
+        [[[u32; 8]; MAX_PACKED_SPINE_LEN]; MAX_PACKED_SPINE_LEN + 1],
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedSecondSimd4Chunk {
+    pub left_priority_scores_by_depth: [[u32; 4]; MAX_PACKED_SPINE_LEN],
+    pub row_base_by_right_len_by_depth:
+        [[[u32; 4]; MAX_PACKED_SPINE_LEN]; MAX_PACKED_SPINE_LEN + 1],
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedSecondSimd16Chunk {
+    pub left_priority_scores_by_depth: [[u32; 16]; MAX_PACKED_SPINE_LEN],
+    pub row_base_by_right_len_by_depth:
+        [[[u32; 16]; MAX_PACKED_SPINE_LEN]; MAX_PACKED_SPINE_LEN + 1],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,16 +126,16 @@ impl MergeRows {
             let right = u16::try_from(entry.right).map_err(|_| {
                 BpeError::UnsupportedPreparedDense("piece ids no longer fit in u16")
             })?;
-            let rank_plus_one = entry
-                .rank
-                .checked_add(1)
-                .and_then(|value| u16::try_from(value).ok())
-                .ok_or(BpeError::UnsupportedPreparedDense(
+            let priority_score = if entry.rank < u16::MAX as u32 {
+                (u16::MAX as u32 - entry.rank) as u16
+            } else {
+                return Err(BpeError::UnsupportedPreparedDense(
                     "merge ranks no longer fit in u16",
-                ))?;
+                ));
+            };
             rows[entry.left as usize].push(RowEntry {
                 right,
-                rank_plus_one,
+                priority_score,
             });
         }
 
@@ -136,21 +160,21 @@ impl<const PIECE_COUNT: usize> PreparedFirstDense<PIECE_COUNT> {
             ));
         }
 
-        let mut right_rank_plus_one = [0u16; MAX_PACKED_SPINE_LEN];
+        let mut right_priority_score = [0u16; MAX_PACKED_SPINE_LEN];
         let zero_row_ptr = ZERO_CROSS_RANK_ROW.as_ptr();
         let mut cross_rank_row_ptrs = [zero_row_ptr; MAX_PACKED_SPINE_LEN];
         let mut dense_rows: [Option<Box<[u16; PIECE_COUNT]>>; MAX_PACKED_SPINE_LEN] =
             std::array::from_fn(|_| None);
 
         for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
-            right_rank_plus_one[spine_idx] = spine_entry.rank_plus_one;
+            right_priority_score[spine_idx] = spine_entry.priority_score;
             let row = &merge_rows.rows[spine_entry.id as usize];
             if row.is_empty() {
                 continue;
             }
             let mut dense_row = Box::new([0u16; PIECE_COUNT]);
             for entry in row {
-                dense_row[entry.right as usize] = entry.rank_plus_one;
+                dense_row[entry.right as usize] = entry.priority_score;
             }
             cross_rank_row_ptrs[spine_idx] = dense_row.as_ptr();
             dense_rows[spine_idx] = Some(dense_row);
@@ -159,7 +183,7 @@ impl<const PIECE_COUNT: usize> PreparedFirstDense<PIECE_COUNT> {
         Ok(Self {
             right_spine: first_right_spine,
             right_len: first_right_spine.as_slice().len() as u8,
-            right_rank_plus_one,
+            right_priority_score,
             cross_rank_row_ptrs,
             _dense_rows: dense_rows,
         })
@@ -183,24 +207,24 @@ impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguous<PIECE_COUNT> {
             ));
         }
 
-        let mut right_rank_plus_one = [0u16; MAX_PACKED_SPINE_LEN];
+        let mut right_priority_score = [0u16; MAX_PACKED_SPINE_LEN];
         let mut dense_matrix = vec![0u16; PIECE_COUNT * MAX_PACKED_SPINE_LEN].into_boxed_slice();
 
         for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
-            right_rank_plus_one[spine_idx] = spine_entry.rank_plus_one;
+            right_priority_score[spine_idx] = spine_entry.priority_score;
             let row = &merge_rows.rows[spine_entry.id as usize];
             if row.is_empty() {
                 continue;
             }
             let row_base = spine_idx * PIECE_COUNT;
             for entry in row {
-                dense_matrix[row_base + entry.right as usize] = entry.rank_plus_one;
+                dense_matrix[row_base + entry.right as usize] = entry.priority_score;
             }
         }
 
         Ok(Self {
             right_len: first_right_spine.as_slice().len() as u8,
-            right_rank_plus_one,
+            right_priority_score,
             dense_matrix,
         })
     }
@@ -219,24 +243,24 @@ impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwapped<PIECE_COUNT> 
             ));
         }
 
-        let mut right_rank_plus_one = [0u16; MAX_PACKED_SPINE_LEN];
+        let mut right_priority_score = [0u16; MAX_PACKED_SPINE_LEN];
         let mut dense_matrix = vec![0u16; PIECE_COUNT * MAX_PACKED_SPINE_LEN].into_boxed_slice();
 
         for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
-            right_rank_plus_one[spine_idx] = spine_entry.rank_plus_one;
+            right_priority_score[spine_idx] = spine_entry.priority_score;
             let row = &merge_rows.rows[spine_entry.id as usize];
             if row.is_empty() {
                 continue;
             }
             for entry in row {
                 dense_matrix[entry.right as usize * MAX_PACKED_SPINE_LEN + spine_idx] =
-                    entry.rank_plus_one;
+                    entry.priority_score;
             }
         }
 
         Ok(Self {
             right_len: first_right_spine.as_slice().len() as u8,
-            right_rank_plus_one,
+            right_priority_score,
             dense_matrix,
         })
     }
@@ -256,24 +280,28 @@ impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwappedTight<PIECE_CO
         }
 
         let right_len = first_right_spine.as_slice().len();
-        let mut right_rank_plus_one = [0u16; MAX_PACKED_SPINE_LEN];
+        let mut right_priority_score = [0u16; MAX_PACKED_SPINE_LEN];
         let mut dense_matrix = vec![0u16; PIECE_COUNT * right_len].into_boxed_slice();
+        let mut dense_matrix_u32 = vec![0u32; PIECE_COUNT * right_len].into_boxed_slice();
 
         for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
-            right_rank_plus_one[spine_idx] = spine_entry.rank_plus_one;
+            right_priority_score[spine_idx] = spine_entry.priority_score;
             let row = &merge_rows.rows[spine_entry.id as usize];
             if row.is_empty() {
                 continue;
             }
             for entry in row {
-                dense_matrix[entry.right as usize * right_len + spine_idx] = entry.rank_plus_one;
+                let idx = entry.right as usize * right_len + spine_idx;
+                dense_matrix[idx] = entry.priority_score;
+                dense_matrix_u32[idx] = entry.priority_score as u32;
             }
         }
 
         Ok(Self {
             right_len: right_len as u8,
-            right_rank_plus_one,
+            right_priority_score,
             dense_matrix,
+            dense_matrix_u32,
         })
     }
 }
@@ -283,13 +311,13 @@ impl CompactLeftSpine {
         let mut compact = Self {
             len: 0,
             ids: [0; MAX_PACKED_SPINE_LEN],
-            rank_plus_one: [0; MAX_PACKED_SPINE_LEN],
+            priority_score: [0; MAX_PACKED_SPINE_LEN],
         };
         let entries = packed.as_slice();
         compact.len = entries.len() as u8;
         for (idx, entry) in entries.iter().enumerate() {
             compact.ids[idx] = entry.id;
-            compact.rank_plus_one[idx] = entry.rank_plus_one;
+            compact.priority_score[idx] = entry.priority_score;
         }
         compact
     }
@@ -325,10 +353,10 @@ pub fn canonical_pair_from_prepared_first_dense_left_len<
     }
 
     let right_spine_len = prepared_first.right_len as usize;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let cross_rank_row_ptrs = &prepared_first.cross_rank_row_ptrs;
     let left_ids = &left_spine.ids;
-    let left_rank_plus_one = &left_spine.rank_plus_one;
+    let left_priority_score = &left_spine.priority_score;
     let mut i = 0usize;
     let mut j = 0usize;
 
@@ -336,37 +364,35 @@ pub fn canonical_pair_from_prepared_first_dense_left_len<
         debug_assert!(i < right_spine_len);
         debug_assert!(j < LEFT_LEN);
 
-        let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i) };
+        let right_priority_score = unsafe { *right_priority_score.get_unchecked(i) };
         let left_id = unsafe { *left_ids.get_unchecked(j) };
-        let left_rank_plus_one = unsafe { *left_rank_plus_one.get_unchecked(j) };
+        let left_priority_score = unsafe { *left_priority_score.get_unchecked(j) };
         debug_assert!((left_id as usize) < PIECE_COUNT);
-        let cross_rank_plus_one =
+        let cross_priority_score =
             unsafe { *(*cross_rank_row_ptrs.get_unchecked(i)).add(left_id as usize) };
 
-        let mut best_rank_plus_one = right_rank_plus_one;
-        if left_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || left_rank_plus_one < best_rank_plus_one)
+        let mut best_priority_score = right_priority_score;
+        if left_priority_score > best_priority_score
         {
-            best_rank_plus_one = left_rank_plus_one;
+            best_priority_score = left_priority_score;
         }
-        if cross_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || cross_rank_plus_one < best_rank_plus_one)
+        if cross_priority_score > best_priority_score
         {
-            best_rank_plus_one = cross_rank_plus_one;
+            best_priority_score = cross_priority_score;
         }
 
-        if best_rank_plus_one == 0 {
+        if best_priority_score == 0 {
             return true;
         }
 
-        if cross_rank_plus_one == best_rank_plus_one {
+        if cross_priority_score == best_priority_score {
             return false;
         }
-        if right_rank_plus_one == best_rank_plus_one {
+        if right_priority_score == best_priority_score {
             i += 1;
             continue;
         }
-        if left_rank_plus_one == best_rank_plus_one {
+        if left_priority_score == best_priority_score {
             j += 1;
             continue;
         }
@@ -431,10 +457,10 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_left_len<
     }
 
     let right_spine_len = prepared_first.right_len as usize;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let left_ids = &left_spine.ids;
-    let left_rank_plus_one = &left_spine.rank_plus_one;
+    let left_priority_score = &left_spine.priority_score;
     let mut i = 0usize;
     let mut j = 0usize;
 
@@ -442,38 +468,36 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_left_len<
         debug_assert!(i < right_spine_len);
         debug_assert!(j < LEFT_LEN);
 
-        let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i) };
+        let right_priority_score = unsafe { *right_priority_score.get_unchecked(i) };
         let left_id = unsafe { *left_ids.get_unchecked(j) };
-        let left_rank_plus_one = unsafe { *left_rank_plus_one.get_unchecked(j) };
+        let left_priority_score = unsafe { *left_priority_score.get_unchecked(j) };
         debug_assert!((left_id as usize) < PIECE_COUNT);
-        let cross_rank_plus_one = unsafe {
+        let cross_priority_score = unsafe {
             *dense_matrix.get_unchecked(i * PIECE_COUNT + left_id as usize)
         };
 
-        let mut best_rank_plus_one = right_rank_plus_one;
-        if left_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || left_rank_plus_one < best_rank_plus_one)
+        let mut best_priority_score = right_priority_score;
+        if left_priority_score > best_priority_score
         {
-            best_rank_plus_one = left_rank_plus_one;
+            best_priority_score = left_priority_score;
         }
-        if cross_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || cross_rank_plus_one < best_rank_plus_one)
+        if cross_priority_score > best_priority_score
         {
-            best_rank_plus_one = cross_rank_plus_one;
+            best_priority_score = cross_priority_score;
         }
 
-        if best_rank_plus_one == 0 {
+        if best_priority_score == 0 {
             return true;
         }
 
-        if cross_rank_plus_one == best_rank_plus_one {
+        if cross_priority_score == best_priority_score {
             return false;
         }
-        if right_rank_plus_one == best_rank_plus_one {
+        if right_priority_score == best_priority_score {
             i += 1;
             continue;
         }
-        if left_rank_plus_one == best_rank_plus_one {
+        if left_priority_score == best_priority_score {
             j += 1;
             continue;
         }
@@ -496,10 +520,10 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_left_len<
     }
 
     let right_spine_len = prepared_first.right_len as usize;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let left_ids = &left_spine.ids;
-    let left_rank_plus_one = &left_spine.rank_plus_one;
+    let left_priority_score = &left_spine.priority_score;
     let mut i = 0usize;
     let mut j = 0usize;
 
@@ -507,38 +531,36 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_left_len<
         debug_assert!(i < right_spine_len);
         debug_assert!(j < LEFT_LEN);
 
-        let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i) };
+        let right_priority_score = unsafe { *right_priority_score.get_unchecked(i) };
         let left_id = unsafe { *left_ids.get_unchecked(j) };
-        let left_rank_plus_one = unsafe { *left_rank_plus_one.get_unchecked(j) };
+        let left_priority_score = unsafe { *left_priority_score.get_unchecked(j) };
         debug_assert!((left_id as usize) < PIECE_COUNT);
-        let cross_rank_plus_one = unsafe {
+        let cross_priority_score = unsafe {
             *dense_matrix.get_unchecked(left_id as usize * MAX_PACKED_SPINE_LEN + i)
         };
 
-        let mut best_rank_plus_one = right_rank_plus_one;
-        if left_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || left_rank_plus_one < best_rank_plus_one)
+        let mut best_priority_score = right_priority_score;
+        if left_priority_score > best_priority_score
         {
-            best_rank_plus_one = left_rank_plus_one;
+            best_priority_score = left_priority_score;
         }
-        if cross_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || cross_rank_plus_one < best_rank_plus_one)
+        if cross_priority_score > best_priority_score
         {
-            best_rank_plus_one = cross_rank_plus_one;
+            best_priority_score = cross_priority_score;
         }
 
-        if best_rank_plus_one == 0 {
+        if best_priority_score == 0 {
             return true;
         }
 
-        if cross_rank_plus_one == best_rank_plus_one {
+        if cross_priority_score == best_priority_score {
             return false;
         }
-        if right_rank_plus_one == best_rank_plus_one {
+        if right_priority_score == best_priority_score {
             i += 1;
             continue;
         }
-        if left_rank_plus_one == best_rank_plus_one {
+        if left_priority_score == best_priority_score {
             j += 1;
             continue;
         }
@@ -561,10 +583,10 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
     }
 
     let right_spine_len = prepared_first.right_len as usize;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let left_ids = &left_spine.ids;
-    let left_rank_plus_one = &left_spine.rank_plus_one;
+    let left_priority_score = &left_spine.priority_score;
     let mut i = 0usize;
     let mut j = 0usize;
 
@@ -572,37 +594,35 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
         debug_assert!(i < right_spine_len);
         debug_assert!(j < LEFT_LEN);
 
-        let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i) };
+        let right_priority_score = unsafe { *right_priority_score.get_unchecked(i) };
         let left_id = unsafe { *left_ids.get_unchecked(j) };
-        let left_rank_plus_one = unsafe { *left_rank_plus_one.get_unchecked(j) };
+        let left_priority_score = unsafe { *left_priority_score.get_unchecked(j) };
         debug_assert!((left_id as usize) < PIECE_COUNT);
-        let cross_rank_plus_one =
+        let cross_priority_score =
             unsafe { *dense_matrix.get_unchecked(left_id as usize * right_spine_len + i) };
 
-        let mut best_rank_plus_one = right_rank_plus_one;
-        if left_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || left_rank_plus_one < best_rank_plus_one)
+        let mut best_priority_score = right_priority_score;
+        if left_priority_score > best_priority_score
         {
-            best_rank_plus_one = left_rank_plus_one;
+            best_priority_score = left_priority_score;
         }
-        if cross_rank_plus_one != 0
-            && (best_rank_plus_one == 0 || cross_rank_plus_one < best_rank_plus_one)
+        if cross_priority_score > best_priority_score
         {
-            best_rank_plus_one = cross_rank_plus_one;
+            best_priority_score = cross_priority_score;
         }
 
-        if best_rank_plus_one == 0 {
+        if best_priority_score == 0 {
             return true;
         }
 
-        if cross_rank_plus_one == best_rank_plus_one {
+        if cross_priority_score == best_priority_score {
             return false;
         }
-        if right_rank_plus_one == best_rank_plus_one {
+        if right_priority_score == best_priority_score {
             i += 1;
             continue;
         }
-        if left_rank_plus_one == best_rank_plus_one {
+        if left_priority_score == best_priority_score {
             j += 1;
             continue;
         }
@@ -660,7 +680,7 @@ fn canonical_pair_from_prepared_first_dense_left_len_lockstep4_chunk<
 
     let right_spine_len = prepared_first.right_len as usize;
     let stages = right_spine_len + LEFT_LEN - 1;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let cross_rank_row_ptrs = &prepared_first.cross_rank_row_ptrs;
     let mut i = [0usize; 4];
     let mut j = [0usize; 4];
@@ -674,22 +694,20 @@ fn canonical_pair_from_prepared_first_dense_left_len_lockstep4_chunk<
                 debug_assert!(i[$lane] < right_spine_len);
                 debug_assert!(j[$lane] < LEFT_LEN);
 
-                let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i[$lane]) };
+                let right_priority_score = unsafe { *right_priority_score.get_unchecked(i[$lane]) };
                 let left_id = unsafe { *entries[$lane].left_spine.ids.get_unchecked(j[$lane]) };
-                let left_rank_plus_one =
-                    unsafe { *entries[$lane].left_spine.rank_plus_one.get_unchecked(j[$lane]) };
+                let left_priority_score =
+                    unsafe { *entries[$lane].left_spine.priority_score.get_unchecked(j[$lane]) };
                 debug_assert!((left_id as usize) < PIECE_COUNT);
-                let cross_rank_plus_one =
+                let cross_priority_score =
                     unsafe { *(*cross_rank_row_ptrs.get_unchecked(i[$lane])).add(left_id as usize) };
 
                 let reject_now = active
-                    && cross_rank_plus_one != 0
-                    && (right_rank_plus_one == 0 || cross_rank_plus_one <= right_rank_plus_one)
-                    && (left_rank_plus_one == 0 || cross_rank_plus_one <= left_rank_plus_one);
+                    && cross_priority_score != 0
+                    && cross_priority_score >= right_priority_score
+                    && cross_priority_score >= left_priority_score;
                 let step_now = can_step && active && !reject_now;
-                let take_right = left_rank_plus_one == 0
-                    || (right_rank_plus_one != 0
-                        && right_rank_plus_one <= left_rank_plus_one);
+                let take_right = right_priority_score >= left_priority_score;
 
                 rejected[$lane] |= reject_now;
                 i[$lane] += (step_now && take_right) as usize;
@@ -727,7 +745,7 @@ fn canonical_pair_from_prepared_first_dense_contiguous_left_len_lockstep4_chunk<
 
     let right_spine_len = prepared_first.right_len as usize;
     let stages = right_spine_len + LEFT_LEN - 1;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let mut i = [0usize; 4];
     let mut j = [0usize; 4];
@@ -741,22 +759,20 @@ fn canonical_pair_from_prepared_first_dense_contiguous_left_len_lockstep4_chunk<
                 debug_assert!(i[$lane] < right_spine_len);
                 debug_assert!(j[$lane] < LEFT_LEN);
 
-                let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i[$lane]) };
+                let right_priority_score = unsafe { *right_priority_score.get_unchecked(i[$lane]) };
                 let left_id = unsafe { *entries[$lane].left_spine.ids.get_unchecked(j[$lane]) };
-                let left_rank_plus_one =
-                    unsafe { *entries[$lane].left_spine.rank_plus_one.get_unchecked(j[$lane]) };
+                let left_priority_score =
+                    unsafe { *entries[$lane].left_spine.priority_score.get_unchecked(j[$lane]) };
                 debug_assert!((left_id as usize) < PIECE_COUNT);
-                let cross_rank_plus_one =
+                let cross_priority_score =
                     unsafe { *dense_matrix.get_unchecked(i[$lane] * PIECE_COUNT + left_id as usize) };
 
                 let reject_now = active
-                    && cross_rank_plus_one != 0
-                    && (right_rank_plus_one == 0 || cross_rank_plus_one <= right_rank_plus_one)
-                    && (left_rank_plus_one == 0 || cross_rank_plus_one <= left_rank_plus_one);
+                    && cross_priority_score != 0
+                    && cross_priority_score >= right_priority_score
+                    && cross_priority_score >= left_priority_score;
                 let step_now = can_step && active && !reject_now;
-                let take_right = left_rank_plus_one == 0
-                    || (right_rank_plus_one != 0
-                        && right_rank_plus_one <= left_rank_plus_one);
+                let take_right = right_priority_score >= left_priority_score;
 
                 rejected[$lane] |= reject_now;
                 i[$lane] += (step_now && take_right) as usize;
@@ -933,7 +949,7 @@ fn canonical_pair_from_prepared_first_dense_contiguous_swapped_left_len_lockstep
 
     let right_spine_len = prepared_first.right_len as usize;
     let stages = right_spine_len + LEFT_LEN - 1;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let mut i = [0usize; 4];
     let mut j = [0usize; 4];
@@ -947,23 +963,21 @@ fn canonical_pair_from_prepared_first_dense_contiguous_swapped_left_len_lockstep
                 debug_assert!(i[$lane] < right_spine_len);
                 debug_assert!(j[$lane] < LEFT_LEN);
 
-                let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i[$lane]) };
+                let right_priority_score = unsafe { *right_priority_score.get_unchecked(i[$lane]) };
                 let left_id = unsafe { *entries[$lane].left_spine.ids.get_unchecked(j[$lane]) };
-                let left_rank_plus_one =
-                    unsafe { *entries[$lane].left_spine.rank_plus_one.get_unchecked(j[$lane]) };
+                let left_priority_score =
+                    unsafe { *entries[$lane].left_spine.priority_score.get_unchecked(j[$lane]) };
                 debug_assert!((left_id as usize) < PIECE_COUNT);
-                let cross_rank_plus_one = unsafe {
+                let cross_priority_score = unsafe {
                     *dense_matrix.get_unchecked(left_id as usize * MAX_PACKED_SPINE_LEN + i[$lane])
                 };
 
                 let reject_now = active
-                    && cross_rank_plus_one != 0
-                    && (right_rank_plus_one == 0 || cross_rank_plus_one <= right_rank_plus_one)
-                    && (left_rank_plus_one == 0 || cross_rank_plus_one <= left_rank_plus_one);
+                    && cross_priority_score != 0
+                    && cross_priority_score >= right_priority_score
+                    && cross_priority_score >= left_priority_score;
                 let step_now = can_step && active && !reject_now;
-                let take_right = left_rank_plus_one == 0
-                    || (right_rank_plus_one != 0
-                        && right_rank_plus_one <= left_rank_plus_one);
+                let take_right = right_priority_score >= left_priority_score;
 
                 rejected[$lane] |= reject_now;
                 i[$lane] += (step_now && take_right) as usize;
@@ -1074,7 +1088,7 @@ fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_lo
 
     let right_spine_len = prepared_first.right_len as usize;
     let stages = right_spine_len + LEFT_LEN - 1;
-    let right_rank_plus_one = &prepared_first.right_rank_plus_one;
+    let right_priority_score = &prepared_first.right_priority_score;
     let dense_matrix = &prepared_first.dense_matrix;
     let mut i = [0usize; 4];
     let mut j = [0usize; 4];
@@ -1088,22 +1102,20 @@ fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_lo
                 debug_assert!(i[$lane] < right_spine_len);
                 debug_assert!(j[$lane] < LEFT_LEN);
 
-                let right_rank_plus_one = unsafe { *right_rank_plus_one.get_unchecked(i[$lane]) };
+                let right_priority_score = unsafe { *right_priority_score.get_unchecked(i[$lane]) };
                 let left_id = unsafe { *entries[$lane].left_spine.ids.get_unchecked(j[$lane]) };
-                let left_rank_plus_one =
-                    unsafe { *entries[$lane].left_spine.rank_plus_one.get_unchecked(j[$lane]) };
+                let left_priority_score =
+                    unsafe { *entries[$lane].left_spine.priority_score.get_unchecked(j[$lane]) };
                 debug_assert!((left_id as usize) < PIECE_COUNT);
-                let cross_rank_plus_one =
+                let cross_priority_score =
                     unsafe { *dense_matrix.get_unchecked(left_id as usize * right_spine_len + i[$lane]) };
 
                 let reject_now = active
-                    && cross_rank_plus_one != 0
-                    && (right_rank_plus_one == 0 || cross_rank_plus_one <= right_rank_plus_one)
-                    && (left_rank_plus_one == 0 || cross_rank_plus_one <= left_rank_plus_one);
+                    && cross_priority_score != 0
+                    && cross_priority_score >= right_priority_score
+                    && cross_priority_score >= left_priority_score;
                 let step_now = can_step && active && !reject_now;
-                let take_right = left_rank_plus_one == 0
-                    || (right_rank_plus_one != 0
-                        && right_rank_plus_one <= left_rank_plus_one);
+                let take_right = right_priority_score >= left_priority_score;
 
                 rejected[$lane] |= reject_now;
                 i[$lane] += (step_now && take_right) as usize;
@@ -1123,6 +1135,237 @@ fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_lo
         !rejected[2],
         !rejected[3],
     ]
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx2")]
+unsafe fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd8_chunk_avx2<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 8],
+    simd_chunk: &PreparedSecondSimd8Chunk,
+) -> [bool; 8] {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::{
+        __m256i, _mm256_add_epi32, _mm256_and_si256, _mm256_andnot_si256, _mm256_castsi256_ps,
+        _mm256_cmpeq_epi32, _mm256_cmpgt_epi32, _mm256_i32gather_epi32, _mm256_movemask_ps,
+        _mm256_or_si256, _mm256_permutevar8x32_epi32, _mm256_set1_epi32, _mm256_setzero_si256,
+    };
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{
+        __m256i, _mm256_add_epi32, _mm256_and_si256, _mm256_andnot_si256, _mm256_castsi256_ps,
+        _mm256_cmpeq_epi32, _mm256_cmpgt_epi32, _mm256_i32gather_epi32, _mm256_movemask_ps,
+        _mm256_or_si256, _mm256_permutevar8x32_epi32, _mm256_set1_epi32, _mm256_setzero_si256,
+    };
+
+    #[inline(always)]
+    fn ge_epi32(a: __m256i, b: __m256i) -> __m256i {
+        unsafe {
+            let gt = _mm256_cmpgt_epi32(a, b);
+            let eq = _mm256_cmpeq_epi32(a, b);
+            _mm256_or_si256(gt, eq)
+        }
+    }
+
+    debug_assert!(entries
+        .iter()
+        .all(|entry| entry.left_spine.len as usize == LEFT_LEN));
+    if prepared_first.right_len == 0 || LEFT_LEN == 0 {
+        return [false; 8];
+    }
+
+    let right_spine_len = prepared_first.right_len as usize;
+    let stages = right_spine_len + LEFT_LEN - 1;
+    let right_priority_score_i32 = {
+        let mut v = [0i32; MAX_PACKED_SPINE_LEN];
+        for idx in 0..right_spine_len {
+            v[idx] = prepared_first.right_priority_score[idx] as i32;
+        }
+        v
+    };
+    let right_v_table =
+        unsafe { std::mem::transmute::<[i32; MAX_PACKED_SPINE_LEN], __m256i>(right_priority_score_i32) };
+    let dense_u32_ptr = prepared_first.dense_matrix_u32.as_ptr() as *const i32;
+    let zero_v = _mm256_setzero_si256();
+    let all_ones_v = _mm256_cmpeq_epi32(zero_v, zero_v);
+    let one_v = _mm256_set1_epi32(1);
+    let mut i_v = zero_v;
+    let mut j_v = zero_v;
+    let mut rejected_v = zero_v;
+    let mut left_score_by_depth_v = [zero_v; MAX_PACKED_SPINE_LEN];
+    let mut row_base_by_depth_v = [zero_v; MAX_PACKED_SPINE_LEN];
+    for depth in 0..LEFT_LEN {
+        let mut left_arr = [0i32; 8];
+        let mut row_base_arr = [0i32; 8];
+        for lane in 0..8 {
+            left_arr[lane] = simd_chunk.left_priority_scores_by_depth[depth][lane] as i32;
+            row_base_arr[lane] =
+                simd_chunk.row_base_by_right_len_by_depth[right_spine_len][depth][lane] as i32;
+        }
+        left_score_by_depth_v[depth] = unsafe { std::mem::transmute::<[i32; 8], __m256i>(left_arr) };
+        row_base_by_depth_v[depth] =
+            unsafe { std::mem::transmute::<[i32; 8], __m256i>(row_base_arr) };
+    }
+    let depth_constants = [
+        _mm256_set1_epi32(0),
+        _mm256_set1_epi32(1),
+        _mm256_set1_epi32(2),
+        _mm256_set1_epi32(3),
+        _mm256_set1_epi32(4),
+        _mm256_set1_epi32(5),
+        _mm256_set1_epi32(6),
+        _mm256_set1_epi32(7),
+    ];
+
+    for stage_idx in 0..stages {
+        let can_step = stage_idx + 1 < stages;
+        let active_v = _mm256_cmpeq_epi32(rejected_v, zero_v);
+        let right_v = _mm256_permutevar8x32_epi32(right_v_table, i_v);
+        let (left_v, row_base_v) = if LEFT_LEN == 1 {
+            (left_score_by_depth_v[0], row_base_by_depth_v[0])
+        } else if LEFT_LEN == 2 {
+            let m1 = _mm256_cmpeq_epi32(j_v, depth_constants[1]);
+            let m0 = _mm256_andnot_si256(m1, all_ones_v);
+            (
+                _mm256_or_si256(
+                    _mm256_and_si256(m0, left_score_by_depth_v[0]),
+                    _mm256_and_si256(m1, left_score_by_depth_v[1]),
+                ),
+                _mm256_or_si256(
+                    _mm256_and_si256(m0, row_base_by_depth_v[0]),
+                    _mm256_and_si256(m1, row_base_by_depth_v[1]),
+                ),
+            )
+        } else if LEFT_LEN == 3 {
+            let m2 = _mm256_cmpeq_epi32(j_v, depth_constants[2]);
+            let m1 = _mm256_cmpeq_epi32(j_v, depth_constants[1]);
+            let m0 = _mm256_andnot_si256(_mm256_or_si256(m1, m2), all_ones_v);
+            (
+                _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_and_si256(m0, left_score_by_depth_v[0]),
+                        _mm256_and_si256(m1, left_score_by_depth_v[1]),
+                    ),
+                    _mm256_and_si256(m2, left_score_by_depth_v[2]),
+                ),
+                _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_and_si256(m0, row_base_by_depth_v[0]),
+                        _mm256_and_si256(m1, row_base_by_depth_v[1]),
+                    ),
+                    _mm256_and_si256(m2, row_base_by_depth_v[2]),
+                ),
+            )
+        } else if LEFT_LEN == 4 {
+            let m3 = _mm256_cmpeq_epi32(j_v, depth_constants[3]);
+            let m2 = _mm256_cmpeq_epi32(j_v, depth_constants[2]);
+            let m1 = _mm256_cmpeq_epi32(j_v, depth_constants[1]);
+            let m0 = _mm256_andnot_si256(_mm256_or_si256(_mm256_or_si256(m1, m2), m3), all_ones_v);
+            (
+                _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_or_si256(
+                            _mm256_and_si256(m0, left_score_by_depth_v[0]),
+                            _mm256_and_si256(m1, left_score_by_depth_v[1]),
+                        ),
+                        _mm256_and_si256(m2, left_score_by_depth_v[2]),
+                    ),
+                    _mm256_and_si256(m3, left_score_by_depth_v[3]),
+                ),
+                _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_or_si256(
+                            _mm256_and_si256(m0, row_base_by_depth_v[0]),
+                            _mm256_and_si256(m1, row_base_by_depth_v[1]),
+                        ),
+                        _mm256_and_si256(m2, row_base_by_depth_v[2]),
+                    ),
+                    _mm256_and_si256(m3, row_base_by_depth_v[3]),
+                ),
+            )
+        } else {
+            let mut left_v = zero_v;
+            let mut row_base_v = zero_v;
+            for depth in 0..LEFT_LEN {
+                let depth_mask = _mm256_cmpeq_epi32(j_v, depth_constants[depth]);
+                left_v = _mm256_or_si256(
+                    left_v,
+                    _mm256_and_si256(depth_mask, left_score_by_depth_v[depth]),
+                );
+                row_base_v = _mm256_or_si256(
+                    row_base_v,
+                    _mm256_and_si256(depth_mask, row_base_by_depth_v[depth]),
+                );
+            }
+            (left_v, row_base_v)
+        };
+        let cross_index_v = _mm256_add_epi32(row_base_v, i_v);
+        let cross_v = unsafe { _mm256_i32gather_epi32(dense_u32_ptr, cross_index_v, 4) };
+
+        let cross_nonzero = _mm256_cmpgt_epi32(cross_v, zero_v);
+        let cross_ge_right = ge_epi32(cross_v, right_v);
+        let cross_ge_left = ge_epi32(cross_v, left_v);
+        let reject_mask = {
+            let m = _mm256_and_si256(active_v, cross_nonzero);
+            let m = _mm256_and_si256(m, cross_ge_right);
+            _mm256_and_si256(m, cross_ge_left)
+        };
+        let can_step_mask = if can_step { all_ones_v } else { zero_v };
+        let not_reject_mask = _mm256_andnot_si256(reject_mask, all_ones_v);
+        let step_mask =
+            _mm256_and_si256(can_step_mask, _mm256_and_si256(active_v, not_reject_mask));
+        let take_right_mask = ge_epi32(right_v, left_v);
+        let i_inc_mask = _mm256_and_si256(step_mask, take_right_mask);
+        let j_inc_mask = _mm256_andnot_si256(take_right_mask, step_mask);
+        i_v = _mm256_add_epi32(i_v, _mm256_and_si256(i_inc_mask, one_v));
+        j_v = _mm256_add_epi32(j_v, _mm256_and_si256(j_inc_mask, one_v));
+        rejected_v = _mm256_or_si256(rejected_v, reject_mask);
+    }
+
+    let rejected_bits = _mm256_movemask_ps(_mm256_castsi256_ps(rejected_v)) as u32;
+    let accepted_bits = (!rejected_bits) & 0xFF;
+    [
+        (accepted_bits & (1 << 0)) != 0,
+        (accepted_bits & (1 << 1)) != 0,
+        (accepted_bits & (1 << 2)) != 0,
+        (accepted_bits & (1 << 3)) != 0,
+        (accepted_bits & (1 << 4)) != 0,
+        (accepted_bits & (1 << 5)) != 0,
+        (accepted_bits & (1 << 6)) != 0,
+        (accepted_bits & (1 << 7)) != 0,
+    ]
+}
+
+fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd8_chunk<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 8],
+    simd_chunk: &PreparedSecondSimd8Chunk,
+) -> [bool; 8] {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return unsafe {
+                canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd8_chunk_avx2::<
+                    PIECE_COUNT,
+                    LEFT_LEN,
+                >(prepared_first, entries, simd_chunk)
+            };
+        }
+    }
+
+    let mut out = [false; 8];
+    for lane in 0..8 {
+        out[lane] = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entries[lane].left_spine);
+    }
+    out
 }
 
 pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4<
@@ -1152,6 +1395,561 @@ pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4<
         >(prepared_first, &entry.left_spine) as u64;
     }
     canonical_count
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx2")]
+unsafe fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd4_chunk_avx2<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 4],
+    simd_chunk: &PreparedSecondSimd4Chunk,
+) -> [bool; 4] {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::{
+        __m128i, _mm_add_epi32, _mm_and_si128, _mm_andnot_si128, _mm_castsi128_ps,
+        _mm_cmpeq_epi32, _mm_cmpgt_epi32, _mm_i32gather_epi32, _mm_movemask_ps, _mm_or_si128,
+        _mm_set1_epi32, _mm_setzero_si128,
+    };
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{
+        __m128i, _mm_add_epi32, _mm_and_si128, _mm_andnot_si128, _mm_castsi128_ps,
+        _mm_cmpeq_epi32, _mm_cmpgt_epi32, _mm_i32gather_epi32, _mm_movemask_ps, _mm_or_si128,
+        _mm_set1_epi32, _mm_setzero_si128,
+    };
+
+    #[inline(always)]
+    fn ge_epi32(a: __m128i, b: __m128i) -> __m128i {
+        unsafe {
+            let gt = _mm_cmpgt_epi32(a, b);
+            let eq = _mm_cmpeq_epi32(a, b);
+            _mm_or_si128(gt, eq)
+        }
+    }
+
+    debug_assert!(entries
+        .iter()
+        .all(|entry| entry.left_spine.len as usize == LEFT_LEN));
+    if prepared_first.right_len == 0 || LEFT_LEN == 0 {
+        return [false; 4];
+    }
+
+    let right_spine_len = prepared_first.right_len as usize;
+    let stages = right_spine_len + LEFT_LEN - 1;
+    let right_priority_score_i32 = {
+        let mut v = [0i32; MAX_PACKED_SPINE_LEN];
+        for idx in 0..right_spine_len {
+            v[idx] = prepared_first.right_priority_score[idx] as i32;
+        }
+        v
+    };
+    let right_ptr = right_priority_score_i32.as_ptr();
+    let dense_u32_ptr = prepared_first.dense_matrix_u32.as_ptr() as *const i32;
+    let zero_v = _mm_setzero_si128();
+    let all_ones_v = _mm_cmpeq_epi32(zero_v, zero_v);
+    let one_v = _mm_set1_epi32(1);
+    let mut i_v = zero_v;
+    let mut j_v = zero_v;
+    let mut rejected_v = zero_v;
+    let mut left_score_by_depth_v = [zero_v; MAX_PACKED_SPINE_LEN];
+    let mut row_base_by_depth_v = [zero_v; MAX_PACKED_SPINE_LEN];
+    for depth in 0..LEFT_LEN {
+        let mut left_arr = [0i32; 4];
+        let mut row_base_arr = [0i32; 4];
+        for lane in 0..4 {
+            left_arr[lane] = simd_chunk.left_priority_scores_by_depth[depth][lane] as i32;
+            row_base_arr[lane] =
+                simd_chunk.row_base_by_right_len_by_depth[right_spine_len][depth][lane] as i32;
+        }
+        left_score_by_depth_v[depth] =
+            unsafe { std::mem::transmute::<[i32; 4], __m128i>(left_arr) };
+        row_base_by_depth_v[depth] =
+            unsafe { std::mem::transmute::<[i32; 4], __m128i>(row_base_arr) };
+    }
+    let depth_constants = [
+        _mm_set1_epi32(0),
+        _mm_set1_epi32(1),
+        _mm_set1_epi32(2),
+        _mm_set1_epi32(3),
+        _mm_set1_epi32(4),
+        _mm_set1_epi32(5),
+        _mm_set1_epi32(6),
+        _mm_set1_epi32(7),
+    ];
+
+    for stage_idx in 0..stages {
+        let can_step = stage_idx + 1 < stages;
+        let active_v = _mm_cmpeq_epi32(rejected_v, zero_v);
+        let right_v = unsafe { _mm_i32gather_epi32(right_ptr, i_v, 4) };
+        let mut left_v = zero_v;
+        let mut row_base_v = zero_v;
+        for depth in 0..LEFT_LEN {
+            let depth_mask = _mm_cmpeq_epi32(j_v, depth_constants[depth]);
+            left_v = _mm_or_si128(left_v, _mm_and_si128(depth_mask, left_score_by_depth_v[depth]));
+            row_base_v = _mm_or_si128(
+                row_base_v,
+                _mm_and_si128(depth_mask, row_base_by_depth_v[depth]),
+            );
+        }
+        let cross_index_v = _mm_add_epi32(row_base_v, i_v);
+        let cross_v = unsafe { _mm_i32gather_epi32(dense_u32_ptr, cross_index_v, 4) };
+
+        let cross_nonzero = _mm_cmpgt_epi32(cross_v, zero_v);
+        let cross_ge_right = ge_epi32(cross_v, right_v);
+        let cross_ge_left = ge_epi32(cross_v, left_v);
+        let reject_mask = {
+            let m = _mm_and_si128(active_v, cross_nonzero);
+            let m = _mm_and_si128(m, cross_ge_right);
+            _mm_and_si128(m, cross_ge_left)
+        };
+        let can_step_mask = if can_step { all_ones_v } else { zero_v };
+        let not_reject_mask = _mm_andnot_si128(reject_mask, all_ones_v);
+        let step_mask = _mm_and_si128(can_step_mask, _mm_and_si128(active_v, not_reject_mask));
+        let take_right_mask = ge_epi32(right_v, left_v);
+        let i_inc_mask = _mm_and_si128(step_mask, take_right_mask);
+        let j_inc_mask = _mm_andnot_si128(take_right_mask, step_mask);
+        i_v = _mm_add_epi32(i_v, _mm_and_si128(i_inc_mask, one_v));
+        j_v = _mm_add_epi32(j_v, _mm_and_si128(j_inc_mask, one_v));
+        rejected_v = _mm_or_si128(rejected_v, reject_mask);
+    }
+
+    let rejected_bits = _mm_movemask_ps(_mm_castsi128_ps(rejected_v)) as u32;
+    let accepted_bits = (!rejected_bits) & 0xF;
+    [
+        (accepted_bits & (1 << 0)) != 0,
+        (accepted_bits & (1 << 1)) != 0,
+        (accepted_bits & (1 << 2)) != 0,
+        (accepted_bits & (1 << 3)) != 0,
+    ]
+}
+
+fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd4_chunk<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 4],
+    simd_chunk: &PreparedSecondSimd4Chunk,
+) -> [bool; 4] {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return unsafe {
+                canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd4_chunk_avx2::<
+                    PIECE_COUNT,
+                    LEFT_LEN,
+                >(prepared_first, entries, simd_chunk)
+            };
+        }
+    }
+
+    let mut out = [false; 4];
+    for lane in 0..4 {
+        out[lane] = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entries[lane].left_spine);
+    }
+    out
+}
+
+pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd4<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd4Chunk],
+) -> u64 {
+    let mut canonical_count = 0u64;
+    let mut chunks = entries.chunks_exact(4);
+    for (chunk_idx, chunk) in (&mut chunks).enumerate() {
+        let chunk: &[PreparedSecondToken; 4] = chunk
+            .try_into()
+            .expect("chunks_exact(4) must yield 4-lane chunks");
+        let simd_chunk = unsafe { simd_chunks.get_unchecked(chunk_idx) };
+        let results =
+            canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd4_chunk::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, chunk, simd_chunk);
+        canonical_count += results.iter().map(|&accepted| accepted as u64).sum::<u64>();
+    }
+    for entry in chunks.remainder() {
+        canonical_count += canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine) as u64;
+    }
+    canonical_count
+}
+
+pub fn count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd4<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd4Chunk],
+) -> u64 {
+    let mut mismatches = 0u64;
+    let mut chunks = entries.chunks_exact(4);
+    for (chunk_idx, chunk) in (&mut chunks).enumerate() {
+        let chunk: &[PreparedSecondToken; 4] = chunk
+            .try_into()
+            .expect("chunks_exact(4) must yield 4-lane chunks");
+        let simd_chunk = unsafe { simd_chunks.get_unchecked(chunk_idx) };
+        let results =
+            canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd4_chunk::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, chunk, simd_chunk);
+        for (lane, entry) in chunk.iter().enumerate() {
+            let scalar = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, &entry.left_spine);
+            if scalar != results[lane] {
+                mismatches += 1;
+            }
+        }
+    }
+    for entry in chunks.remainder() {
+        let scalar = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        let simd = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        if scalar != simd {
+            mismatches += 1;
+        }
+    }
+    mismatches
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd16_chunk_avx512<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 16],
+    simd_chunk: &PreparedSecondSimd16Chunk,
+) -> [bool; 16] {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::{
+        __m512i, __mmask16, _mm512_add_epi32, _mm512_cmpeq_epi32_mask, _mm512_cmpgt_epi32_mask,
+        _mm512_i32gather_epi32, _mm512_mask_add_epi32, _mm512_mask_mov_epi32,
+        _mm512_permutexvar_epi32, _mm512_set1_epi32, _mm512_setzero_si512,
+    };
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{
+        __m512i, __mmask16, _mm512_add_epi32, _mm512_cmpeq_epi32_mask, _mm512_cmpgt_epi32_mask,
+        _mm512_i32gather_epi32, _mm512_mask_add_epi32, _mm512_mask_mov_epi32,
+        _mm512_permutexvar_epi32, _mm512_set1_epi32, _mm512_setzero_si512,
+    };
+
+    debug_assert!(entries
+        .iter()
+        .all(|entry| entry.left_spine.len as usize == LEFT_LEN));
+    if prepared_first.right_len == 0 || LEFT_LEN == 0 {
+        return [false; 16];
+    }
+
+    let right_spine_len = prepared_first.right_len as usize;
+    let stages = right_spine_len + LEFT_LEN - 1;
+    let right_priority_score_i32 = {
+        let mut v = [0i32; 16];
+        for idx in 0..right_spine_len {
+            v[idx] = prepared_first.right_priority_score[idx] as i32;
+        }
+        v
+    };
+    let right_v_table =
+        unsafe { std::mem::transmute::<[i32; 16], __m512i>(right_priority_score_i32) };
+    let dense_u32_ptr = prepared_first.dense_matrix_u32.as_ptr() as *const i32;
+    let zero_v = _mm512_setzero_si512();
+    let one_v = _mm512_set1_epi32(1);
+    let mut i_v = zero_v;
+    let mut j_v = zero_v;
+    let mut rejected_mask: __mmask16 = 0;
+    let mut left_score_by_depth_v = [zero_v; MAX_PACKED_SPINE_LEN];
+    let mut row_base_by_depth_v = [zero_v; MAX_PACKED_SPINE_LEN];
+    for depth in 0..LEFT_LEN {
+        left_score_by_depth_v[depth] = unsafe {
+            std::mem::transmute::<[u32; 16], __m512i>(
+                simd_chunk.left_priority_scores_by_depth[depth],
+            )
+        };
+        row_base_by_depth_v[depth] = unsafe {
+            std::mem::transmute::<[u32; 16], __m512i>(
+                simd_chunk.row_base_by_right_len_by_depth[right_spine_len][depth],
+            )
+        };
+    }
+
+    for stage_idx in 0..stages {
+        let can_step = stage_idx + 1 < stages;
+        let active_mask: __mmask16 = !rejected_mask;
+        let right_v = _mm512_permutexvar_epi32(i_v, right_v_table);
+        let (left_v, row_base_v) = if LEFT_LEN == 1 {
+            (left_score_by_depth_v[0], row_base_by_depth_v[0])
+        } else if LEFT_LEN == 2 {
+            let m1 = _mm512_cmpeq_epi32_mask(j_v, one_v);
+            (
+                _mm512_mask_mov_epi32(left_score_by_depth_v[0], m1, left_score_by_depth_v[1]),
+                _mm512_mask_mov_epi32(row_base_by_depth_v[0], m1, row_base_by_depth_v[1]),
+            )
+        } else if LEFT_LEN == 3 {
+            let m1 = _mm512_cmpeq_epi32_mask(j_v, one_v);
+            let m2 = _mm512_cmpeq_epi32_mask(j_v, _mm512_set1_epi32(2));
+            let left_v =
+                _mm512_mask_mov_epi32(left_score_by_depth_v[0], m1, left_score_by_depth_v[1]);
+            let left_v = _mm512_mask_mov_epi32(left_v, m2, left_score_by_depth_v[2]);
+            let rb_v =
+                _mm512_mask_mov_epi32(row_base_by_depth_v[0], m1, row_base_by_depth_v[1]);
+            let rb_v = _mm512_mask_mov_epi32(rb_v, m2, row_base_by_depth_v[2]);
+            (left_v, rb_v)
+        } else if LEFT_LEN == 4 {
+            let m1 = _mm512_cmpeq_epi32_mask(j_v, one_v);
+            let m2 = _mm512_cmpeq_epi32_mask(j_v, _mm512_set1_epi32(2));
+            let m3 = _mm512_cmpeq_epi32_mask(j_v, _mm512_set1_epi32(3));
+            let left_v =
+                _mm512_mask_mov_epi32(left_score_by_depth_v[0], m1, left_score_by_depth_v[1]);
+            let left_v = _mm512_mask_mov_epi32(left_v, m2, left_score_by_depth_v[2]);
+            let left_v = _mm512_mask_mov_epi32(left_v, m3, left_score_by_depth_v[3]);
+            let rb_v =
+                _mm512_mask_mov_epi32(row_base_by_depth_v[0], m1, row_base_by_depth_v[1]);
+            let rb_v = _mm512_mask_mov_epi32(rb_v, m2, row_base_by_depth_v[2]);
+            let rb_v = _mm512_mask_mov_epi32(rb_v, m3, row_base_by_depth_v[3]);
+            (left_v, rb_v)
+        } else {
+            let mut left_v = left_score_by_depth_v[0];
+            let mut rb_v = row_base_by_depth_v[0];
+            for depth in 1..LEFT_LEN {
+                let dm = _mm512_cmpeq_epi32_mask(j_v, _mm512_set1_epi32(depth as i32));
+                left_v = _mm512_mask_mov_epi32(left_v, dm, left_score_by_depth_v[depth]);
+                rb_v = _mm512_mask_mov_epi32(rb_v, dm, row_base_by_depth_v[depth]);
+            }
+            (left_v, rb_v)
+        };
+        let cross_index_v = _mm512_add_epi32(row_base_v, i_v);
+        let cross_v =
+            unsafe { _mm512_i32gather_epi32::<4>(cross_index_v, dense_u32_ptr) };
+
+        let cross_nonzero = _mm512_cmpgt_epi32_mask(cross_v, zero_v);
+        let cross_lt_right = _mm512_cmpgt_epi32_mask(right_v, cross_v);
+        let cross_lt_left = _mm512_cmpgt_epi32_mask(left_v, cross_v);
+        let cross_ge_right: __mmask16 = !cross_lt_right;
+        let cross_ge_left: __mmask16 = !cross_lt_left;
+        let reject_now = active_mask & cross_nonzero & cross_ge_right & cross_ge_left;
+
+        let step_mask: __mmask16 = if can_step { active_mask & !reject_now } else { 0 };
+        let take_right_lt = _mm512_cmpgt_epi32_mask(left_v, right_v);
+        let take_right: __mmask16 = !take_right_lt;
+        let i_inc = step_mask & take_right;
+        let j_inc = step_mask & !take_right;
+        i_v = _mm512_mask_add_epi32(i_v, i_inc, i_v, one_v);
+        j_v = _mm512_mask_add_epi32(j_v, j_inc, j_v, one_v);
+        rejected_mask |= reject_now;
+    }
+
+    let accepted: u16 = !rejected_mask;
+    let mut out = [false; 16];
+    for lane in 0..16 {
+        out[lane] = (accepted >> lane) & 1 != 0;
+    }
+    out
+}
+
+fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd16_chunk<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken; 16],
+    simd_chunk: &PreparedSecondSimd16Chunk,
+) -> [bool; 16] {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            return unsafe {
+                canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd16_chunk_avx512::<
+                    PIECE_COUNT,
+                    LEFT_LEN,
+                >(prepared_first, entries, simd_chunk)
+            };
+        }
+    }
+
+    let mut out = [false; 16];
+    for lane in 0..16 {
+        out[lane] = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entries[lane].left_spine);
+    }
+    out
+}
+
+pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd16<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd16Chunk],
+) -> u64 {
+    let mut canonical_count = 0u64;
+    let mut chunks = entries.chunks_exact(16);
+    for (chunk_idx, chunk) in (&mut chunks).enumerate() {
+        let chunk: &[PreparedSecondToken; 16] = chunk
+            .try_into()
+            .expect("chunks_exact(16) must yield 16-lane chunks");
+        let simd_chunk = unsafe { simd_chunks.get_unchecked(chunk_idx) };
+        let results =
+            canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd16_chunk::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, chunk, simd_chunk);
+        canonical_count += results.iter().map(|&accepted| accepted as u64).sum::<u64>();
+    }
+    for entry in chunks.remainder() {
+        canonical_count += canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine) as u64;
+    }
+    canonical_count
+}
+
+pub fn count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd16<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd16Chunk],
+) -> u64 {
+    let mut mismatches = 0u64;
+    let mut chunks = entries.chunks_exact(16);
+    for (chunk_idx, chunk) in (&mut chunks).enumerate() {
+        let chunk: &[PreparedSecondToken; 16] = chunk
+            .try_into()
+            .expect("chunks_exact(16) must yield 16-lane chunks");
+        let simd_chunk = unsafe { simd_chunks.get_unchecked(chunk_idx) };
+        let results =
+            canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd16_chunk::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, chunk, simd_chunk);
+        for (lane, entry) in chunk.iter().enumerate() {
+            let scalar = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, &entry.left_spine);
+            if scalar != results[lane] {
+                mismatches += 1;
+            }
+        }
+    }
+    for entry in chunks.remainder() {
+        let scalar = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        let simd = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        if scalar != simd {
+            mismatches += 1;
+        }
+    }
+    mismatches
+}
+
+pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_simd8<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd8Chunk],
+) -> u64 {
+    let mut canonical_count = 0u64;
+    let mut chunks = entries.chunks_exact(8);
+    for (chunk_idx, chunk) in (&mut chunks).enumerate() {
+        let chunk: &[PreparedSecondToken; 8] = chunk
+            .try_into()
+            .expect("chunks_exact(8) must yield 8-lane chunks");
+        let simd_chunk = unsafe { simd_chunks.get_unchecked(chunk_idx) };
+        let results =
+            canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd8_chunk::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, chunk, simd_chunk);
+        canonical_count += results.iter().map(|&accepted| accepted as u64).sum::<u64>();
+    }
+    for entry in chunks.remainder() {
+        canonical_count += canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine) as u64;
+    }
+    canonical_count
+}
+
+pub fn count_mismatches_prepared_first_dense_contiguous_swapped_tight_bucket_simd8<
+    const PIECE_COUNT: usize,
+    const LEFT_LEN: usize,
+>(
+    prepared_first: &PreparedFirstDenseContiguousSwappedTight<PIECE_COUNT>,
+    entries: &[PreparedSecondToken],
+    simd_chunks: &[PreparedSecondSimd8Chunk],
+) -> u64 {
+    let mut mismatches = 0u64;
+    let mut chunks = entries.chunks_exact(8);
+    for (chunk_idx, chunk) in (&mut chunks).enumerate() {
+        let chunk: &[PreparedSecondToken; 8] = chunk
+            .try_into()
+            .expect("chunks_exact(8) must yield 8-lane chunks");
+        let simd_chunk = unsafe { simd_chunks.get_unchecked(chunk_idx) };
+        let results =
+            canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len_simd8_chunk::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, chunk, simd_chunk);
+        for (lane, entry) in chunk.iter().enumerate() {
+            let scalar = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+                PIECE_COUNT,
+                LEFT_LEN,
+            >(prepared_first, &entry.left_spine);
+            if scalar != results[lane] {
+                mismatches += 1;
+            }
+        }
+    }
+    for entry in chunks.remainder() {
+        let scalar = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        let simd = canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_len::<
+            PIECE_COUNT,
+            LEFT_LEN,
+        >(prepared_first, &entry.left_spine);
+        if scalar != simd {
+            mismatches += 1;
+        }
+    }
+    mismatches
 }
 
 pub fn scan_prepared_first_dense_contiguous_swapped_tight_bucket_lockstep4_prefetch<
@@ -1246,6 +2044,105 @@ pub fn build_prefetch_left_id_chunks<const LEFT_LEN: usize>(
             count: count as u8,
             counts_by_scope,
             ids,
+        });
+    }
+    chunks
+}
+
+pub fn build_prepared_second_simd8_chunks<const LEFT_LEN: usize>(
+    entries: &[PreparedSecondToken],
+) -> Vec<PreparedSecondSimd8Chunk> {
+    let chunk_count = entries.len() / 8;
+    let mut chunks = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let base = chunk_idx * 8;
+        let lanes: &[PreparedSecondToken; 8] = entries[base..base + 8]
+            .try_into()
+            .expect("chunk must contain 8 lanes");
+        let mut left_priority_scores_by_depth = [[0u32; 8]; MAX_PACKED_SPINE_LEN];
+        let mut row_base_by_right_len_by_depth =
+            [[[0u32; 8]; MAX_PACKED_SPINE_LEN]; MAX_PACKED_SPINE_LEN + 1];
+        for lane in 0..8 {
+            debug_assert_eq!(lanes[lane].left_spine.len as usize, LEFT_LEN);
+            for depth in 0..LEFT_LEN {
+                let left_id = lanes[lane].left_spine.ids[depth] as u32;
+                left_priority_scores_by_depth[depth][lane] =
+                    lanes[lane].left_spine.priority_score[depth] as u32;
+                for right_len in 1..=MAX_PACKED_SPINE_LEN {
+                    row_base_by_right_len_by_depth[right_len][depth][lane] =
+                        left_id * right_len as u32;
+                }
+            }
+        }
+        chunks.push(PreparedSecondSimd8Chunk {
+            left_priority_scores_by_depth,
+            row_base_by_right_len_by_depth,
+        });
+    }
+    chunks
+}
+
+pub fn build_prepared_second_simd4_chunks<const LEFT_LEN: usize>(
+    entries: &[PreparedSecondToken],
+) -> Vec<PreparedSecondSimd4Chunk> {
+    let chunk_count = entries.len() / 4;
+    let mut chunks = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let base = chunk_idx * 4;
+        let lanes: &[PreparedSecondToken; 4] = entries[base..base + 4]
+            .try_into()
+            .expect("chunk must contain 4 lanes");
+        let mut left_priority_scores_by_depth = [[0u32; 4]; MAX_PACKED_SPINE_LEN];
+        let mut row_base_by_right_len_by_depth =
+            [[[0u32; 4]; MAX_PACKED_SPINE_LEN]; MAX_PACKED_SPINE_LEN + 1];
+        for lane in 0..4 {
+            debug_assert_eq!(lanes[lane].left_spine.len as usize, LEFT_LEN);
+            for depth in 0..LEFT_LEN {
+                let left_id = lanes[lane].left_spine.ids[depth] as u32;
+                left_priority_scores_by_depth[depth][lane] =
+                    lanes[lane].left_spine.priority_score[depth] as u32;
+                for right_len in 1..=MAX_PACKED_SPINE_LEN {
+                    row_base_by_right_len_by_depth[right_len][depth][lane] =
+                        left_id * right_len as u32;
+                }
+            }
+        }
+        chunks.push(PreparedSecondSimd4Chunk {
+            left_priority_scores_by_depth,
+            row_base_by_right_len_by_depth,
+        });
+    }
+    chunks
+}
+
+pub fn build_prepared_second_simd16_chunks<const LEFT_LEN: usize>(
+    entries: &[PreparedSecondToken],
+) -> Vec<PreparedSecondSimd16Chunk> {
+    let chunk_count = entries.len() / 16;
+    let mut chunks = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let base = chunk_idx * 16;
+        let lanes: &[PreparedSecondToken; 16] = entries[base..base + 16]
+            .try_into()
+            .expect("chunk must contain 16 lanes");
+        let mut left_priority_scores_by_depth = [[0u32; 16]; MAX_PACKED_SPINE_LEN];
+        let mut row_base_by_right_len_by_depth =
+            [[[0u32; 16]; MAX_PACKED_SPINE_LEN]; MAX_PACKED_SPINE_LEN + 1];
+        for lane in 0..16 {
+            debug_assert_eq!(lanes[lane].left_spine.len as usize, LEFT_LEN);
+            for depth in 0..LEFT_LEN {
+                let left_id = lanes[lane].left_spine.ids[depth] as u32;
+                left_priority_scores_by_depth[depth][lane] =
+                    lanes[lane].left_spine.priority_score[depth] as u32;
+                for right_len in 1..=MAX_PACKED_SPINE_LEN {
+                    row_base_by_right_len_by_depth[right_len][depth][lane] =
+                        left_id * right_len as u32;
+                }
+            }
+        }
+        chunks.push(PreparedSecondSimd16Chunk {
+            left_priority_scores_by_depth,
+            row_base_by_right_len_by_depth,
         });
     }
     chunks

@@ -30,24 +30,28 @@ pub struct SpineEntry {
     pub id: u16,
     /// Encodes the rank of the merge that produces the next spine node.
     /// A value of `0` means there is no next merge on this spine.
-    pub rank_plus_one: u16,
+    pub priority_score: u16,
 }
 
 impl SpineEntry {
-    fn new(id: u32, rank: Option<u32>) -> Option<Self> {
+    fn new(id: u32, priority_score: Option<u32>) -> Option<Self> {
         let id = u16::try_from(id).ok()?;
-        let rank_plus_one = match rank {
+        let priority_score = match priority_score {
             None => 0,
-            Some(rank) => u16::try_from(rank.checked_add(1)?).ok()?,
+            Some(value) => u16::try_from(value).ok()?,
         };
-        Some(Self { id, rank_plus_one })
+        Some(Self { id, priority_score })
+    }
+
+    fn next_priority_score(self) -> u16 {
+        self.priority_score
     }
 
     fn next_rank(self) -> Option<u32> {
-        if self.rank_plus_one == 0 {
+        if self.priority_score == 0 {
             None
         } else {
-            Some((self.rank_plus_one - 1) as u32)
+            Some((u16::MAX as u32) - self.priority_score as u32)
         }
     }
 
@@ -65,7 +69,7 @@ pub struct PackedSpine {
 impl PackedSpine {
     const EMPTY_ENTRY: SpineEntry = SpineEntry {
         id: 0,
-        rank_plus_one: 0,
+        priority_score: 0,
     };
 
     const fn empty() -> Self {
@@ -102,6 +106,12 @@ pub struct MergeEntry {
     pub rank: u32,
 }
 
+impl MergeEntry {
+    fn priority_score(self) -> u16 {
+        BpeMerges::rank_to_priority_score(self.rank)
+    }
+}
+
 /// Interned BPE pieces plus an ID-based merge table.
 #[derive(Debug, Clone)]
 pub struct BpeMerges {
@@ -128,7 +138,7 @@ impl PieceRef {
 #[derive(Debug, Clone)]
 struct DerivationNode {
     piece: PieceRef,
-    rank: Option<u32>,
+    priority_score: Option<u32>,
     left: Option<usize>,
     right: Option<usize>,
 }
@@ -193,6 +203,14 @@ impl From<serde_json::Error> for BpeError {
 }
 
 impl BpeMerges {
+    fn rank_to_priority_score(rank: u32) -> u16 {
+        debug_assert!(
+            rank < u16::MAX as u32,
+            "expected merge ranks to fit in u16 domain"
+        );
+        (u16::MAX as u32 - rank) as u16
+    }
+
     fn new() -> Self {
         Self {
             piece_to_id: HashMap::new(),
@@ -262,9 +280,13 @@ impl BpeMerges {
             match best {
                 None => best = Some((i, rule)),
                 Some((best_idx, best_rule)) => {
-                    if rule.rank < best_rule.rank || (rule.rank == best_rule.rank && i < best_idx) {
+                    let rule_score = rule.priority_score();
+                    let best_score = best_rule.priority_score();
+                    let should_replace =
+                        rule_score > best_score || (rule_score == best_score && i < best_idx);
+                    if should_replace {
                         best = Some((i, rule));
-                    }
+                    };
                 }
             }
         }
@@ -425,37 +447,37 @@ impl BpeMerges {
         let mut j = 0usize;
 
         loop {
-            let right_rank = right_spine[i].next_rank();
-            let left_rank = left_spine[j].next_rank();
-            let cross_rank = self
+            let right_priority_score = right_spine[i].next_priority_score() as u32;
+            let left_priority_score = left_spine[j].next_priority_score() as u32;
+            let cross_priority_score = self
                 .lookup_merge_by_pair(right_spine[i].id_u32(), left_spine[j].id_u32())
-                .map(|entry| entry.rank);
+                .map_or(0, |entry| entry.priority_score() as u32);
 
-            let mut best = right_rank;
-            if left_rank.is_some() && (best.is_none() || left_rank < best) {
-                best = left_rank;
+            let mut best_priority_score = right_priority_score;
+            if left_priority_score > best_priority_score {
+                best_priority_score = left_priority_score;
             }
-            if cross_rank.is_some() && (best.is_none() || cross_rank < best) {
-                best = cross_rank;
+            if cross_priority_score > best_priority_score {
+                best_priority_score = cross_priority_score;
             }
 
-            let Some(best_rank) = best else {
+            if best_priority_score == 0 {
                 return true;
-            };
+            }
 
-            if cross_rank == Some(best_rank) {
+            if cross_priority_score == best_priority_score {
                 return false;
             }
-            if right_rank == Some(best_rank) {
+            if right_priority_score == best_priority_score {
                 i += 1;
                 continue;
             }
-            if left_rank == Some(best_rank) {
+            if left_priority_score == best_priority_score {
                 j += 1;
                 continue;
             }
 
-            unreachable!("best rank must come from one of the three candidate events");
+            unreachable!("best score must come from one of the three candidate events");
         }
     }
 
@@ -479,12 +501,12 @@ impl BpeMerges {
         let (nodes, root) = self.tokenize_tree(token)?;
         let mut spine = Vec::new();
         let mut cursor = root;
-        let mut rank_to_next = None;
+        let mut priority_score_to_next = None;
         loop {
             let PieceRef::Known(id) = nodes[cursor].piece else {
                 return None;
             };
-            spine.push(SpineEntry::new(id, rank_to_next)?);
+            spine.push(SpineEntry::new(id, priority_score_to_next)?);
             let next = if take_left {
                 nodes[cursor].left
             } else {
@@ -493,7 +515,7 @@ impl BpeMerges {
             let Some(next) = next else {
                 break;
             };
-            rank_to_next = nodes[cursor].rank;
+            priority_score_to_next = nodes[cursor].priority_score;
             cursor = next;
         }
         spine.reverse();
@@ -518,7 +540,7 @@ impl BpeMerges {
         for c in text.chars() {
             nodes.push(DerivationNode {
                 piece: self.char_piece(c),
-                rank: None,
+                priority_score: None,
                 left: None,
                 right: None,
             });
@@ -536,9 +558,11 @@ impl BpeMerges {
                 match best {
                     None => best = Some((i, rule)),
                     Some((best_idx, best_rule)) => {
-                        if rule.rank < best_rule.rank
-                            || (rule.rank == best_rule.rank && i < best_idx)
-                        {
+                        let rule_score = rule.priority_score();
+                        let best_score = best_rule.priority_score();
+                        let should_replace =
+                            rule_score > best_score || (rule_score == best_score && i < best_idx);
+                        if should_replace {
                             best = Some((i, rule));
                         }
                     }
@@ -553,7 +577,7 @@ impl BpeMerges {
             let right = symbols[idx + 1];
             nodes.push(DerivationNode {
                 piece: PieceRef::Known(rule.merged),
-                rank: Some(rule.rank),
+                priority_score: Some(rule.priority_score() as u32),
                 left: Some(left),
                 right: Some(right),
             });
