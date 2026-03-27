@@ -10,13 +10,13 @@ use std::io;
 use std::path::Path;
 
 #[doc(hidden)]
-#[path = "bpe/prepared_dense_experiments.rs"]
-pub mod prepared_dense;
+#[path = "bpe/prepared_allpairs.rs"]
+pub mod prepared_allpairs;
 
 mod tinyllama;
 
 pub use self::tinyllama::{
-    TINYLLAMA_PIECE_COUNT, TinyLlamaPreparedFirstDense, TinyLlamaWordTokenizer,
+    TINYLLAMA_PIECE_COUNT, TinyLlamaPreparedFirstAllPairs, TinyLlamaWordTokenizer,
 };
 
 /// SentencePiece “space” / word-boundary marker used in TinyLlama vocab and merges.
@@ -306,47 +306,19 @@ impl BpeMerges {
         symbols
     }
 
-    /// Read a merges file: lines starting with `#` and empty lines are skipped.
-    /// Each other line must contain two tokens separated by the **first** ASCII space (` `).
-    pub fn from_merges_file(path: impl AsRef<Path>) -> Result<Self, BpeError> {
-        let text = fs::read_to_string(path.as_ref())?;
-        Self::from_merges_str(&text)
-    }
-
-    pub fn from_merges_str(content: &str) -> Result<Self, BpeError> {
-        let mut out = Self::new();
-        for (line_no, raw) in content.lines().enumerate() {
-            let line_no = line_no + 1;
-            let line = raw.trim_end_matches(['\r', '\n']);
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let (left, right) = parse_merge_line(line, line_no)?;
-            let left_id = out.intern_piece(left);
-            let right_id = out.intern_piece(right);
-            let mut merged = String::with_capacity(left.len() + right.len());
-            merged.push_str(left);
-            merged.push_str(right);
-            let merged_id = out.intern_owned_piece(merged);
-            let rank = out.merges.len() as u32;
-            out.insert_merge(left_id, right_id, merged_id, rank);
-        }
-        Ok(out)
-    }
-
     /// Load BPE merge ranks from a Hugging Face `tokenizer.json` (`model.merges`).
     /// If `model.vocab` exists, its token strings are interned too so ID-based tokenization can
     /// stay in the interned representation longer.
-    pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Result<Self, BpeError> {
-        let text = fs::read_to_string(path.as_ref())?;
+    pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
+        let text = fs::read_to_string(path.as_ref()).expect("failed to read tokenizer.json");
         Self::from_tokenizer_json_str(&text)
     }
 
-    pub fn from_tokenizer_json_str(content: &str) -> Result<Self, BpeError> {
-        let v: serde_json::Value = serde_json::from_str(content)?;
+    pub fn from_tokenizer_json_str(content: &str) -> Self {
+        let v: serde_json::Value = serde_json::from_str(content).expect("invalid tokenizer.json");
         let model = v
             .get("model")
-            .ok_or(BpeError::InvalidTokenizerJson("missing model object"))?;
+            .expect("missing model object");
         let mut out = Self::new();
         if let Some(vocab) = model.get("vocab").and_then(|v| v.as_object()) {
             for token in vocab.keys() {
@@ -356,13 +328,11 @@ impl BpeMerges {
         let merges = model
             .get("merges")
             .and_then(|m| m.as_array())
-            .ok_or(BpeError::InvalidTokenizerJson("missing model.merges array"))?;
+            .expect("missing model.merges array");
         for (idx, item) in merges.iter().enumerate() {
-            let line = item.as_str().ok_or(BpeError::InvalidTokenizerJson(
-                "merge entry is not a string",
-            ))?;
+            let line = item.as_str().expect("merge entry is not a string");
             let line_no = idx + 1;
-            let (left, right) = parse_merge_line(line, line_no)?;
+            let (left, right) = parse_merge_line(line, line_no).expect("invalid merge line");
             let left_id = out.intern_piece(left);
             let right_id = out.intern_piece(right);
             let mut merged = String::with_capacity(left.len() + right.len());
@@ -371,7 +341,7 @@ impl BpeMerges {
             let merged_id = out.intern_owned_piece(merged);
             out.insert_merge(left_id, right_id, merged_id, idx as u32);
         }
-        Ok(out)
+        out
     }
 
     pub fn lookup_merge_by_pair(&self, left: u32, right: u32) -> Option<MergeEntry> {
@@ -611,6 +581,33 @@ fn parse_merge_line(line: &str, line_no: usize) -> Result<(&str, &str), BpeError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    fn tokenizer_json_with_merges(merges: &[&str]) -> String {
+        let mut seen = HashSet::new();
+        let mut pieces = Vec::new();
+        for (line_no, merge) in merges.iter().enumerate() {
+            let (left, right) = parse_merge_line(merge, line_no + 1).unwrap();
+            for piece in [left.to_string(), right.to_string(), format!("{left}{right}")] {
+                if seen.insert(piece.clone()) {
+                    pieces.push(piece);
+                }
+            }
+        }
+        let vocab = pieces
+            .into_iter()
+            .enumerate()
+            .map(|(id, piece)| (piece, serde_json::Value::from(id)))
+            .collect::<serde_json::Map<String, serde_json::Value>>();
+        serde_json::json!({
+            "model": {
+                "type": "BPE",
+                "vocab": vocab,
+                "merges": merges,
+            }
+        })
+        .to_string()
+    }
 
     fn tiny_tokenizer_json_for_tests() -> &'static str {
         r#"{
@@ -631,25 +628,23 @@ mod tests {
 
     #[test]
     fn merges_order() {
-        let m = BpeMerges::from_merges_str(
-            "#version: 0.2\n\
-             a b\n\
-             ab c\n",
-        )
-        .unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "ab c"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         assert_eq!(m.tokenize("abc"), vec!["abc".to_string()]);
     }
 
     #[test]
     fn tokenize_ids_round_trip_to_surface_forms() {
-        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "ab c"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let ids = m.tokenize_ids("abc").unwrap();
         assert_eq!(m.decode_piece_ids(&ids), Some(vec!["abc"]));
     }
 
     #[test]
     fn merge_lookup_by_pair_returns_expected_entry() {
-        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "ab c"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let a = m.encode_piece("a").unwrap();
         let b = m.encode_piece("b").unwrap();
         let ab = m.encode_piece("ab").unwrap();
@@ -663,13 +658,15 @@ mod tests {
 
     #[test]
     fn leftmost_tie() {
-        let m = BpeMerges::from_merges_str("a a\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a a"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         assert_eq!(m.tokenize("aa"), vec!["aa".to_string()]);
     }
 
     #[test]
     fn canonical_pair_checks_exact_two_piece_split() {
-        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "ab c"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         assert!(!m.canonical_pair("a", "b"));
         assert!(m.canonical_pair("ab", "d"));
         assert!(!m.canonical_pair("a", "bc"));
@@ -677,7 +674,8 @@ mod tests {
 
     #[test]
     fn canonical_pair_from_spines_detects_boundary_crossing() {
-        let m = BpeMerges::from_merges_str("a b\nab c\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "ab c"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let right = m.right_spine("a").unwrap();
         let left = m.left_spine("b").unwrap();
         assert!(!m.canonical_pair_from_spines(&right, &left));
@@ -685,7 +683,8 @@ mod tests {
 
     #[test]
     fn canonical_pair_from_spines_accepts_safe_boundary() {
-        let m = BpeMerges::from_merges_str("a b\nab c\nx y\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "ab c", "x y"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let right = m.right_spine("ab").unwrap();
         let left = m.left_spine("x").unwrap();
         assert!(m.canonical_pair_from_spines(&right, &left));
@@ -697,7 +696,8 @@ mod tests {
 
     #[test]
     fn canonical_pair_from_spines_matches_string_check_on_known_pieces() {
-        let m = BpeMerges::from_merges_str("a b\nb c\nab c\na bc\nx y\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "b c", "ab c", "a bc", "x y"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         for a in &m.pieces {
             let Some(right) = m.right_spine(a) else {
                 continue;
@@ -717,7 +717,8 @@ mod tests {
 
     #[test]
     fn left_spine_follows_left_edge_of_merge_tree() {
-        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        let json = tokenizer_json_with_merges(&["h e", "l l", "he ll"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let spine = m.left_spine("hell").unwrap();
         assert_eq!(
             m.decode_piece_ids(
@@ -735,7 +736,8 @@ mod tests {
 
     #[test]
     fn left_spine_uses_actual_bpe_derivation() {
-        let m = BpeMerges::from_merges_str("a b\nb c\nab c\na bc\n").unwrap();
+        let json = tokenizer_json_with_merges(&["a b", "b c", "ab c", "a bc"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let spine = m.left_spine("abc").unwrap();
         assert_eq!(
             m.decode_piece_ids(
@@ -753,7 +755,8 @@ mod tests {
 
     #[test]
     fn right_spine_follows_right_edge_of_merge_tree() {
-        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        let json = tokenizer_json_with_merges(&["h e", "l l", "he ll"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         let spine = m.right_spine("hell").unwrap();
         assert_eq!(
             m.decode_piece_ids(
@@ -771,13 +774,15 @@ mod tests {
 
     #[test]
     fn right_spine_is_none_when_string_is_not_a_single_token() {
-        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        let json = tokenizer_json_with_merges(&["h e", "l l", "he ll"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         assert_eq!(m.right_spine("hel"), None);
     }
 
     #[test]
     fn left_spine_is_none_when_string_is_not_a_single_token() {
-        let m = BpeMerges::from_merges_str("h e\nl l\nhe ll\n").unwrap();
+        let json = tokenizer_json_with_merges(&["h e", "l l", "he ll"]);
+        let m = BpeMerges::from_tokenizer_json_str(&json);
         assert_eq!(m.left_spine("hel"), None);
     }
 
@@ -792,87 +797,72 @@ mod tests {
         if !path.is_file() {
             return;
         }
-        let tok = TinyLlamaWordTokenizer::from_tokenizer_json(&path).unwrap();
-        assert_eq!(tok.encode_word("hello").unwrap(), vec![22172]);
-        assert_eq!(tok.encode_word("okay").unwrap(), vec![20759]);
-        assert_eq!(tok.encode_word("abcdef").unwrap(), vec![25638, 1753]);
-        assert_eq!(tok.encode_word("the").unwrap(), vec![278]);
-        assert_eq!(tok.tokenize_word_piece_ids("abcdef").unwrap().len(), 2);
-        assert!(tok.is_token("▁hello"));
-        assert_eq!(tok.encode_token("▁hello"), Some(22172));
-        assert_eq!(tok.decode_token(22172), Some("▁hello"));
-        assert_eq!(tok.decode(&[22172]).unwrap(), vec!["▁hello"]);
-        let first_right_spine = tok.right_spine("▁abc").unwrap();
-        let first_right_spine_by_id = tok.right_spine_for_token_id(25638).unwrap();
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json(&path);
+        let hello = tok.lex_index("▁hello");
+        let okay = tok.lex_index("▁okay");
+        let abc = tok.lex_index("▁abc");
+        let def = tok.lex_index("def");
+        let the = tok.lex_index("▁the");
+        assert_eq!(tok.tokenize_word_to_lex_indices("hello"), vec![hello]);
+        assert_eq!(tok.tokenize_word_to_lex_indices("okay"), vec![okay]);
+        assert_eq!(tok.tokenize_word_to_lex_indices("abcdef"), vec![abc, def]);
+        assert_eq!(tok.tokenize_word_to_lex_indices("the"), vec![the]);
+        assert_eq!(tok.tokenize_word("abcdef").len(), 2);
+        assert_eq!(tok.token_at(hello), "▁hello");
+        assert!(tok.can_canonically_follow("▁abc", "def"));
+        assert!(tok.lex_indices_with_left_spines().contains(&def));
         assert_eq!(
-            tok.canonical_pair_with_right_spine(&first_right_spine, "def"),
-            Some(true)
-        );
-        assert_eq!(first_right_spine, first_right_spine_by_id);
-        assert_eq!(
-            tok.canonical_pair_with_right_spine_and_token_id(&first_right_spine, 1753),
-            Some(true)
-        );
-        assert!(tok.left_spine_for_token_id(1753).is_some());
-        assert!(tok.token_ids_with_left_spines().contains(&1753));
-        assert!(!tok.is_token("not_a_real_token"));
-        assert_eq!(
-            tok.encode_word_with_pieces("abcdef").unwrap(),
-            vec![("▁abc".to_string(), 25638), ("def".to_string(), 1753)]
+            tok.tokenize_word_with_lex_indices("abcdef"),
+            vec![("▁abc".to_string(), abc), ("def".to_string(), def)]
         );
     }
 
     #[test]
     fn canonical_pair_batch_matches_scalar_reference_on_ordinary_token_domain() {
-        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests())
-            .unwrap();
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
 
-        for &first_id in tok.token_ids_with_left_spines() {
-            let Some(mask) = tok.canonical_pair_batch_for_token_id(first_id).unwrap() else {
-                panic!("ordinary token id {first_id} should support batch canonicality");
-            };
-            let first_right_spine = tok
-                .right_packed_spine_for_token_id(first_id)
-                .expect("ordinary token ids must have packed right spines");
+        for &first_lex_index in tok.lex_indices_with_left_spines() {
+            let mask = tok.canonical_followers_for_lex_index(first_lex_index);
             assert_eq!(mask.len(), 6);
+            let first_token = tok.token_at(first_lex_index);
 
-            for &second_id in tok.token_ids_with_left_spines() {
-                let second_left_spine = tok
-                    .left_packed_spine_for_token_id(second_id)
-                    .expect("ordinary token ids must have packed left spines");
-                let expected =
-                    tok.canonical_pair_from_packed_spines(&first_right_spine, second_left_spine);
+            for &second_lex_index in tok.lex_indices_with_left_spines() {
+                let second_token = tok.token_at(second_lex_index);
+                let expected = tok.can_canonically_follow(first_token, second_token);
                 assert_eq!(
-                    mask[second_id as usize], expected,
-                    "mismatch for pair ({first_id}, {second_id})"
+                    mask[second_lex_index], expected,
+                    "mismatch for pair ({first_lex_index}, {second_lex_index})"
                 );
             }
 
-            assert!(!mask[5], "special token ids stay outside the batch domain");
+            assert!(!mask[tok.lex_index("<s>")]);
         }
     }
 
     #[test]
-    fn canonical_pair_batch_rejects_special_first_token() {
-        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests())
-            .unwrap();
-        assert_eq!(tok.canonical_pair_batch_for_token_id(5).unwrap(), None);
+    fn canonical_pair_batch_supports_special_first_token_via_scalar_path() {
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
+        let mask = tok.canonical_followers("<s>");
+        assert_eq!(mask.len(), tok.tokens().len());
     }
 
     #[test]
+    #[should_panic]
     fn canonical_pair_batch_into_validates_output_len() {
-        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests())
-            .unwrap();
-        let first_right_spine = tok.right_packed_spine_for_token_id(2).unwrap();
-        let err = tok
-            .canonical_pair_batch_with_packed_right_spine_into(&first_right_spine, &mut [false; 3])
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            BpeError::InvalidPreparedDenseMaskLen {
-                expected: 6,
-                got: 3,
-            }
-        ));
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
+        let first_right_spine = tok.right_packed_spine_for_lex_index(tok.lex_index("ab"));
+        tok.canonical_pair_batch_with_packed_right_spine_into(&first_right_spine, &mut [false; 3]);
+    }
+
+    #[test]
+    fn tinyllama_lex_helpers_and_prefix_ranges_work() {
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
+        let tokens: Vec<&str> = tok.tokens().iter().map(String::as_str).collect();
+        assert_eq!(tokens, vec!["<s>", "a", "ab", "abc", "b", "c"]);
+        assert_eq!(tok.lex_index("ab"), 2);
+        assert_eq!(tok.token_at(2), "ab");
+        assert!(tok.has_token_with_prefix("ab"));
+        assert_eq!(tok.lex_range_for_prefix("ab"), (2, 4));
+        assert!(!tok.has_token_with_prefix("zzz"));
     }
 }

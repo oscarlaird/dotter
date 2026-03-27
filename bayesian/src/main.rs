@@ -39,28 +39,15 @@ fn print_usage() {
 }
 
 fn encode_words_cli(tokenizer_path: &str, words: &[String]) -> ExitCode {
-    let tokenizer = match TinyLlamaWordTokenizer::from_tokenizer_json(tokenizer_path) {
-        Ok(tokenizer) => tokenizer,
-        Err(err) => {
-            eprintln!("failed to load tokenizer: {err}");
-            return ExitCode::from(1);
-        }
-    };
+    let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json(tokenizer_path);
 
     for word in words {
-        match tokenizer.encode_word_with_pieces(word) {
-            Ok(encoded) => {
-                let pieces: Vec<&str> = encoded.iter().map(|(piece, _)| piece.as_str()).collect();
-                let ids: Vec<u32> = encoded.iter().map(|(_, id)| *id).collect();
-                println!("{word:?}");
-                println!("  pieces: {pieces:?}");
-                println!("  ids:    {ids:?}");
-            }
-            Err(err) => {
-                eprintln!("failed to encode {word:?}: {err}");
-                return ExitCode::from(1);
-            }
-        }
+        let encoded = tokenizer.tokenize_word_with_lex_indices(word);
+        let pieces: Vec<&str> = encoded.iter().map(|(piece, _)| piece.as_str()).collect();
+        let lex_indices: Vec<usize> = encoded.iter().map(|(_, idx)| *idx).collect();
+        println!("{word:?}");
+        println!("  pieces: {pieces:?}");
+        println!("  lex_indices: {lex_indices:?}");
     }
 
     ExitCode::SUCCESS
@@ -114,15 +101,9 @@ fn canonical_pair_rate_cli(mut args: impl Iterator<Item = String>) -> ExitCode {
         }
     }
 
-    let tokenizer = match TinyLlamaWordTokenizer::from_tokenizer_json(&tokenizer_path) {
-        Ok(tokenizer) => tokenizer,
-        Err(err) => {
-            eprintln!("failed to load tokenizer: {err}");
-            return ExitCode::from(1);
-        }
-    };
+    let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json(&tokenizer_path);
 
-    let vocab: Vec<&str> = tokenizer.vocab_tokens().collect();
+    let vocab: Vec<&str> = tokenizer.tokens().iter().map(String::as_str).collect();
     if vocab.is_empty() {
         eprintln!("tokenizer vocab is empty");
         return ExitCode::from(1);
@@ -194,7 +175,7 @@ fn canonical_pair_rate_cli(mut args: impl Iterator<Item = String>) -> ExitCode {
     for _ in 0..samples {
         let a = first_vocab[rng.gen_index(first_vocab.len())];
         let b = second_vocab[rng.gen_index(second_vocab.len())];
-        if tokenizer.canonical_pair(a, b) {
+        if tokenizer.can_canonically_follow(a, b) {
             canonical += 1;
         }
     }

@@ -5,13 +5,119 @@
 pub mod bpe;
 pub mod symbol;
 
+use bpe::TinyLlamaWordTokenizer;
 use pyo3::prelude::*;
+use std::collections::HashMap;
+use std::path::Path;
 use symbol::Symbol;
 
 // --- byte trie (fixed alphabet, arena-allocated) -----------------------------------------------
 const MAX_TOKEN_LENGTH: usize = 16;
 
 const NUM_TOKENS: usize = 17250;
+
+type NodeIndex = usize;
+type PredictionIndex = usize;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum PredictionOrder {
+    ZeroOrder(String),
+    FirstOrder(String),
+    FullOrder(Vec<String>),
+}
+
+#[derive(Clone, Debug)]
+struct Prediction {
+    order: PredictionOrder,
+    m: u32,
+    canonical_followers: [bool; NUM_TOKENS],
+    cum_canonical_followers: [u32; NUM_TOKENS],
+    follower_probs: [f64; NUM_TOKENS],
+    cum_follower_probs: [f64; NUM_TOKENS],
+}
+
+impl Prediction {
+    fn from_order_and_followers(
+        order: PredictionOrder,
+        canonical_followers: [bool; NUM_TOKENS],
+    ) -> Self {
+        let mut cum_canonical_followers = [0u32; NUM_TOKENS];
+        let mut canonical_total = 0u32;
+        for (idx, is_canonical) in canonical_followers.iter().copied().enumerate() {
+            canonical_total += u32::from(is_canonical);
+            cum_canonical_followers[idx] = canonical_total;
+        }
+
+        let mut follower_probs = [0.0; NUM_TOKENS];
+        if canonical_total != 0 {
+            let mass = 1.0 / canonical_total as f64;
+            for (idx, is_canonical) in canonical_followers.iter().copied().enumerate() {
+                if is_canonical {
+                    follower_probs[idx] = mass;
+                }
+            }
+        }
+
+        let mut cum_follower_probs = [0.0; NUM_TOKENS];
+        let mut prob_total = 0.0;
+        for (idx, prob) in follower_probs.iter().copied().enumerate() {
+            prob_total += prob;
+            cum_follower_probs[idx] = prob_total;
+        }
+
+        Self {
+            order,
+            m: 0,
+            canonical_followers,
+            cum_canonical_followers,
+            follower_probs,
+            cum_follower_probs,
+        }
+    }
+}
+
+
+#[derive(Clone, Debug)]
+struct PredictionRegistry {
+    predictions: Vec<Prediction>,
+    by_order: HashMap<PredictionOrder, PredictionIndex>,
+}
+
+impl PredictionRegistry {
+    fn new() -> Self {
+        Self {
+            predictions: Vec::new(),
+            by_order: HashMap::new(),
+        }
+    }
+
+    fn alloc(&mut self, prediction: Prediction) -> PredictionIndex {
+        let index = self.predictions.len();
+        self.by_order.insert(prediction.order.clone(), index);
+        self.predictions.push(prediction);
+        index
+    }
+
+    fn get(&self, index: PredictionIndex) -> Option<&Prediction> {
+        self.predictions.get(index)
+    }
+
+    fn index_for_order(&self, order: &PredictionOrder) -> Option<PredictionIndex> {
+        self.by_order.get(order).copied()
+    }
+
+    fn get_mut(&mut self, index: PredictionIndex) -> Option<&mut Prediction> {
+        self.predictions.get_mut(index)
+    }
+
+    fn len(&self) -> usize {
+        self.predictions.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.predictions.is_empty()
+    }
+}
 
 #[derive(Clone, Debug)]
 struct Node {
@@ -35,17 +141,18 @@ struct Node {
     // tokenization
     final_token_length: u8,
     n_tokens: u32,
+    prediction: Option<PredictionIndex>,
     // children
     /// Index in `Trie::nodes` of the first of `RADIX` consecutive child nodes (slot `s` → `nodes[base + s]`).
     /// `None` if no child block has been allocated for this node yet.
     symbol: Option<Symbol>,
     depth: u32,
-    children_start_index: Option<u32>,
+    children_start_index: Option<NodeIndex>,
 }
 
 #[derive(Clone, Debug)]
 struct Walker {
-    node: usize,
+    node: NodeIndex,
     depth: u32,
     a_symbol: [Option<Symbol>; 2 * MAX_TOKEN_LENGTH], // symbol for each ancestor i
     a_tp: [f64; MAX_TOKEN_LENGTH],                    // token branch prior for each ancestor i
@@ -77,6 +184,7 @@ impl Node {
             // tokenization
             final_token_length: 0u8,
             n_tokens: 0,
+            prediction: None,
             // trie
             symbol: None,
             depth: 0,
@@ -93,10 +201,23 @@ impl Node {
     }
 }
 
+impl Walker {
+    fn last_token_string(&self) -> String {
+        let len = self.a_final_token_length[0] as usize;
+        let mut out = String::with_capacity(len);
+        for symbol in self.a_symbol[..len].iter().rev().flatten() {
+            out.push(symbol.to_byte() as char);
+        }
+        out
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Trie {
     nodes: Vec<Node>,
-    root: usize,
+    predictions: PredictionRegistry,
+    tokenizer: TinyLlamaWordTokenizer,
+    root: NodeIndex,
     nz: u32,
     mz: u32,
     nl: u32,
@@ -106,11 +227,18 @@ struct Trie {
 }
 
 impl Trie {
-    fn new() -> Self {
+    fn new(tokenizer: TinyLlamaWordTokenizer) -> Self {
+        assert_eq!(
+            tokenizer.tokens().len(),
+            NUM_TOKENS,
+            "Trie expects exactly {NUM_TOKENS} tokenizer entries"
+        );
         let nodes = vec![Node::root()];
 
         Self {
             nodes,
+            predictions: PredictionRegistry::new(),
+            tokenizer,
             root: 0,
             nz: 0,
             mz: 0,
@@ -119,6 +247,11 @@ impl Trie {
             mp: 0,
             mtp: 0,
         }
+    }
+
+    fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
+        let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json(path);
+        Self::new(tokenizer)
     }
 
     fn root_walker(&self) -> Walker {
@@ -152,23 +285,31 @@ impl Trie {
         walker.a_n_tokens[0] = current_node.n_tokens;
         walker.a_final_token_length[0] = current_node.final_token_length;
 
-        walker.node = base as usize + symbol.to_slot() as usize;
+        walker.node = base + symbol.to_slot() as usize;
         walker.depth += 1;
         walker
     }
 
-    /// Temporarily compile-safe wrapper around the original WIP implementation.
     fn ensure_children(&mut self, walker: &Walker) {
-        // Original WIP body preserved below for continued development:
-        //
-        // let parent_index = walker.node;
-        // if self.nodes[parent_index].children_start_index.is_some() {
-        //     return;
-        // }
-        // let base = self.nodes.len() as u32;
-        // self.nodes[parent_index].children_start_index = Some(base);
-        // let parent_node = &self.nodes[parent_index];
-        // let child_depth = parent_node.depth + 1;
+        let parent_index = walker.node;
+        if self.nodes[parent_index].children_start_index.is_some() {
+            return;
+        }
+        let base = self.nodes.len();
+        self.nodes[parent_index].children_start_index = Some(base);
+        let child_depth = self.nodes[parent_index].depth + 1;
+        if self.nodes[parent_index].prediction.is_none() {
+            let last_token_string = walker.last_token_string();
+            let order = PredictionOrder::ZeroOrder(last_token_string.clone());
+            let prediction_index = if let Some(index) = self.predictions.index_for_order(&order) {
+                index
+            } else {
+                self.predictions
+                    .alloc(self.zero_order_prediction(last_token_string))
+            };
+            self.nodes[parent_index].prediction = Some(prediction_index);
+        }
+        // Original child-expansion body is still WIP:
         // for symbol in Symbol::ALL {
         //     // tokenization
         //     // lemma: ab canonical, bc canonical => abc canonical
@@ -193,17 +334,43 @@ impl Trie {
         //         // tokenization
         //         final_token_length: child_final_token_length.expect(),
         //         n_tokens: child_n_tokens.expect(),
+        //         prediction: None,
         //         // prior
         //         tp: -(child_n_tokens.expect() as f64) * (NUM_TOKENS as f64).ln(),
         //         mtp: 0,
         //         // likelihood
         //         ll: 0.0,
         //         ul: 0.0,
-        //
         //     });
         // }
-        let _ = walker;
-        let _ = NUM_TOKENS;
+        let _ = child_depth;
+    }
+
+    fn zero_order_prediction(&self, last_token: String) -> Prediction {
+        let canonical_followers = self.zero_order_canonical_followers(&last_token);
+        Prediction::from_order_and_followers(
+            PredictionOrder::ZeroOrder(last_token),
+            canonical_followers,
+        )
+    }
+
+    fn zero_order_canonical_followers(&self, last_token: &str) -> [bool; NUM_TOKENS] {
+        assert!(
+            !last_token.is_empty(),
+            "zero_order_canonical_followers requires a non-empty last token"
+        );
+        let followers = self
+            .tokenizer
+            .canonical_followers(last_token)
+            ;
+        assert_eq!(
+            followers.len(),
+            NUM_TOKENS,
+            "canonical_followers must return one flag per token"
+        );
+        followers
+            .try_into()
+            .expect("canonical_followers length must match NUM_TOKENS")
     }
 }
 

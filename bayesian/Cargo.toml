@@ -16,4 +16,4 @@ path = "src/main.rs"
 
 [[bin]]
 name = "hybrid_spine_bench"
-path = "src/bin/hybrid_spine_bench_experiments.rs"
+path = "src/bin/hybrid_spine_bench.rs"
