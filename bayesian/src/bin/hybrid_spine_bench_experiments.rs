@@ -34,7 +34,7 @@ fn main() -> ExitCode {
             "usage: cargo run --release --bin hybrid_spine_bench -- <tokenizer.json> <mode> [iters]"
         );
         eprintln!(
-            "modes: scalar_pointer_bybucket | scalar_swapped_bybucket | lockstep4_bybucket | simd8_bybucket | allpairs_small_matrix | allpairs_vs_scalar_pointer_matrix | no_partner_rate"
+            "modes: scalar_pointer_bybucket | scalar_swapped_bybucket | lockstep4_bybucket | simd8_bybucket | allpairs_small_matrix | allpairs_vs_scalar_pointer_matrix | no_partner_rate | allpairs_build_scan_split | allpairs_build_cell_stats | allpairs_per_first_tail"
         );
         return ExitCode::from(2);
     };
@@ -84,6 +84,11 @@ fn main() -> ExitCode {
             iters,
         ),
         "no_partner_rate" => run_no_partner_rate(&prepared_first, &prepared_second),
+        "allpairs_build_scan_split" => {
+            run_allpairs_build_scan_split(&tokenizer, &prepared_second_allpairs, iters)
+        }
+        "allpairs_build_cell_stats" => run_allpairs_build_cell_stats(&tokenizer),
+        "allpairs_per_first_tail" => run_allpairs_per_first_tail(&tokenizer, &prepared_second_allpairs),
         _ => {
             eprintln!("unknown mode: {mode}");
             return ExitCode::from(2);
@@ -670,6 +675,213 @@ fn run_no_partner_rate(
     println!("first_piece_total={first_piece_total}");
     println!("first_piece_no_partner={first_piece_no_partner}");
     println!("first_piece_no_partner_rate={first_piece_rate:.6}");
+}
+
+fn run_allpairs_build_scan_split(
+    tokenizer: &TinyLlamaWordTokenizer,
+    prepared_second_allpairs: &PreparedSecondBucketsAllPairs,
+    iters: usize,
+) {
+    let mut build_elapsed_ns = 0f64;
+    let mut scan_elapsed_ns = 0f64;
+    let mut built_first_tokens = 0u64;
+    let mut scan_candidates = 0u64;
+    let mut canonical_total = 0u64;
+
+    for _ in 0..iters {
+        let mut reusable =
+            PreparedFirstDenseContiguousSwappedTightAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+        for &first_token_id in tokenizer.token_ids_with_left_spines() {
+            let Some(right_spine) = tokenizer.right_packed_spine_for_token_id(first_token_id) else {
+                continue;
+            };
+            let right_len = right_spine.as_slice().len();
+
+            let build_started = Instant::now();
+            let Ok(()) = reusable.rebuild_in_place(right_spine, tokenizer.prepared_merge_rows()) else {
+                continue;
+            };
+            build_elapsed_ns += build_started.elapsed().as_secs_f64() * 1e9;
+            built_first_tokens += 1;
+
+            let scan_started = Instant::now();
+            for left_len in 1..=MAX_PACKED_SPINE_LEN {
+                scan_candidates += prepared_second_allpairs[left_len].len() as u64;
+                canonical_total += scan_allpairs_bucket_dispatch(
+                    &reusable,
+                    left_len,
+                    right_len,
+                    prepared_second_allpairs,
+                );
+            }
+            scan_elapsed_ns += scan_started.elapsed().as_secs_f64() * 1e9;
+        }
+    }
+    canonical_total = black_box(canonical_total);
+
+    let build_us_per_first = if built_first_tokens == 0 {
+        0.0
+    } else {
+        (build_elapsed_ns / 1000.0) / built_first_tokens as f64
+    };
+    let scan_us_per_first = if built_first_tokens == 0 {
+        0.0
+    } else {
+        (scan_elapsed_ns / 1000.0) / built_first_tokens as f64
+    };
+    let total_us_per_first = build_us_per_first + scan_us_per_first;
+    let scan_ns_per_candidate = if scan_candidates == 0 {
+        0.0
+    } else {
+        scan_elapsed_ns / scan_candidates as f64
+    };
+
+    println!("mode=allpairs_build_scan_split");
+    println!("iters={iters}");
+    println!("first_tokens_built_total={built_first_tokens}");
+    println!("scan_candidates_total={scan_candidates}");
+    println!("canonical_total={canonical_total}");
+    println!("build_us_per_first={build_us_per_first:.6}");
+    println!("scan_us_per_first={scan_us_per_first:.6}");
+    println!("total_us_per_first={total_us_per_first:.6}");
+    println!("scan_ns_per_candidate={scan_ns_per_candidate:.6}");
+}
+
+fn run_allpairs_build_cell_stats(tokenizer: &TinyLlamaWordTokenizer) {
+    let mut reusable =
+        PreparedFirstDenseContiguousSwappedTightAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+    let mut first_tokens = 0u64;
+    let mut total_cells = 0u64;
+    let mut min_cells = u64::MAX;
+    let mut max_cells = 0u64;
+
+    for &first_token_id in tokenizer.token_ids_with_left_spines() {
+        let Some(right_spine) = tokenizer.right_packed_spine_for_token_id(first_token_id) else {
+            continue;
+        };
+        if reusable
+            .rebuild_in_place(right_spine, tokenizer.prepared_merge_rows())
+            .is_err()
+        {
+            continue;
+        }
+        let cells = reusable
+            .row_partner_bitmap()
+            .iter()
+            .map(|&b| b.count_ones() as u64)
+            .sum::<u64>();
+        total_cells += cells;
+        first_tokens += 1;
+        if cells < min_cells {
+            min_cells = cells;
+        }
+        if cells > max_cells {
+            max_cells = cells;
+        }
+    }
+
+    let avg_cells = if first_tokens == 0 {
+        0.0
+    } else {
+        total_cells as f64 / first_tokens as f64
+    };
+    if first_tokens == 0 {
+        min_cells = 0;
+    }
+
+    println!("mode=allpairs_build_cell_stats");
+    println!("first_tokens={first_tokens}");
+    println!("avg_cells_written_per_first={avg_cells:.6}");
+    println!("min_cells_written_per_first={min_cells}");
+    println!("max_cells_written_per_first={max_cells}");
+}
+
+fn run_allpairs_per_first_tail(
+    tokenizer: &TinyLlamaWordTokenizer,
+    prepared_second_allpairs: &PreparedSecondBucketsAllPairs,
+) {
+    let mut reusable =
+        PreparedFirstDenseContiguousSwappedTightAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+
+    let mut total_us = Vec::new();
+    let mut build_us = Vec::new();
+    let mut scan_us = Vec::new();
+    let mut canonical_total = 0u64;
+    let mut first_tokens = 0u64;
+
+    for &first_token_id in tokenizer.token_ids_with_left_spines() {
+        let Some(right_spine) = tokenizer.right_packed_spine_for_token_id(first_token_id) else {
+            continue;
+        };
+        let right_len = right_spine.as_slice().len();
+
+        let t0 = Instant::now();
+        if reusable
+            .rebuild_in_place(right_spine, tokenizer.prepared_merge_rows())
+            .is_err()
+        {
+            continue;
+        }
+        let build = t0.elapsed().as_secs_f64() * 1e6;
+
+        let t1 = Instant::now();
+        let mut local = 0u64;
+        for left_len in 1..=MAX_PACKED_SPINE_LEN {
+            local +=
+                scan_allpairs_bucket_dispatch(&reusable, left_len, right_len, prepared_second_allpairs);
+        }
+        let scan = t1.elapsed().as_secs_f64() * 1e6;
+
+        canonical_total += black_box(local);
+        build_us.push(build);
+        scan_us.push(scan);
+        total_us.push(build + scan);
+        first_tokens += 1;
+    }
+
+    fn percentile(mut v: Vec<f64>, p: f64) -> f64 {
+        if v.is_empty() {
+            return 0.0;
+        }
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx = ((v.len() - 1) as f64 * p).round() as usize;
+        v[idx]
+    }
+
+    let p50 = percentile(total_us.clone(), 0.50);
+    let p90 = percentile(total_us.clone(), 0.90);
+    let p95 = percentile(total_us.clone(), 0.95);
+    let p99 = percentile(total_us.clone(), 0.99);
+    let p999 = percentile(total_us.clone(), 0.999);
+    let max = total_us.iter().copied().fold(0.0f64, f64::max);
+    let mean = if total_us.is_empty() {
+        0.0
+    } else {
+        total_us.iter().sum::<f64>() / total_us.len() as f64
+    };
+    let build_mean = if build_us.is_empty() {
+        0.0
+    } else {
+        build_us.iter().sum::<f64>() / build_us.len() as f64
+    };
+    let scan_mean = if scan_us.is_empty() {
+        0.0
+    } else {
+        scan_us.iter().sum::<f64>() / scan_us.len() as f64
+    };
+
+    println!("mode=allpairs_per_first_tail");
+    println!("first_tokens={first_tokens}");
+    println!("canonical_total={canonical_total}");
+    println!("build_us_mean={build_mean:.6}");
+    println!("scan_us_mean={scan_mean:.6}");
+    println!("total_us_mean={mean:.6}");
+    println!("total_us_p50={p50:.6}");
+    println!("total_us_p90={p90:.6}");
+    println!("total_us_p95={p95:.6}");
+    println!("total_us_p99={p99:.6}");
+    println!("total_us_p999={p999:.6}");
+    println!("total_us_max={max:.6}");
 }
 
 fn run_lockstep4_reference_for_small_region(

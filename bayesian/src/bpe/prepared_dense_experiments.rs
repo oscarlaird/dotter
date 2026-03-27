@@ -36,8 +36,8 @@ pub struct PreparedFirstDenseContiguousSwappedTight<const PIECE_COUNT: usize> {
 pub struct PreparedFirstDenseContiguousSwappedTightAllPairs<const PIECE_COUNT: usize> {
     right_len: u8,
     right_piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
-    dense_matrix: Box<[u16]>,
-    row_partner_bitmap: Box<[u8]>,
+    dense_matrix: Vec<u16>,
+    row_partner_bitmap: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -192,7 +192,20 @@ impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwappedTight<PIECE_CO
 }
 
 impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwappedTightAllPairs<PIECE_COUNT> {
-    pub fn build(first_right_spine: PackedSpine, merge_rows: &MergeRows) -> Result<Self, BpeError> {
+    pub fn new_reusable() -> Self {
+        Self {
+            right_len: 0,
+            right_piece_formed_priority_score: [0u16; MAX_PACKED_SPINE_LEN + 1],
+            dense_matrix: Vec::new(),
+            row_partner_bitmap: vec![0u8; PIECE_COUNT],
+        }
+    }
+
+    pub fn rebuild_in_place(
+        &mut self,
+        first_right_spine: PackedSpine,
+        merge_rows: &MergeRows,
+    ) -> Result<(), BpeError> {
         if PIECE_COUNT > MAX_PREPARED_DENSE_PIECE_COUNT {
             return Err(BpeError::UnsupportedPreparedDense(
                 "prepared dense table exceeds the maximum supported piece-id width",
@@ -203,32 +216,55 @@ impl<const PIECE_COUNT: usize> PreparedFirstDenseContiguousSwappedTightAllPairs<
                 "prepared dense fast path expects piece ids to fit within the configured table",
             ));
         }
+        self.row_partner_bitmap.fill(0);
+        self.right_piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
+
         let right_len = first_right_spine.as_slice().len();
-        let mut right_piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
-        let mut dense_matrix = vec![0u16; PIECE_COUNT * right_len].into_boxed_slice();
-        let mut row_partner_bitmap = vec![0u8; PIECE_COUNT].into_boxed_slice();
+        let needed = PIECE_COUNT * right_len;
+        if self.dense_matrix.len() < needed {
+            self.dense_matrix.resize(needed, 0);
+        }
+
         for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
             let row = &merge_rows.rows[spine_entry.id as usize];
+            let r_next = if spine_idx + 1 < right_len {
+                spine_entry.priority_score
+            } else {
+                0
+            };
             for entry in row {
+                if entry.priority_score < r_next {
+                    continue;
+                }
                 let idx = entry.right as usize * right_len + spine_idx;
-                dense_matrix[idx] = entry.priority_score;
-                row_partner_bitmap[entry.right as usize] |= 1u8 << spine_idx;
+                unsafe {
+                    *self.dense_matrix.get_unchecked_mut(idx) = entry.priority_score;
+                    *self
+                        .row_partner_bitmap
+                        .get_unchecked_mut(entry.right as usize) |= 1u8 << spine_idx;
+                }
             }
         }
         if right_len > 0 {
-            right_piece_formed_priority_score[0] = u16::MAX;
+            self.right_piece_formed_priority_score[0] = u16::MAX;
             for idx in 1..right_len {
-                right_piece_formed_priority_score[idx] =
+                self.right_piece_formed_priority_score[idx] =
                     first_right_spine.as_slice()[idx - 1].priority_score;
             }
-            right_piece_formed_priority_score[right_len] = 0;
+            self.right_piece_formed_priority_score[right_len] = 0;
         }
-        Ok(Self {
-            right_len: right_len as u8,
-            right_piece_formed_priority_score,
-            dense_matrix,
-            row_partner_bitmap,
-        })
+        self.right_len = right_len as u8;
+        Ok(())
+    }
+
+    pub fn build(first_right_spine: PackedSpine, merge_rows: &MergeRows) -> Result<Self, BpeError> {
+        let mut out = Self::new_reusable();
+        out.rebuild_in_place(first_right_spine, merge_rows)?;
+        Ok(out)
+    }
+
+    pub fn row_partner_bitmap(&self) -> &[u8] {
+        &self.row_partner_bitmap
     }
 }
 
@@ -424,7 +460,7 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
                         continue;
                     }
                     let c = unsafe { *dense_matrix.get_unchecked(row_base + i) };
-                    if c >= r_next && c >= l_next {
+                    if c >= l_next {
                         return false;
                     }
                 }
@@ -457,33 +493,6 @@ pub fn canonical_pair_from_prepared_first_dense_contiguous_swapped_tight_left_le
             process_j!(2);
             process_j!(3);
             process_j!(4);
-        }
-        6 => {
-            process_j!(0);
-            process_j!(1);
-            process_j!(2);
-            process_j!(3);
-            process_j!(4);
-            process_j!(5);
-        }
-        7 => {
-            process_j!(0);
-            process_j!(1);
-            process_j!(2);
-            process_j!(3);
-            process_j!(4);
-            process_j!(5);
-            process_j!(6);
-        }
-        8 => {
-            process_j!(0);
-            process_j!(1);
-            process_j!(2);
-            process_j!(3);
-            process_j!(4);
-            process_j!(5);
-            process_j!(6);
-            process_j!(7);
         }
         _ => {
             for j in 0..LEFT_LEN {
