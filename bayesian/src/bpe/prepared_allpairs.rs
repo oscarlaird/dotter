@@ -1,6 +1,6 @@
 use super::{BpeMerges, MAX_PACKED_SPINE_LEN, PackedSpine};
 
-const MAX_PREPARED_DENSE_PIECE_COUNT: usize = (u16::MAX as usize) + 1;
+const MAX_PREPARED_DENSE_TOKEN_COUNT: usize = (u16::MAX as usize) + 1;
 
 #[derive(Clone, Copy, Debug)]
 struct RowEntry {
@@ -11,11 +11,11 @@ struct RowEntry {
 #[derive(Debug, Clone)]
 pub struct MergeRows {
     rows: Vec<Vec<RowEntry>>,
-    piece_count: usize,
+    token_count: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct PreparedFirstAllPairs<const PIECE_COUNT: usize> {
+pub struct PreparedFirstAllPairs<const NUM_TOKENS: usize> {
     right_len: u8,
     right_piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
     dense_matrix: Vec<u16>,
@@ -39,8 +39,8 @@ pub type PreparedSecondBuckets = [Vec<PreparedSecondToken>; MAX_PACKED_SPINE_LEN
 
 impl MergeRows {
     pub fn from_bpe_merges(merges: &BpeMerges) -> Self {
-        let piece_count = merges.pieces.len();
-        let mut rows = vec![Vec::<RowEntry>::new(); piece_count];
+        let token_count = merges.pieces.len();
+        let mut rows = vec![Vec::<RowEntry>::new(); token_count];
         for entry in merges.merges.values() {
             let right =
                 u16::try_from(entry.right).expect("piece ids no longer fit in u16 for allpairs");
@@ -54,38 +54,38 @@ impl MergeRows {
                 priority_score,
             });
         }
-        Self { rows, piece_count }
+        Self { rows, token_count }
     }
 
-    pub fn piece_count(&self) -> usize {
-        self.piece_count
+    pub fn token_count(&self) -> usize {
+        self.token_count
     }
 }
 
-impl<const PIECE_COUNT: usize> PreparedFirstAllPairs<PIECE_COUNT> {
+impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
     pub fn new_reusable() -> Self {
         Self {
             right_len: 0,
             right_piece_formed_priority_score: [0u16; MAX_PACKED_SPINE_LEN + 1],
             dense_matrix: Vec::new(),
-            row_partner_bitmap: vec![0u8; PIECE_COUNT],
+            row_partner_bitmap: vec![0u8; NUM_TOKENS],
         }
     }
 
     pub fn rebuild_in_place(&mut self, first_right_spine: PackedSpine, merge_rows: &MergeRows) {
         assert!(
-            PIECE_COUNT <= MAX_PREPARED_DENSE_PIECE_COUNT,
+            NUM_TOKENS <= MAX_PREPARED_DENSE_TOKEN_COUNT,
             "prepared dense table exceeds the maximum supported piece-id width"
         );
         assert!(
-            merge_rows.piece_count <= PIECE_COUNT,
+            merge_rows.token_count <= NUM_TOKENS,
             "prepared dense fast path expects piece ids to fit within the configured table"
         );
         self.row_partner_bitmap.fill(0);
         self.right_piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
 
         let right_len = first_right_spine.as_slice().len();
-        let needed = PIECE_COUNT * right_len;
+        let needed = NUM_TOKENS * right_len;
         if self.dense_matrix.len() < needed {
             self.dense_matrix.resize(needed, 0);
         }
@@ -173,11 +173,11 @@ pub fn bucket_prepared_second_tokens(entries: &[PreparedSecondToken]) -> Prepare
 
 #[inline(always)]
 pub fn is_canonical_allpairs_small<
-    const PIECE_COUNT: usize,
+    const NUM_TOKENS: usize,
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstAllPairs<PIECE_COUNT>,
+    prepared_first: &PreparedFirstAllPairs<NUM_TOKENS>,
     left_spine: &LeftSpineAllPairs,
 ) -> bool {
     if prepared_first.right_len == 0 || LEFT_LEN == 0 {
@@ -251,16 +251,16 @@ pub fn is_canonical_allpairs_small<
 }
 
 pub fn scan_allpairs_small_bucket<
-    const PIECE_COUNT: usize,
+    const NUM_TOKENS: usize,
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstAllPairs<PIECE_COUNT>,
+    prepared_first: &PreparedFirstAllPairs<NUM_TOKENS>,
     entries: &[PreparedSecondToken],
 ) -> u64 {
     let mut canonical = 0u64;
     for entry in entries {
-        canonical += is_canonical_allpairs_small::<PIECE_COUNT, LEFT_LEN, RIGHT_LEN>(
+        canonical += is_canonical_allpairs_small::<NUM_TOKENS, LEFT_LEN, RIGHT_LEN>(
             prepared_first,
             &entry.left_spine,
         ) as u64;

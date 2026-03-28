@@ -6,7 +6,7 @@ use std::time::Instant;
 use bayesian::bpe::prepared_allpairs::{
     PreparedFirstAllPairs, PreparedSecondBuckets, scan_allpairs_small_bucket,
 };
-use bayesian::bpe::{MAX_PACKED_SPINE_LEN, TINYLLAMA_PIECE_COUNT, TinyLlamaWordTokenizer};
+use bayesian::bpe::{MAX_PACKED_SPINE_LEN, NUM_TOKENS, TinyLlamaWordTokenizer};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -72,7 +72,7 @@ fn filter_prepared_second_ascii(
 }
 
 fn scan_bucket_dispatch(
-    prepared_first: &PreparedFirstAllPairs<TINYLLAMA_PIECE_COUNT>,
+    prepared_first: &PreparedFirstAllPairs<NUM_TOKENS>,
     left_len: usize,
     right_len: usize,
     prepared_second: &PreparedSecondBuckets,
@@ -80,35 +80,35 @@ fn scan_bucket_dispatch(
     macro_rules! row {
         ($l:literal) => {
             match right_len {
-                1 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 1>(
+                1 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 1>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                2 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 2>(
+                2 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 2>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                3 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 3>(
+                3 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 3>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                4 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 4>(
+                4 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 4>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                5 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 5>(
+                5 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 5>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                6 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 6>(
+                6 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 6>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                7 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 7>(
+                7 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 7>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
-                8 => scan_allpairs_small_bucket::<TINYLLAMA_PIECE_COUNT, $l, 8>(
+                8 => scan_allpairs_small_bucket::<NUM_TOKENS, $l, 8>(
                     prepared_first,
                     &prepared_second[$l],
                 ),
@@ -141,7 +141,7 @@ fn run_allpairs_build_scan_split(
     let mut canonical_total = 0u64;
 
     for _ in 0..iters {
-        let mut reusable = PreparedFirstAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+        let mut reusable = PreparedFirstAllPairs::<NUM_TOKENS>::new_reusable();
         for &first_lex_index in tokenizer.lex_indices_with_left_spines() {
             let right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
             let right_len = right_spine.as_slice().len();
@@ -204,7 +204,7 @@ fn run_allpairs_build_scan_split_filtered_ascii(
     let mut canonical_total = 0u64;
 
     for _ in 0..iters {
-        let mut reusable = PreparedFirstAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+        let mut reusable = PreparedFirstAllPairs::<NUM_TOKENS>::new_reusable();
         for &first_lex_index in tokenizer.lex_indices_with_left_spines() {
             let first_token = tokenizer.token_at(first_lex_index);
             if !token_is_ascii_lower_or_space(first_token) {
@@ -259,7 +259,7 @@ fn run_allpairs_build_scan_split_filtered_ascii(
 }
 
 fn run_allpairs_build_cell_stats(tokenizer: &TinyLlamaWordTokenizer) {
-    let mut reusable = PreparedFirstAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+    let mut reusable = PreparedFirstAllPairs::<NUM_TOKENS>::new_reusable();
     let mut first_tokens = 0u64;
     let mut total_cells = 0u64;
     let mut min_cells = u64::MAX;
@@ -303,7 +303,7 @@ fn run_allpairs_per_first_tail(
     tokenizer: &TinyLlamaWordTokenizer,
     prepared_second: &PreparedSecondBuckets,
 ) {
-    let mut reusable = PreparedFirstAllPairs::<TINYLLAMA_PIECE_COUNT>::new_reusable();
+    let mut reusable = PreparedFirstAllPairs::<NUM_TOKENS>::new_reusable();
 
     let mut total_us = Vec::new();
     let mut build_us = Vec::new();

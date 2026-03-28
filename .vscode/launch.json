@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug trie expand test",
+      "cargo": {
+        "args": [
+          "test",
+          "--manifest-path",
+          "${workspaceFolder}/bayesian/Cargo.toml",
+          "--lib",
+          "--no-run"
+        ],
+        "filter": {
+          "name": "bayesian"
+        }
+      },
+      "args": [
+        "trie_expand_threshold_smoke_test",
+        "--nocapture"
+      ],
+      "cwd": "${workspaceFolder}/bayesian",
+      "sourceLanguages": ["rust"],
+      "env": {
+        "RUST_BACKTRACE": "1"
+      }
+    }
+  ]
+}

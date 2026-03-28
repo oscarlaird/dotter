@@ -5,12 +5,24 @@ use std::path::Path;
 use super::prepared_allpairs::{
     self, MergeRows, PreparedFirstAllPairs, PreparedSecondBuckets, PreparedSecondToken,
 };
+use super::tokenizer_config::NUM_TOKENS;
 use super::{
     BpeMerges, MAX_PACKED_SPINE_LEN, NO_PACKED_SPINE_INDEX, PackedSpine, SPACESYMBOL, SpineEntry,
 };
 
-pub const TINYLLAMA_PIECE_COUNT: usize = 32_000;
-pub type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<TINYLLAMA_PIECE_COUNT>;
+pub type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
+
+fn token_prefixes(token: &str) -> Vec<&str> {
+    let mut prefixes = Vec::with_capacity(token.chars().count() + 1);
+    prefixes.push("");
+    for (idx, _) in token.char_indices().skip(1) {
+        prefixes.push(&token[..idx]);
+    }
+    if !token.is_empty() {
+        prefixes.push(token);
+    }
+    prefixes
+}
 
 fn build_second_buckets(
     lex_indices_with_left_spines: &[usize],
@@ -41,6 +53,10 @@ pub struct TinyLlamaWordTokenizer {
     piece_id_to_vocab_id: Vec<Option<u32>>,
     lex_tokens: Vec<String>,
     token_to_lex_index: HashMap<String, usize>,
+    lex_prefixes: Vec<String>,
+    prefix_to_lex_index: HashMap<String, usize>,
+    prefix_token_starts: Vec<usize>,
+    prefix_token_stops: Vec<usize>,
     lex_index_to_token_id: Vec<u32>,
     token_id_to_lex_index: Vec<Option<usize>>,
     left_spine_index_by_lex_index: Vec<u16>,
@@ -117,6 +133,28 @@ impl TinyLlamaWordTokenizer {
             token_id_to_lex_index[token_id as usize] = Some(lex_index);
         }
 
+        let mut lex_prefixes = Vec::new();
+        for token in &lex_tokens {
+            for prefix in token_prefixes(token) {
+                lex_prefixes.push(prefix.to_string());
+            }
+        }
+        lex_prefixes.sort_unstable();
+        lex_prefixes.dedup();
+        let mut prefix_to_lex_index = HashMap::with_capacity(lex_prefixes.len());
+        for (lex_index, prefix) in lex_prefixes.iter().enumerate() {
+            prefix_to_lex_index.insert(prefix.clone(), lex_index);
+        }
+        let mut prefix_token_starts = Vec::with_capacity(lex_prefixes.len());
+        let mut prefix_token_stops = Vec::with_capacity(lex_prefixes.len());
+        for prefix in &lex_prefixes {
+            let start = lex_tokens.partition_point(|token| token.as_str() < prefix.as_str());
+            let stop =
+                start + lex_tokens[start..].partition_point(|token| token.starts_with(prefix));
+            prefix_token_starts.push(start);
+            prefix_token_stops.push(stop);
+        }
+
         let mut left_spine_index_by_lex_index = vec![NO_PACKED_SPINE_INDEX; lex_tokens.len()];
         let mut packed_left_spines = Vec::new();
         let mut lex_indices_with_left_spines = Vec::new();
@@ -148,6 +186,10 @@ impl TinyLlamaWordTokenizer {
             piece_id_to_vocab_id,
             lex_tokens,
             token_to_lex_index,
+            lex_prefixes,
+            prefix_to_lex_index,
+            prefix_token_starts,
+            prefix_token_stops,
             lex_index_to_token_id,
             token_id_to_lex_index,
             left_spine_index_by_lex_index,
@@ -215,12 +257,21 @@ impl TinyLlamaWordTokenizer {
         &self.lex_tokens
     }
 
-    /// The lexicographic index of `token`.
-    pub fn lex_index(&self, token: &str) -> usize {
-        *self
-            .token_to_lex_index
-            .get(token)
-            .expect("token must be present in tokenizer vocabulary")
+    pub fn prefix_count(&self) -> usize {
+        self.lex_prefixes.len()
+    }
+
+    pub fn prefixes(&self) -> &[String] {
+        &self.lex_prefixes
+    }
+
+    /// The lexicographic index of `token`, if it is present in the tokenizer vocabulary.
+    pub fn lex_index(&self, token: &str) -> Option<usize> {
+        self.token_to_lex_index.get(token).copied()
+    }
+
+    pub fn prefix_lex_index(&self, prefix: &str) -> Option<usize> {
+        self.prefix_to_lex_index.get(prefix).copied()
     }
 
     /// The token stored at `lex_index`.
@@ -231,6 +282,21 @@ impl TinyLlamaWordTokenizer {
             .expect("lex index out of range")
     }
 
+    pub fn prefix_at(&self, lex_index: usize) -> &str {
+        self.lex_prefixes
+            .get(lex_index)
+            .map(String::as_str)
+            .expect("prefix lex index out of range")
+    }
+
+    pub fn prefix_token_starts(&self) -> &[usize] {
+        &self.prefix_token_starts
+    }
+
+    pub fn prefix_token_stops(&self) -> &[usize] {
+        &self.prefix_token_stops
+    }
+
     fn token_id_for_lex_index(&self, lex_index: usize) -> Option<u32> {
         self.lex_index_to_token_id.get(lex_index).copied()
     }
@@ -239,26 +305,58 @@ impl TinyLlamaWordTokenizer {
         self.id_to_token.get(id as usize).map(String::as_str)
     }
 
-    fn prefix_range(&self, prefix: &str) -> (usize, usize) {
-        let start = self
-            .lex_tokens
-            .partition_point(|token| token.as_str() < prefix);
-        let stop = start
-            + self.lex_tokens[start..].partition_point(|token| token.starts_with(prefix));
-        (start, stop)
-    }
-
     /// True iff `prefix` is a prefix of some token in lexicographic order.
     pub fn has_token_with_prefix(&self, prefix: &str) -> bool {
-        let (start, stop) = self.prefix_range(prefix);
-        start < stop
+        self.prefix_to_lex_index.contains_key(prefix)
     }
 
     /// The half-open lexicographic token range whose tokens start with `prefix`.
     pub fn lex_range_for_prefix(&self, prefix: &str) -> (usize, usize) {
-        let (start, stop) = self.prefix_range(prefix);
-        assert!(start < stop, "prefix must match at least one token");
+        self.token_lex_range_for_prefix(prefix)
+    }
+
+    pub fn token_lex_range_for_prefix(&self, prefix: &str) -> (usize, usize) {
+        let prefix_lex_index = self
+            .prefix_lex_index(prefix)
+            .expect("prefix must be present in tokenizer prefix set");
+        self.token_lex_range_for_prefix_index(prefix_lex_index)
+    }
+
+    pub fn token_lex_range_for_prefix_index(&self, prefix_lex_index: usize) -> (usize, usize) {
+        let start = *self
+            .prefix_token_starts
+            .get(prefix_lex_index)
+            .expect("prefix lex index out of range");
+        let stop = *self
+            .prefix_token_stops
+            .get(prefix_lex_index)
+            .expect("prefix lex index out of range");
         (start, stop)
+    }
+
+    pub fn count_true_tokens_by_prefix<const PREFIX_COUNT: usize>(
+        &self,
+        token_flags: &[bool],
+    ) -> [u32; PREFIX_COUNT] {
+        assert_eq!(
+            token_flags.len(),
+            self.lex_tokens.len(),
+            "token flag len must match vocab len"
+        );
+        assert_eq!(
+            self.lex_prefixes.len(),
+            PREFIX_COUNT,
+            "prefix count must match PREFIX_COUNT"
+        );
+        let mut token_true_cumsum = vec![0u32; self.lex_tokens.len() + 1];
+        for (idx, is_true) in token_flags.iter().copied().enumerate() {
+            token_true_cumsum[idx + 1] = token_true_cumsum[idx] + u32::from(is_true);
+        }
+        std::array::from_fn(|prefix_lex_index| {
+            let start = self.prefix_token_starts[prefix_lex_index];
+            let stop = self.prefix_token_stops[prefix_lex_index];
+            token_true_cumsum[stop] - token_true_cumsum[start]
+        })
     }
 
     fn right_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
@@ -301,7 +399,7 @@ impl TinyLlamaWordTokenizer {
         first_lex_index: usize,
     ) -> TinyLlamaPreparedFirstAllPairs {
         let first_right_spine = self.right_packed_spine_for_lex_index(first_lex_index);
-        PreparedFirstAllPairs::<TINYLLAMA_PIECE_COUNT>::build(first_right_spine, &self.prepared_merge_rows)
+        PreparedFirstAllPairs::<NUM_TOKENS>::build(first_right_spine, &self.prepared_merge_rows)
     }
 
     #[doc(hidden)]
@@ -326,7 +424,7 @@ impl TinyLlamaWordTokenizer {
             "canonical pair output len must match vocab len"
         );
         out.fill(false);
-        let prepared_first = PreparedFirstAllPairs::<TINYLLAMA_PIECE_COUNT>::build(
+        let prepared_first = PreparedFirstAllPairs::<NUM_TOKENS>::build(
             *first_right_spine,
             &self.prepared_merge_rows,
         );
@@ -334,7 +432,7 @@ impl TinyLlamaWordTokenizer {
             ($left_len:literal) => {
                 for entry in &self.prepared_second_buckets[$left_len] {
                     let is_canonical = prepared_allpairs::is_canonical_allpairs_small::<
-                        TINYLLAMA_PIECE_COUNT,
+                        NUM_TOKENS,
                         $left_len,
                         MAX_PACKED_SPINE_LEN,
                     >(
@@ -351,7 +449,7 @@ impl TinyLlamaWordTokenizer {
             ($right_len:literal, $left_len:literal) => {
                 for entry in &self.prepared_second_buckets[$left_len] {
                     let is_canonical = prepared_allpairs::is_canonical_allpairs_small::<
-                        TINYLLAMA_PIECE_COUNT,
+                        NUM_TOKENS,
                         $left_len,
                         $right_len,
                     >(
@@ -391,8 +489,8 @@ impl TinyLlamaWordTokenizer {
     pub fn canonical_pair_batch_with_packed_right_spine(
         &self,
         first_right_spine: &PackedSpine,
-    ) -> Vec<bool> {
-        let mut out = vec![false; self.lex_tokens.len()];
+    ) -> [bool; NUM_TOKENS] {
+        let mut out = [false; NUM_TOKENS];
         self.canonical_pair_batch_with_packed_right_spine_into(first_right_spine, &mut out);
         out
     }
@@ -400,14 +498,14 @@ impl TinyLlamaWordTokenizer {
     pub fn canonical_followers_for_lex_index(
         &self,
         first_lex_index: usize,
-    ) -> Vec<bool> {
+    ) -> [bool; NUM_TOKENS] {
         let first_token = self.token_at(first_lex_index);
         if let Some(first_right_spine) = self.right_packed_spine(first_token) {
             return self.canonical_pair_batch_with_packed_right_spine(&first_right_spine);
         }
-        let mut out = Vec::with_capacity(self.lex_tokens.len());
-        for second_token in &self.lex_tokens {
-            out.push(self.can_canonically_follow(first_token, second_token));
+        let mut out = [false; NUM_TOKENS];
+        for (second_lex_index, second_token) in self.lex_tokens.iter().enumerate() {
+            out[second_lex_index] = self.can_canonically_follow(first_token, second_token);
         }
         out
     }
@@ -452,14 +550,18 @@ impl TinyLlamaWordTokenizer {
         first_right_spine: &[SpineEntry],
         second_token: &str,
     ) -> Option<bool> {
-        let second_lex_index = self.lex_index(second_token);
+        let second_lex_index = self.lex_index(second_token)?;
         self.canonical_pair_with_right_spine_and_lex_index(first_right_spine, second_lex_index)
     }
 
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
     pub fn can_canonically_follow(&self, a: &str, b: &str) -> bool {
-        let _ = self.lex_index(a);
-        let second_lex_index = self.lex_index(b);
+        let _ = self
+            .lex_index(a)
+            .expect("first token must be present in tokenizer vocabulary");
+        let second_lex_index = self
+            .lex_index(b)
+            .expect("second token must be present in tokenizer vocabulary");
         let Some(first_right_spine) = self.right_packed_spine(a) else {
             return self.merges.canonical_pair(a, b);
         };
@@ -470,8 +572,10 @@ impl TinyLlamaWordTokenizer {
         .unwrap_or_else(|| self.merges.canonical_pair(a, b))
     }
 
-    pub fn canonical_followers(&self, token: &str) -> Vec<bool> {
-        let first_lex_index = self.lex_index(token);
+    pub fn canonical_followers(&self, token: &str) -> [bool; NUM_TOKENS] {
+        let first_lex_index = self
+            .lex_index(token)
+            .expect("token must be present in tokenizer vocabulary");
         self.canonical_followers_for_lex_index(first_lex_index)
     }
 

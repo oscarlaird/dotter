@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
+
 /// Number of symbols in the fixed trie alphabet.
 pub const RADIX: usize = 29;
 
-/// Default trie alphabet: `a`–`z`, space, `^`, `$` (slot order matches this slice).
-pub const DEFAULT_ALPHABET: [u8; RADIX] = *b"abcdefghijklmnopqrstuvwxyz ^$";
+/// Default trie alphabet: `a`–`z`, space, `$`, `^` (slot order matches this slice).
+pub const DEFAULT_ALPHABET: [u8; RADIX] = *b"abcdefghijklmnopqrstuvwxyz $^";
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Symbol {
     A = 0,
@@ -34,8 +36,8 @@ pub enum Symbol {
     Y = 24,
     Z = 25,
     Space = 26,
-    Start = 27,
-    Stop = 28,
+    Stop = 27,
+    Start = 28,
 }
 
 impl Symbol {
@@ -67,8 +69,8 @@ impl Symbol {
         Self::Y,
         Self::Z,
         Self::Space,
-        Self::Start,
         Self::Stop,
+        Self::Start,
     ];
 
     pub const fn from_byte(byte: u8) -> Option<Self> {
@@ -100,8 +102,8 @@ impl Symbol {
             b'y' => Some(Self::Y),
             b'z' => Some(Self::Z),
             b' ' => Some(Self::Space),
-            b'^' => Some(Self::Start),
             b'$' => Some(Self::Stop),
+            b'^' => Some(Self::Start),
             _ => None,
         }
     }
@@ -135,8 +137,8 @@ impl Symbol {
             Self::Y => b'y',
             Self::Z => b'z',
             Self::Space => b' ',
-            Self::Start => b'^',
             Self::Stop => b'$',
+            Self::Start => b'^',
         }
     }
 
@@ -169,8 +171,8 @@ impl Symbol {
             24 => Some(Self::Y),
             25 => Some(Self::Z),
             26 => Some(Self::Space),
-            27 => Some(Self::Start),
-            28 => Some(Self::Stop),
+            27 => Some(Self::Stop),
+            28 => Some(Self::Start),
             _ => None,
         }
     }
