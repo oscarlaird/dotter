@@ -221,7 +221,7 @@ struct XorShift64 {
 impl XorShift64 {
     fn new(seed: u64) -> Self {
         let state = if seed == 0 {
-            0xdead_beef_cafe_babe
+            0xdead_beef
         } else {
             seed
         };

@@ -10,7 +10,6 @@ use std::io;
 use std::path::Path;
 
 #[doc(hidden)]
-#[path = "bpe/prepared_allpairs.rs"]
 pub mod prepared_allpairs;
 
 mod tokenizer_config;
@@ -21,7 +20,7 @@ pub use self::word_tokenizer::{
     TinyLlamaPreparedFirstAllPairs, TinyLlamaWordTokenizer,
 };
 
-/// SentencePiece “space” / word-boundary marker used in TinyLlama vocab and merges.
+/// SentencePiece "space" / word-boundary marker used in TinyLlama vocab and merges.
 pub const SPACESYMBOL: char = '\u{2581}';
 
 type PieceId = u32;

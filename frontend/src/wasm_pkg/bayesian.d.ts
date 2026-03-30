@@ -7,21 +7,18 @@ export class BayesianSession {
     constructor(threshold: number, max_expand_budget: number);
     reset(): void;
     snapshot_json(): string;
-    update_snapshot_likelihoods(snapshot_json: string): string;
+    update_likelihoods(snapshot_json: string): string;
 }
-
-export function add(a: bigint, b: bigint): bigint;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_bayesiansession_free: (a: number, b: number) => void;
-    readonly add: (a: bigint, b: bigint) => bigint;
     readonly bayesiansession_new: (a: number, b: number) => number;
     readonly bayesiansession_reset: (a: number) => void;
     readonly bayesiansession_snapshot_json: (a: number) => [number, number];
-    readonly bayesiansession_update_snapshot_likelihoods: (a: number, b: number, c: number) => [number, number];
+    readonly bayesiansession_update_likelihoods: (a: number, b: number, c: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

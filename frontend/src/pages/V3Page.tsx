@@ -91,12 +91,11 @@ function V3Page() {
 
 			try {
 				const nextSnapshot = withDummyLikelihoods(snapshot, symbol);
-				const updatedSnapshotJson = sessionRef.current?.update_snapshot_likelihoods(
-					JSON.stringify(nextSnapshot),
-				);
-				if (!updatedSnapshotJson) {
+				const session = sessionRef.current;
+				if (!session) {
 					throw new Error('BayesianSession is not initialized');
 				}
+				const updatedSnapshotJson = session.update_likelihoods(JSON.stringify(nextSnapshot));
 				const updatedSnapshot = JSON.parse(updatedSnapshotJson) as TrieSnapshot;
 				setSnapshot(updatedSnapshot);
 				setLastKey(event.key === ' ' ? 'Space' : event.key);
