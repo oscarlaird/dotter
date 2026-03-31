@@ -9,7 +9,7 @@ use super::{
 };
 
 #[derive(Clone, Debug)]
-struct Node {
+pub(crate) struct Node {
     // currently this is about 600B, but my napkin math says it could be as low as 132B
     // a tokentrie heap absolutely needs at least 8B per heap item -> 8B x 20K = 160KB
     // so >1000 nodes are less than a single prediction's heap burden
@@ -18,7 +18,7 @@ struct Node {
     /// Index in `Trie::nodes` of the first child block, ordered like `Symbol::ALL` without the final `Start`.
     /// `None` if no child block has been allocated for this node yet.
     symbol: Symbol,
-    children_start_index: Option<NodeIndex>,
+    pub(crate) children_start_index: Option<NodeIndex>,
     // tokenization
     truncation_possible: [bool; MAX_TOKEN_LENGTH],
     final_token_length: u8,
@@ -43,7 +43,7 @@ struct Node {
     l: f64,     // log likelihood
     l_old: f64, // log likelihood at the posterior likelihood time
     nl: i32,    // likelihood tracking time
-    ul: f64,    // log upper likelihood
+    pub(crate) ul: f64,    // log upper likelihood
     // I don't see how to avoid this, but perhaps we can determine the max number of nonzero entries and use a bitmap
     tl: [f64; MAX_TOKEN_LENGTH], // log token branch likelihood for each ancestor i,  i.e., log "Maximum Truncation Compatible Descendant Likelihood", for each ancestor i
     ntl: i32,                    // token branch likelihood tracking time
@@ -56,7 +56,7 @@ struct Node {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Trie {
-    nodes: Vec<Node>,
+    pub(crate) nodes: Vec<Node>,
     pub(crate) prediction_registry: PredictionRegistry,
     pub(crate) tokenizer: TinyLlamaWordTokenizer,
     root: NodeIndex,
@@ -242,7 +242,7 @@ impl Trie {
         }
     }
 
-    fn child_index(&self, node_index: NodeIndex, symbol: Symbol) -> NodeIndex {
+    pub(crate) fn child_index(&self, node_index: NodeIndex, symbol: Symbol) -> NodeIndex {
         let current_node = &self.nodes[node_index];
         let base = current_node
             .children_start_index
@@ -288,24 +288,6 @@ impl Trie {
         self.root
     }
 
-    pub(crate) fn traverse_and_count_ul(
-        &self,
-        mut node_index: NodeIndex,
-        suffix_chars: &[Symbol],
-        mut ul: f64,
-    ) -> (Option<NodeIndex>, f64) {
-        // traverses from node_index to the target node+suffix
-        // while accumulating the .ul value of each node (not including the target node)
-        for symbol in suffix_chars {
-            ul += self.nodes[node_index].ul;
-            if self.nodes[node_index].children_start_index.is_none() {
-                return (None, ul); // could not reach
-            } else {
-                node_index = self.child_index(node_index, *symbol);
-            }
-        }
-        return (Some(node_index), ul);
-    }
 
     pub(crate) fn set_tl_array(&self,
         node_index: NodeIndex,

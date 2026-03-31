@@ -185,6 +185,10 @@ impl PredictionRegistry {
         }
     }
 
+    pub(crate) fn fullorder_root_prediction_index(&self) -> Option<PredictionIndex> {
+        self.index_for_order(&PredictionOrder::FullOrder(None, "".to_string()))
+    }
+
     pub(crate) fn alloc(&mut self, prediction: Prediction) -> PredictionIndex {
         let index = self.predictions.len();
         self.by_order.insert(prediction.order.clone(), index);

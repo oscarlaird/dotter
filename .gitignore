@@ -81,3 +81,4 @@ poetry.lock
 # Local generated project outputs
 demos/lean_python_demo/build/
 demos/rust_aeneas_demo/lean_verify/generated/
+rust_out
