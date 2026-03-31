@@ -42,7 +42,12 @@ fn encode_words_cli(tokenizer_path: &str, words: &[String]) -> ExitCode {
     let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json(tokenizer_path);
 
     for word in words {
-        let encoded = tokenizer.tokenize_word_with_lex_indices(word);
+        let text = if word.starts_with('▁') {
+            word.clone()
+        } else {
+            format!("▁{word}")
+        };
+        let encoded = tokenizer.tokenize_string_with_lex_indices(&text);
         let pieces: Vec<&str> = encoded.iter().map(|(piece, _)| piece.as_str()).collect();
         let lex_indices: Vec<usize> = encoded.iter().map(|(_, idx)| *idx).collect();
         println!("{word:?}");
@@ -220,11 +225,7 @@ struct XorShift64 {
 
 impl XorShift64 {
     fn new(seed: u64) -> Self {
-        let state = if seed == 0 {
-            0xdead_beef
-        } else {
-            seed
-        };
+        let state = if seed == 0 { 0xdead_beef } else { seed };
         Self { state }
     }
 

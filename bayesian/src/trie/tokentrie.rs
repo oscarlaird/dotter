@@ -1,19 +1,13 @@
 use std::collections::BinaryHeap;
 
-
 const INVALID_TOKEN_LEXINDEX: TokenLexIndex = usize::MAX;
 const INVALID_CHAR_NODE_INDEX: NodeIndex = usize::MAX;
 
 use crate::bpe::NUM_TOKENS;
 
-use super::{
-    Trie,
-    NodeIndex,
-    PredictionIndex,
-    TokenLexIndex,
-    PrefixLexIndex,
-};
+use super::{NodeIndex, PredictionIndex, PrefixLexIndex, TokenLexIndex, Trie};
 
+#[derive(Clone, Copy, Debug)]
 struct QueueItem {
     priority: f64,
     tp: f64,
@@ -42,7 +36,9 @@ impl PartialOrd for QueueItem {
 impl Ord for QueueItem {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse to get min-heap behavior if smaller priorities mean higher priority
-        other.priority.partial_cmp(&self.priority)
+        other
+            .priority
+            .partial_cmp(&self.priority)
             .unwrap_or(Ordering::Equal)
     }
 }
@@ -78,12 +74,14 @@ impl Queue {
         // else, return it
         let pred_registry = &char_trie.prediction_registry;
         loop {
-            let next_item = self.queue.peek().expect("Queue should never be empty");
+            let next_item = self
+                .queue
+                .peek()
+                .copied()
+                .expect("Queue should never be empty");
             let this_pred_idx = next_item
                 .parent_prediction_index
-                .and_then(|parent_prediction_index| {
-                    pred_registry.get(parent_prediction_index)
-                })
+                .and_then(|parent_prediction_index| pred_registry.get(parent_prediction_index))
                 .and_then(|prediction| prediction.child_prediction_index(next_item.token_lexindex));
             // if no prediction has been made for this token sequence, return it
             if this_pred_idx.is_none() {
@@ -91,14 +89,17 @@ impl Queue {
             }
             // otherwise, visit it
             let this_pred = pred_registry.get(this_pred_idx.unwrap()).unwrap();
-            let cond_prior = this_pred.follower_probs;
-            let prior = cond_prior.into_iter().map(|p| next_item.tp + p).collect::<Box<[f64]>>();
-            let likelihood_ub = [f64::NAN; NUM_TOKENS];
+            let cond_prior = &this_pred.follower_probs;
+            let _prior = cond_prior
+                .iter()
+                .map(|&p| next_item.tp + p)
+                .collect::<Box<[f64]>>();
+            let _likelihood_ub = [f64::NAN; NUM_TOKENS];
             // populate the likelihood upper bound
-            let tl = next_item.tl;
-            
-
-
+            let _tl = Box::new([f64::NAN; NUM_TOKENS]);
+            todo!(
+                "tokentrie needs source symbol sequence or source node entrypoint for set_tl_array"
+            );
         }
     }
 }

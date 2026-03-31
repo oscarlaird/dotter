@@ -72,7 +72,11 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
         }
     }
 
-    pub fn rebuild_in_place(&mut self, first_right_spine: PackedSpine, merge_rows: &MergeRows) {
+    pub fn rebuild_in_place(
+        &mut self,
+        first_token_right_spine: PackedSpine,
+        merge_rows: &MergeRows,
+    ) {
         assert!(
             NUM_TOKENS <= MAX_PREPARED_DENSE_TOKEN_COUNT,
             "prepared dense table exceeds the maximum supported piece-id width"
@@ -84,13 +88,13 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
         self.row_partner_bitmap.fill(0);
         self.right_piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
 
-        let right_len = first_right_spine.as_slice().len();
+        let right_len = first_token_right_spine.as_slice().len();
         let needed = NUM_TOKENS * right_len;
         if self.dense_matrix.len() < needed {
             self.dense_matrix.resize(needed, 0);
         }
 
-        for (spine_idx, spine_entry) in first_right_spine.as_slice().iter().enumerate() {
+        for (spine_idx, spine_entry) in first_token_right_spine.as_slice().iter().enumerate() {
             let row = &merge_rows.rows[spine_entry.id as usize];
             let r_next = if spine_idx + 1 < right_len {
                 spine_entry.priority_score
@@ -114,16 +118,16 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
             self.right_piece_formed_priority_score[0] = u16::MAX;
             for idx in 1..right_len {
                 self.right_piece_formed_priority_score[idx] =
-                    first_right_spine.as_slice()[idx - 1].priority_score;
+                    first_token_right_spine.as_slice()[idx - 1].priority_score;
             }
             self.right_piece_formed_priority_score[right_len] = 0;
         }
         self.right_len = right_len as u8;
     }
 
-    pub fn build(first_right_spine: PackedSpine, merge_rows: &MergeRows) -> Self {
+    pub fn build(first_token_right_spine: PackedSpine, merge_rows: &MergeRows) -> Self {
         let mut out = Self::new_reusable();
-        out.rebuild_in_place(first_right_spine, merge_rows);
+        out.rebuild_in_place(first_token_right_spine, merge_rows);
         out
     }
 

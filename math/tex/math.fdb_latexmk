@@ -1,17 +1,17 @@
 # Fdb version 4
-["bibtex math"] 1774021004.56111 "math.aux" "math.bbl" "math" 1774021149.76381 0
+["bibtex math"] 1774981409.84397 "math.aux" "math.bbl" "math" 1774981550.54053 0
   "./references.bib" 1773352007.23395 806 0d16c346247aef3da6b08f3a9d293da5 ""
   "/usr/share/texlive/texmf-dist/bibtex/bst/base/plain.bst" 1292289607 20613 bd3fbfa9f64872b81ac57a0dd2ed855f ""
-  "math.aux" 1774021149.67173 23678 065d38fd1eb0a6c12a8b7c5d840576ff "pdflatex"
+  "math.aux" 1774981550.44665 25440 e815245feece2f09da10fed5fb69c55b "pdflatex"
   (generated)
   "math.bbl"
   "math.blg"
   (rewritten before read)
-["pdflatex"] 1774021148.83793 "/home/oscar/dotter/math/math.tex" "math.pdf" "math" 1774021149.76395 0
+["pdflatex"] 1774981549.63241 "/home/oscar/dotter/math/tex/math.tex" "math.pdf" "math" 1774981550.54072 0
   "/etc/texmf/web2c/texmf.cnf" 1773167709.0501 475 c0e671620eb5563b2130f56340a5fde8 ""
   "/home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm0800.600pk" 1773428688.11601 9268 ca57107ce06dd06441534164fda3e9e1 ""
   "/home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1000.600pk" 1773241895.18481 11524 17d5711974e3802cf9274494796d7cb0 ""
-  "/home/oscar/dotter/math/math.tex" 1774017370.87357 1840 551f38dae84e07db9ca43b5c58ff9f53 ""
+  "/home/oscar/dotter/math/tex/math.tex" 1774480880.19946 1861 ca1199e8c9927f0e14cf9843392b75f5 ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/tcrm0800.tfm" 1136768653 1536 05df9db6aeccc4eea94fec15c9024f79 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/jknappen/ec/tcrm1000.tfm" 1136768653 1536 e07581a4bb3136ece9eeb4c3ffab8233 ""
@@ -252,6 +252,9 @@
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1773167713.07209 165012 f177baa1c39a3ebd62c3096a43521a0d ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1773167733 6831240 156ceab5c70eb20efdd8c38aa585bb94 ""
   "chapters/architecture.tex" 1773428834.6288 9564 99faa818a09f015f9cf5f3ca664bfebc ""
+  "chapters/bpe-mechanics.tex" 1774480875.22155 16809 f91a83b4c575046e9ceb53bc0e887a40 ""
+  "chapters/bpe-spines.tex" 1774549003.83843 9471 8adf1d0e555a2faf4ef67f64ed8ec6ee ""
+  "chapters/bpe.tex" 1774480786.36599 539 36c2244be817725472a6c673196c507f ""
   "chapters/detect-response.tex" 1773416145.16161 1500 0a0c50420a8ba1106ce900e7a0f27352 ""
   "chapters/determine-most-likely-break-nodes.tex" 1773414774.04358 5868 16e6fbab2c81d2274a368a97509e69c3 ""
   "chapters/determine-visible-nodes.tex" 1773367581.44042 3234 9d42fbf91eb673eed3e0a7de21a6275e ""
@@ -261,12 +264,12 @@
   "chapters/render-stimulus.tex" 1773415314.93548 804 7a998e76219b3cb8bd69a13b5de5e80c ""
   "chapters/render-trie.tex" 1773416232.89877 998 09ccfa3320bdee68db6c80a4583aff25 ""
   "chapters/stimulus.tex" 1773357458.34188 16778 5cde516b7f6da6b7ad42294a472a8c42 ""
-  "chapters/trie.tex" 1774021148.75965 115829 396489ee878ed12fe7cd6925eada37e3 ""
-  "math.aux" 1774021149.67173 23678 065d38fd1eb0a6c12a8b7c5d840576ff "pdflatex"
-  "math.bbl" 1774021004.57084 564 b2b49c9aeb9feda464ae4b9be1877ac0 "bibtex math"
-  "math.out" 1774021149.67419 8319 8251b1e3831bf946b8b058889a6c47cc "pdflatex"
-  "math.tex" 1774017370.87357 1840 551f38dae84e07db9ca43b5c58ff9f53 ""
-  "math.toc" 1774021149.67546 4715 2d8a1e5edfbf28b4d99ee1aa58325344 "pdflatex"
+  "chapters/trie.tex" 1774981549.54364 106872 2f8bcedf64274cb3758558abc98aee89 ""
+  "math.aux" 1774981550.44665 25440 e815245feece2f09da10fed5fb69c55b "pdflatex"
+  "math.bbl" 1774981409.85429 564 b2b49c9aeb9feda464ae4b9be1877ac0 "bibtex math"
+  "math.out" 1774981550.44965 8815 a46e07715df8d5df77cbd834a62dbd46 "pdflatex"
+  "math.tex" 1774480880.19946 1861 ca1199e8c9927f0e14cf9843392b75f5 ""
+  "math.toc" 1774981550.45065 5413 572a989fe63b18a4f19c803ff7588eb5 "pdflatex"
   (generated)
   "math.aux"
   "math.log"

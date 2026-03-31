@@ -36,11 +36,7 @@ impl TrieSnapshot {
         }
     }
 
-    pub(crate) fn descend(
-        &self,
-        walker: &SnapshotWalker,
-        target_symbol: Symbol,
-    ) -> SnapshotWalker {
+    pub(crate) fn descend(&self, walker: &SnapshotWalker, target_symbol: Symbol) -> SnapshotWalker {
         let mut walker = walker.clone();
         let Some(node_index) = walker.node else {
             return walker;

@@ -2296,6 +2296,209 @@ Knowing either argument does not help very much: the conditional entropy is stil
 However, since this predicate is only required on the server and not in the browser, we can afford a 600MB lookup table,
 since the language model will be several gigabytes anyway.
 
+\subsubsection{An Upper-Bound Problem for Possible Truncations}
+\label{sec:upper-bound-truncation-possible}
+In the implementation, each node stores a finite boolean array
+\texttt{truncation\_possible}, indexed by candidate token-ancestor depths.
+For a fixed node, the number of true entries measures how many different
+token-ancestor choices remain compatible with the current string prefix.
+This quantity is important because it controls the storage cost of several
+per-node arrays.
+
+We therefore seek an upper bound on
+\[
+    \max_x \sum_i \mathbf{1}\bigl[\phi_i(x)\bigr],
+\]
+where $\phi_i(x)$ denotes the event that the $i$th token-ancestor candidate
+for $x$ is possible. The naive upper bound obtained from $\xi$ alone is too
+weak, because it allows each suffix position to choose an unrelated witness
+token independently.
+
+To make the dependence on the string explicit, let $T \in V$ be a token and
+let $p \in V_\leq$ be a vocabulary prefix that does not begin with the
+tokenizer's distinguished word-start marker, and define
+\[
+    x = T + p.
+\]
+Equivalently, among all vocabulary prefixes we only consider those that do not
+introduce a fresh word boundary inside $x$.
+We then consider suffix boundaries $j$ in $x$, and write
+\[
+    p' = x[j:].
+\]
+In the loosest version of the bound, one counts such a $j$ whenever there
+exists an $i < j$ such that
+\[
+    \tau = x[i:j] \in V
+    \qquad\text{and}\qquad
+    \xi(\tau, p').
+\]
+This is indeed an upper bound, but it is weak because different values of $j$
+may be certified by completely unrelated token witnesses $\tau$.
+
+The goal is therefore to strengthen the legality condition on $j$ by forcing
+the witness token to arise from a coherent tokenization of the substring ending
+at $j$.
+
+\paragraph{Token-suffix notation.}
+We define the token-suffix set
+\[
+    V_{\mathrm{suffix}}
+    =
+    \{\, s \mid \exists \tau \in V,\; s \leq_{\mathrm{suffix}} \tau \,\},
+\]
+that is, the set of all suffixes of strings in the vocabulary.
+
+\begin{definition}[Canonical token-suffix pair predicate]
+    We define
+    \[
+        \zeta : V_{\mathrm{suffix}} \times \boldsymbol{\Lambda} \to \mathbb{B}
+    \]
+    by
+    \[
+        \zeta(s, \tau)
+        \iff
+        \exists \sigma \in \boldsymbol{\Lambda},
+        \;
+        s \leq_{\mathrm{suffix}} \sigma
+        \land
+        \psi(\sigma, \tau).
+    \]
+\end{definition}
+
+Thus $\zeta(s,\tau)$ records whether the token $\tau$ can be canonically
+preceded by some token whose suffix is $s$.
+
+\paragraph{Stricter legality condition.}
+Fix $x = T + p$ and a boundary $j$, and let $p' = x[j:]$.
+Rather than allowing an arbitrary token witness $\tau = x[i:j]$, we impose the
+following stronger condition:
+
+\begin{quote}
+There exists an index $h \leq j$ such that if
+\[
+    \mathbf{m} = T(x[h:j]),
+\]
+then all of the following hold:
+\begin{align*}
+    \mathbf{m}[-1] &= \tau, \\
+    \xi(\tau, p') &\text{ holds}, \\
+    \zeta(x[:h], \mathbf{m}[0]) &\text{ holds.}
+\end{align*}
+\end{quote}
+
+Here one chooses $h$ so that the middle tokenization $T(x[h:j])$ is as long as
+possible, i.e. $h$ is the start of the first complete token lying entirely
+inside $x[:j]$. The string $x[:h]$ is then interpreted only through its final
+token suffix, which is exactly the domain captured by $V_{\mathrm{suffix}}$ and
+the predicate $\zeta$.
+
+\paragraph{Concrete tokenization example.}
+The witness patterns above are easy to see in the \texttt{tikzpicture} family.
+(This is for the tiny-llama tokenizer, which agrees exactly with 
+"https://tiktokenizer.vercel.app/?model=codellama\%2FCodeLlama-7b-hf".)
+Under the filtered TinyLlama tokenizer, the relevant exact string tokenizations
+are
+\begin{align*}
+    T(\texttt{tikzpicturoid}) &= [\texttt{tikz}, \texttt{p}, \texttt{ict}, \texttt{u}, \texttt{roid}], \\
+    T(\texttt{tikzpictur}) &= [\texttt{tikz}, \texttt{p}, \texttt{ict}, \texttt{ur}], \\
+    T(\texttt{tikzpicturn}) &= [\texttt{tikz}, \texttt{pic}, \texttt{turn}], \\
+    T(\texttt{tikzpictures}) &= [\texttt{tikz}, \texttt{p}, \texttt{ictures}], \\
+    T(\texttt{tikzpicture}) &= [\texttt{tikzpicture}], \\
+    T(\texttt{atikzpicture}) &= [\texttt{at}, \texttt{ikz}, \texttt{picture}].
+\end{align*}
+These provide concrete witnesses for why a prefix such as
+\texttt{tikzpictur} can support many different legal suffix boundaries $j$:
+the right-hand witness token may be \texttt{roid}, \texttt{ur}, \texttt{turn},
+\texttt{ictures}, or \texttt{tikzpicture}, while the left-hand side can also
+contribute a nontrivial suffix witness, as in the tokenization of
+\texttt{atikzpicture}.
+
+\paragraph{Resulting search procedure.}
+The proposed upper-bound algorithm is therefore:
+
+\begin{algorithm}[H]
+\caption{A Stricter Upper Bound on the Number of Possible Truncations}
+\begin{algorithmic}[1]
+\State $best \gets 0$
+\For{$T \in V$}
+    \For{$p \in V_\leq$ with $p$ not beginning with the word-start marker}
+        \State $x \gets T + p$
+        \State $count \gets 0$
+        \For{boundaries $j$ of $x$}
+            \State $p' \gets x[j:]$
+            \If{$p' \notin V_\leq$}
+                \State \textbf{continue}
+            \EndIf
+            \State $legal \gets \mathrm{false}$
+            \For{indices $h \leq j$}
+                \State $\mathbf{m} \gets T(x[h:j])$
+                \If{$\mathbf{m}$ is empty}
+                    \State \textbf{continue}
+                \EndIf
+                \State $\tau \gets \mathbf{m}[-1]$
+                \If{$\xi(\tau, p') \land \zeta(x[:h], \mathbf{m}[0])$}
+                    \State $legal \gets \mathrm{true}$
+                    \State \textbf{break}
+                \EndIf
+            \EndFor
+            \If{$legal$}
+                \State $count \gets count + 1$
+            \EndIf
+        \EndFor
+        \State $best \gets \max(best, count)$
+    \EndFor
+\EndFor
+\State \Return $best$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Status.}
+This stronger procedure is intended to remove the obvious weakness of the
+independent-$j$ upper bound by forcing each legal witness to arise from a real
+tokenization bridge inside $x$. At present, however, I do not have a proof
+that this condition is sufficient to characterize the true maximum number of
+possible truncations, nor a proof that it is the tightest efficiently
+computable upper bound.
+
+Running this algorithm on the filtered tiny-llama tokenizer gives the following histograms:
+
+Yes. Rewritten as percentages:
+
+For max$_T$ count$(T, p)$ over prefixes $p$ ($N_{\text{prefix}} = 12,\!554$):
+
+\begin{itemize}
+    \item 1 $\to$ 6 / 12,554 = \textbf{0.048}\%
+    \item 2 $\to$ 2,397 / 12,554 = \textbf{19.092}\%
+    \item 3 $\to$ 7,371 / 12,554 = \textbf{58.716}\%
+    \item 4 $\to$ 2,553 / 12,554 = \textbf{20.336}\%
+    \item 5 $\to$ 219 / 12,554 = \textbf{1.745}\%
+    \item 6 $\to$ 8 / 12,554 = \textbf{0.064}\%
+\end{itemize}
+
+For all scanned $(T, p)$ pairs ($N_{\text{pairs}} = 216,\!368,\!190$):
+
+\begin{itemize}
+    \item 0 $\to$ 2,487 / 216,368,190 = \textbf{0.001}\%
+    \item 1 $\to$ 13,871,959 / 216,368,190 = \textbf{6.411}\%
+    \item 2 $\to$ 116,901,205 / 216,368,190 = \textbf{54.029}\%
+    \item 3 $\to$ 73,838,841 / 216,368,190 = \textbf{34.126}\%
+    \item 4 $\to$ 11,420,636 / 216,368,190 = \textbf{5.278}\%
+    \item 5 $\to$ 332,311 / 216,368,190 = \textbf{0.154}\%
+    \item 6 $\to$ 751 / 216,368,190 = \textbf{0.00035}\%
+\end{itemize}
+
+I believe that every instance of six possible truncations is not actually realizable
+since they would require inconsistent preceding characters, but I do not have a computationally
+feasible way to prove this. Remember that the previous algorithm was only an upper bound.
+However, the witness provided at the start of this subsection is a concrete example
+of five possible truncations. 
+The utility of this is that it lets us see that an array of [f32; 6] and a bitmap of possible truncations
+will suffice here.
+
+
+
+
 \section{The Complete Algorithms}
 \label{sec:complete-algorithms}
 Here we combine the preceding sections

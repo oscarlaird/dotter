@@ -180,4 +180,16 @@ impl Symbol {
     pub const fn to_slot(self) -> u8 {
         self as u8
     }
+
+    pub fn slice_to_string(symbols: &[Self]) -> String {
+        let mut out = String::with_capacity(symbols.len());
+        for &symbol in symbols {
+            out.push(symbol.to_byte() as char);
+        }
+        out
+    }
+
+    pub fn string_to_vec(text: &str) -> Vec<Self> {
+        text.bytes().filter_map(Self::from_byte).collect()
+    }
 }

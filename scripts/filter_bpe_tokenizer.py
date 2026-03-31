@@ -45,6 +45,10 @@ def normalize_for_match(token: str, space_symbol: str | None) -> str:
     return token.replace(space_symbol, " ")
 
 
+def count_spaces_for_filter(token: str, space_symbol: str | None) -> int:
+    return normalize_for_match(token, space_symbol).count(" ")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -75,6 +79,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Optional source token symbol to treat as a literal space for regex "
             "matching, e.g. ▁ for SentencePiece-style tokenizers."
+        ),
+    )
+    parser.add_argument(
+        "--max-spaces",
+        type=int,
+        default=None,
+        help=(
+            "Optional maximum number of spaces allowed in any retained token "
+            "surface after space-symbol normalization."
         ),
     )
     parser.add_argument(
@@ -147,12 +160,14 @@ def filter_tokenizer(
     source: SourceTokenizer,
     token_pattern: str,
     space_symbol: str | None,
+    max_spaces: int | None,
 ) -> FilteredTokenizer:
     matcher = re.compile(token_pattern)
     legal_tokens = {
         token
         for token in source.vocab
         if matcher.fullmatch(normalize_for_match(token, space_symbol)) is not None
+        and (max_spaces is None or count_spaces_for_filter(token, space_symbol) <= max_spaces)
     }
 
     reachable_tokens = {
@@ -250,10 +265,12 @@ def write_summary_json(
     filtered: FilteredTokenizer,
     token_pattern: str,
     space_symbol: str | None,
+    max_spaces: int | None,
 ) -> None:
     summary = {
         "token_pattern": token_pattern,
         "space_symbol": space_symbol,
+        "max_spaces": max_spaces,
         "source_vocab_size": len(source.vocab),
         "source_merge_count": len(source.merges),
         "pattern_matched_vocab_size": filtered.kept_token_count,
@@ -270,8 +287,16 @@ def write_summary_json(
 
 def main() -> None:
     args = parse_args()
+    if args.max_spaces is not None and args.max_spaces < 0:
+        raise SystemExit("--max-spaces must be nonnegative")
+
     source = load_tokenizer_source(args)
-    filtered = filter_tokenizer(source, args.token_pattern, args.space_symbol)
+    filtered = filter_tokenizer(
+        source,
+        args.token_pattern,
+        args.space_symbol,
+        args.max_spaces,
+    )
     if not filtered.vocab:
         raise SystemExit("filter removed every vocab token")
 
@@ -295,6 +320,7 @@ def main() -> None:
             filtered=filtered,
             token_pattern=args.token_pattern,
             space_symbol=args.space_symbol,
+            max_spaces=args.max_spaces,
         )
 
     print(f"source_vocab_size={len(source.vocab)}")

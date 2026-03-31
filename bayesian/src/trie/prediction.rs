@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
 
-use super::{logaddexp, PredictionIndex, TokenLexIndex};
+use super::{PredictionIndex, TokenLexIndex, logaddexp};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PredictionOrder {
@@ -101,7 +101,8 @@ impl Prediction {
             // with the stop logit so the stored values are proper log-probabilities.
             let follower_logits =
                 follower_logits.expect("non-zero-order predictions must provide follower_logits");
-            let stop_logit = stop_logit.expect("non-zero-order predictions must provide stop_logit");
+            let stop_logit =
+                stop_logit.expect("non-zero-order predictions must provide stop_logit");
             assert_eq!(
                 follower_logits.len(),
                 NUM_TOKENS,
@@ -168,9 +169,11 @@ impl Prediction {
         &self,
         token_lexindex: TokenLexIndex,
     ) -> Option<PredictionIndex> {
-        self.children.iter().find_map(|&(child_token_lexindex, prediction_index)| {
-            (child_token_lexindex == token_lexindex).then_some(prediction_index)
-        })
+        self.children
+            .iter()
+            .find_map(|&(child_token_lexindex, prediction_index)| {
+                (child_token_lexindex == token_lexindex).then_some(prediction_index)
+            })
     }
 }
 

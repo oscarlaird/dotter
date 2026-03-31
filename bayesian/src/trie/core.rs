@@ -4,8 +4,8 @@ use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
 use crate::symbol::Symbol;
 
 use super::{
-    logaddexp, NodeIndex, Prediction, PredictionIndex, PredictionOrder, PredictionRegistry, TokenLexIndex,
-    SnapshotWalker, TrieSnapshot, TrieSnapshotNode, MAX_TOKEN_LENGTH,
+    MAX_TOKEN_LENGTH, NodeIndex, Prediction, PredictionIndex, PredictionOrder, PredictionRegistry,
+    SnapshotWalker, TrieSnapshot, TrieSnapshotNode, logaddexp,
 };
 
 #[derive(Clone, Debug)]
@@ -22,21 +22,25 @@ struct Node {
     prediction: Option<PredictionIndex>,
     prediction_last_change: i32,
     new_token_lexindex: usize,
+    // can probably remove this by having a global map of prefix+char->prefix
+    // and making the walker responsible for tracking this
     new_prefix_lexindex: [usize; MAX_TOKEN_LENGTH],
     // prior
-    p: f64,                      // log string branch prior
+    p: f64, // log string branch prior
     p_last_change: i32,
-    p_old: f64,                  // log string branch prior at the posterior prior time
-    mp: i32,                     // prior tracking time
+    p_old: f64, // log string branch prior at the posterior prior time
+    mp: i32,    // prior tracking time
+    // could probably re-lookup the fps on prior updates and not store this
     fp: [f64; MAX_TOKEN_LENGTH], // token fans for each ancestor i
     tp: f64,                     // log token branch prior
     tp_last_change: i32,
-    mtp: i32,                    // token branch prior tracking time
+    mtp: i32, // token branch prior tracking time
     // likelihood
-    l: f64,                     // log likelihood
-    l_old: f64,                 // log likelihood at the posterior likelihood time
-    nl: i32,                    // likelihood tracking time
-    ul: f64,                    // log upper likelihood
+    l: f64,     // log likelihood
+    l_old: f64, // log likelihood at the posterior likelihood time
+    nl: i32,    // likelihood tracking time
+    ul: f64,    // log upper likelihood
+    // I don't see how to avoid this, but perhaps we can determine the max number of nonzero entries and use a bitmap
     tl: [f64; MAX_TOKEN_LENGTH], // log token branch likelihood for each ancestor i,  i.e., log "Maximum Truncation Compatible Descendant Likelihood", for each ancestor i
     ntl: i32,                    // token branch likelihood tracking time
     cum_likelihood_frontier: bool,
@@ -68,11 +72,62 @@ struct Walker {
     a_prediction_last_change: [i32; MAX_TOKEN_LENGTH],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DescentType {
-    LikelihoodUpdate,
-    PriorUpdate,
-    Expansion,
+#[derive(Debug)]
+enum RecalcMode<'a> {
+    LikelihoodUpdate {
+        snapshot: &'a TrieSnapshot,
+        snapshot_walker: SnapshotWalker,
+    },
+    PriorUpdate {
+        new_prediction_symbol_seq: &'a [Symbol],
+        new_prediction_index: PredictionIndex,
+        comparable_to_pred_node: bool,
+    },
+    Expansion {
+        threshold: f64,
+    },
+}
+
+impl<'a> RecalcMode<'a> {
+    fn is_update(&self) -> bool {
+        matches!(
+            self,
+            Self::LikelihoodUpdate { .. } | Self::PriorUpdate { .. }
+        )
+    }
+
+    fn child(&self, walker: &Walker, symbol: Symbol) -> Self {
+        match self {
+            Self::LikelihoodUpdate {
+                snapshot,
+                snapshot_walker,
+            } => Self::LikelihoodUpdate {
+                snapshot,
+                snapshot_walker: snapshot.descend(snapshot_walker, symbol),
+            },
+            Self::PriorUpdate {
+                new_prediction_symbol_seq,
+                new_prediction_index,
+                comparable_to_pred_node,
+            } => {
+                let child_comparable_to_pred_node =
+                    if walker.depth < new_prediction_symbol_seq.len() as u32 {
+                        *comparable_to_pred_node
+                            && new_prediction_symbol_seq[walker.depth as usize] == symbol
+                    } else {
+                        *comparable_to_pred_node
+                    };
+                Self::PriorUpdate {
+                    new_prediction_symbol_seq,
+                    new_prediction_index: *new_prediction_index,
+                    comparable_to_pred_node: child_comparable_to_pred_node,
+                }
+            }
+            Self::Expansion { threshold } => Self::Expansion {
+                threshold: *threshold,
+            },
+        }
+    }
 }
 
 impl Node {
@@ -183,15 +238,16 @@ impl Trie {
         }
     }
 
+    fn child_index(&self, node_index: NodeIndex, symbol: Symbol) -> NodeIndex {
+        let current_node = &self.nodes[node_index];
+        let base = current_node
+            .children_start_index
+            .expect("Trie::child_index should be called on a node with children");
+        base + symbol.to_slot() as usize
+    }
     fn descend(&self, walker: &Walker, symbol: Symbol) -> Walker {
         let mut walker = walker.clone();
-        let child_index = {
-            let current_node = &self.nodes[walker.node];
-            let base = current_node
-                .children_start_index
-                .expect("Trie::descend called on a node with no initialized children");
-            base + symbol.to_slot() as usize
-        };
+        let child_index = self.child_index(walker.node, symbol);
 
         for i in (1..MAX_TOKEN_LENGTH).rev() {
             walker.a_symbol[i] = walker.a_symbol[i - 1];
@@ -224,6 +280,106 @@ impl Trie {
         (0.01_f64).ln()
     }
 
+    pub(crate) fn set_tl_array(&self, source_symbol_seq: &[Symbol], tl_array: &mut [f64]) {
+        let mut token_prefix = Vec::new();
+        self.set_tl_array_inner(
+            source_symbol_seq,
+            &mut token_prefix,
+            tl_array,
+            self.root,
+            0,
+            0.0,
+        );
+    }
+
+    fn set_tl_array_inner(
+        &self,
+        source_symbol_seq: &[Symbol],
+        token_prefix: &mut Vec<Symbol>,
+        tl_array: &mut [f64],
+        node_index: NodeIndex,
+        depth: usize,
+        accumed_ul: f64,
+    ) {
+        // N.B. we do this in a separate fn from recalc_to_frontier
+        // because we want it to be a read-only operation
+        let node = &self.nodes[node_index];
+        let l = node.l + accumed_ul;
+        let mtcdl = node.tl[0] + accumed_ul;
+        let clf = node.cum_likelihood_frontier;
+        let reached_source = depth >= source_symbol_seq.len();
+
+        if !reached_source {
+            if clf {
+                tl_array.fill(l);
+                return;
+            }
+
+            if node.children_start_index.is_none() {
+                panic!(
+                    "Trie::set_tl_array encountered a node with no children before reaching the likelihood frontier!"
+                );
+            }
+
+            let next_symbol = source_symbol_seq[depth];
+            let child_index = self.child_index(node_index, next_symbol);
+            self.set_tl_array_inner(
+                source_symbol_seq,
+                token_prefix,
+                tl_array,
+                child_index,
+                depth + 1,
+                accumed_ul + node.ul,
+            );
+        } else {
+            let prefix = Symbol::slice_to_string(token_prefix);
+
+            if clf {
+                if !self.tokenizer.has_token_with_prefix(&prefix) {
+                    panic!(
+                        "Trie::set_tl_array reached a node that was not a prefix of any token wrt the source!"
+                    )
+                }
+                let range = self.tokenizer.token_lex_range_for_prefix(&prefix);
+                let subslice = &mut tl_array[range.0..range.1];
+                subslice.fill(l);
+                return;
+            }
+
+            // Set the MTCDL for the exact token represented by the current suffix after the source.
+            if let Some(as_token_lexindex) = self.tokenizer.lex_index(&prefix) {
+                tl_array[as_token_lexindex] = mtcdl;
+            }
+
+            if !self.tokenizer.has_token_with_strict_prefix(&prefix) {
+                return;
+            }
+
+            if node.children_start_index.is_none() {
+                panic!(
+                    "Trie::set_tl_array encountered a node with no children after reaching the likelihood frontier!"
+                );
+            }
+
+            for symbol in Symbol::ALL {
+                if symbol == Symbol::Start {
+                    continue;
+                }
+                let child_index = self.child_index(node_index, symbol);
+                token_prefix.push(symbol);
+                self.set_tl_array_inner(
+                    source_symbol_seq,
+                    token_prefix,
+                    tl_array,
+                    child_index,
+                    depth + 1,
+                    accumed_ul + node.ul,
+                );
+                token_prefix.pop();
+            }
+        }
+    }
+
     // recalc (expansion and updates)
     // Each of the three kinds corresponds to a public API
     // - apply likelihood updates
@@ -233,25 +389,15 @@ impl Trie {
     fn recalc_to_frontier_and_back(
         &mut self,
         mut walker: Walker,
-        descent_type: DescentType,
+        mode: RecalcMode<'_>,
         remaining_visit_budget: &mut i32,
-        // likelihood update
-        likelihood_snapshot: Option<&TrieSnapshot>,
-        snapshot_walker: Option<SnapshotWalker>,
-        // prior update
-        new_prediction_symbol_seq: Option<&[Symbol]>,
-        new_prediction_index: Option<PredictionIndex>,
-        comparable_to_pred_node: bool,
-        // expansion
-        threshold: Option<f64>,
     ) -> f64 {
         let node_index = walker.node;
-        // 1. apply update
-        match descent_type {
-            DescentType::LikelihoodUpdate => {
-                let snapshot_walker = snapshot_walker
-                    .as_ref()
-                    .expect("likelihood update requires snapshot walker");
+        // 1. apply update to trie
+        match &mode {
+            RecalcMode::LikelihoodUpdate {
+                snapshot_walker, ..
+            } => {
                 if !snapshot_walker.has_children_in_snapshot {
                     let new_likelihood = snapshot_walker.likelihood;
                     let node = &mut self.nodes[node_index];
@@ -263,18 +409,20 @@ impl Trie {
                     node.cum_likelihood_frontier = false;
                 }
             }
-            DescentType::PriorUpdate => {
-                let new_prediction_symbol_seq = new_prediction_symbol_seq
-                    .expect("prior update requires prediction symbol sequence");
-                let is_pred_node =
-                    comparable_to_pred_node && new_prediction_symbol_seq.len() == walker.depth as usize;
+            RecalcMode::PriorUpdate {
+                new_prediction_symbol_seq,
+                new_prediction_index,
+                comparable_to_pred_node,
+            } => {
+                let is_pred_node = *comparable_to_pred_node
+                    && new_prediction_symbol_seq.len() == walker.depth as usize;
                 if is_pred_node {
                     let node = &mut self.nodes[node_index];
-                    node.prediction = new_prediction_index;
+                    node.prediction = Some(*new_prediction_index);
                     node.prediction_last_change = self.m;
                 }
             }
-            DescentType::Expansion => {}
+            RecalcMode::Expansion { .. } => {}
         };
         // 2. recalc prior
         // tp
@@ -350,31 +498,28 @@ impl Trie {
         let node_cum_likelihood_frontier = self.nodes[node_index].cum_likelihood_frontier;
         let node_symbol = self.nodes[node_index].symbol;
         let node_z = self.nodes[node_index].z;
-        let stop = match descent_type {
-            DescentType::LikelihoodUpdate => {
-                assert!(likelihood_snapshot.is_some());
-                snapshot_walker
-                    .as_ref()
-                    .expect("likelihood update requires snapshot walker")
-                    .has_children_in_snapshot
-            }
-            DescentType::PriorUpdate => {
-                let new_prediction_symbol_seq = new_prediction_symbol_seq
-                    .expect("prior update requires prediction symbol sequence");
+        let stop = match &mode {
+            RecalcMode::LikelihoodUpdate {
+                snapshot_walker, ..
+            } => snapshot_walker.has_children_in_snapshot,
+            RecalcMode::PriorUpdate {
+                new_prediction_symbol_seq,
+                comparable_to_pred_node,
+                ..
+            } => {
                 let cum_l_frontier = node_cum_likelihood_frontier;
-                let is_pred_node_prefix = 
-                    comparable_to_pred_node && walker.depth <= new_prediction_symbol_seq.len() as u32;
+                let is_pred_node_prefix = *comparable_to_pred_node
+                    && walker.depth <= new_prediction_symbol_seq.len() as u32;
                 let is_space = node_symbol == Symbol::Space;
-                !is_pred_node_prefix && (
-                    !comparable_to_pred_node ||  // no change case
+                !is_pred_node_prefix
+                    && (
+                        !*comparable_to_pred_node ||  // no change case
                     cum_l_frontier ||  // constant likelihood case
-                    is_space  // no-reweighting case
-                )
+                    is_space
+                        // no-reweighting case
+                    )
             }
-            DescentType::Expansion => {
-                assert!(threshold.is_some());
-                node_z < threshold.unwrap()
-            }
+            RecalcMode::Expansion { threshold } => node_z < *threshold,
         };
         // 5. ensure prediction and children
         if !stop {
@@ -400,60 +545,20 @@ impl Trie {
         }
         // 7. recurse
         if !stop {
-            let is_update = match descent_type {
-                DescentType::LikelihoodUpdate => true,
-                DescentType::PriorUpdate => true,
-                DescentType::Expansion => false,
-            };
+            let is_update = mode.is_update();
             let mut children_sum = -f64::INFINITY;
             for symbol in Symbol::ALL {
                 if symbol == Symbol::Start {
                     continue;
                 }
                 let child_walker = self.descend(&walker, symbol);
-                let child_snapshot_walker = match descent_type {
-                    DescentType::LikelihoodUpdate => Some(
-                        likelihood_snapshot
-                            .expect("likelihood update requires snapshot")
-                            .descend(
-                                snapshot_walker
-                                    .as_ref()
-                                    .expect("likelihood update requires snapshot walker"),
-                                symbol,
-                            ),
-                    ),
-                    DescentType::PriorUpdate | DescentType::Expansion => None,
-                };
-                let child_comparable_to_pred_node = match descent_type {
-                    DescentType::PriorUpdate => {
-                        let new_prediction_symbol_seq = new_prediction_symbol_seq
-                            .expect("prior update requires prediction symbol sequence");
-                        if walker.depth < new_prediction_symbol_seq.len() as u32 {
-                            comparable_to_pred_node
-                                && new_prediction_symbol_seq[walker.depth as usize] == symbol
-                        } else {
-                            comparable_to_pred_node
-                        }
-                    }
-                    DescentType::LikelihoodUpdate | DescentType::Expansion => {
-                        comparable_to_pred_node
-                    }
-                };
+                let child_mode = mode.child(&walker, symbol);
                 let child_z = self.recalc_to_frontier_and_back(
                     child_walker,
-                    descent_type,
+                    child_mode,
                     remaining_visit_budget,
-                    // likelihood update
-                    likelihood_snapshot,
-                    child_snapshot_walker,
-                    // prior update
-                    new_prediction_symbol_seq,
-                    new_prediction_index,
-                    child_comparable_to_pred_node,
-                    // expansion
-                    threshold,
                 );
-                // 6. upprop z
+                // 8. upprop z
                 if is_update {
                     children_sum = logaddexp(children_sum, child_z);
                 }
@@ -471,40 +576,26 @@ impl Trie {
         self.n += 1;
         self.recalc_to_frontier_and_back(
             root_walker,
-            DescentType::LikelihoodUpdate,
+            RecalcMode::LikelihoodUpdate {
+                snapshot,
+                snapshot_walker,
+            },
             &mut self.default_visit_budget(),
-            // likelihood update
-            Some(snapshot),
-            Some(snapshot_walker),
-            // prior update
-            None,
-            None,
-            false,
-            // expansion
-            None,
         );
     }
 
     pub(crate) fn apply_prior_update(&mut self, node_string: String, prediction: Prediction) {
         let root_walker = self.root_walker();
-        let symbol_seq: Vec<Symbol> = node_string
-            .chars()
-            .filter_map(|c| Symbol::from_byte(c as u8))
-            .collect();
+        let symbol_seq = Symbol::string_to_vec(&node_string);
         let pred_index = self.prediction_registry.alloc(prediction);
         self.recalc_to_frontier_and_back(
             root_walker,
-            DescentType::PriorUpdate,
+            RecalcMode::PriorUpdate {
+                new_prediction_symbol_seq: symbol_seq.as_slice(),
+                new_prediction_index: pred_index,
+                comparable_to_pred_node: true,
+            },
             &mut self.default_visit_budget(),
-            // likelihood update
-            None,
-            None,
-            // prior update
-            Some(symbol_seq.as_slice()),
-            Some(pred_index),
-            true,
-            // expansion
-            None,
         );
     }
 
@@ -512,17 +603,8 @@ impl Trie {
         let walker = self.root_walker();
         self.recalc_to_frontier_and_back(
             walker,
-            DescentType::Expansion,
+            RecalcMode::Expansion { threshold },
             &mut self.default_visit_budget(),
-            // likelihood update
-            None,
-            None,
-            // prior update
-            None,
-            None,
-            false,
-            // expansion
-            Some(threshold),
         );
     }
 
@@ -546,12 +628,13 @@ impl Trie {
             let index = if let Some(existing) = self.prediction_registry.index_for_order(&order) {
                 existing
             } else {
-                self.prediction_registry.alloc(Prediction::create_prediction(
-                    order,
-                    None,
-                    None,
-                    &self.tokenizer,
-                ))
+                self.prediction_registry
+                    .alloc(Prediction::create_prediction(
+                        order,
+                        None,
+                        None,
+                        &self.tokenizer,
+                    ))
             };
             self.nodes[node_index].prediction = Some(index);
             index
@@ -629,12 +712,7 @@ impl Trie {
     fn to_snapshot(&self, threshold: f64) -> TrieSnapshot {
         let mut index_map = vec![None; self.nodes.len()];
         let mut snapshot_nodes = Vec::new();
-        let root = self.snapshot_subtree(
-            self.root,
-            threshold,
-            &mut index_map,
-            &mut snapshot_nodes,
-        );
+        let root = self.snapshot_subtree(self.root, threshold, &mut index_map, &mut snapshot_nodes);
         TrieSnapshot {
             nodes: snapshot_nodes,
             root,
@@ -684,11 +762,8 @@ impl Trie {
 
 impl Walker {
     fn symbol_slice_to_string(symbols: &[Option<Symbol>]) -> String {
-        let mut out = String::with_capacity(symbols.len());
-        for symbol in symbols.iter().flatten().rev() {
-            out.push(symbol.to_byte() as char);
-        }
-        out
+        let ordered_symbols: Vec<Symbol> = symbols.iter().flatten().rev().copied().collect();
+        Symbol::slice_to_string(&ordered_symbols)
     }
 }
 

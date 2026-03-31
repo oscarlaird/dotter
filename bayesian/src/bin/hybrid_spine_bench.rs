@@ -143,11 +143,12 @@ fn run_allpairs_build_scan_split(
     for _ in 0..iters {
         let mut reusable = PreparedFirstAllPairs::<NUM_TOKENS>::new_reusable();
         for &first_lex_index in tokenizer.lex_indices_with_left_spines() {
-            let right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
-            let right_len = right_spine.as_slice().len();
+            let first_token_right_spine =
+                tokenizer.right_packed_spine_for_lex_index(first_lex_index);
+            let right_len = first_token_right_spine.as_slice().len();
 
             let build_started = Instant::now();
-            reusable.rebuild_in_place(right_spine, tokenizer.prepared_merge_rows());
+            reusable.rebuild_in_place(first_token_right_spine, tokenizer.prepared_merge_rows());
             build_elapsed_ns += build_started.elapsed().as_secs_f64() * 1e9;
             built_first_tokens += 1;
 
@@ -211,11 +212,12 @@ fn run_allpairs_build_scan_split_filtered_ascii(
                 continue;
             }
 
-            let right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
-            let right_len = right_spine.as_slice().len();
+            let first_token_right_spine =
+                tokenizer.right_packed_spine_for_lex_index(first_lex_index);
+            let right_len = first_token_right_spine.as_slice().len();
 
             let build_started = Instant::now();
-            reusable.rebuild_in_place(right_spine, tokenizer.prepared_merge_rows());
+            reusable.rebuild_in_place(first_token_right_spine, tokenizer.prepared_merge_rows());
             build_elapsed_ns += build_started.elapsed().as_secs_f64() * 1e9;
             built_first_tokens += 1;
 
@@ -266,8 +268,8 @@ fn run_allpairs_build_cell_stats(tokenizer: &TinyLlamaWordTokenizer) {
     let mut max_cells = 0u64;
 
     for &first_lex_index in tokenizer.lex_indices_with_left_spines() {
-        let right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
-        reusable.rebuild_in_place(right_spine, tokenizer.prepared_merge_rows());
+        let first_token_right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
+        reusable.rebuild_in_place(first_token_right_spine, tokenizer.prepared_merge_rows());
         let cells = reusable
             .row_partner_bitmap()
             .iter()
@@ -312,11 +314,11 @@ fn run_allpairs_per_first_tail(
     let mut first_tokens = 0u64;
 
     for &first_lex_index in tokenizer.lex_indices_with_left_spines() {
-        let right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
-        let right_len = right_spine.as_slice().len();
+        let first_token_right_spine = tokenizer.right_packed_spine_for_lex_index(first_lex_index);
+        let right_len = first_token_right_spine.as_slice().len();
 
         let t0 = Instant::now();
-        reusable.rebuild_in_place(right_spine, tokenizer.prepared_merge_rows());
+        reusable.rebuild_in_place(first_token_right_spine, tokenizer.prepared_merge_rows());
         let build = t0.elapsed().as_secs_f64() * 1e6;
 
         let t1 = Instant::now();

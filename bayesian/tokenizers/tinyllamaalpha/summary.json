@@ -1,12 +1,13 @@
 {
   "token_pattern": "[a-z ]+",
   "space_symbol": "▁",
+  "max_spaces": 1,
   "source_vocab_size": 32000,
   "source_merge_count": 61249,
-  "pattern_matched_vocab_size": 17250,
-  "reachable_vocab_size": 17250,
-  "final_vocab_size": 17250,
-  "final_merge_count": 32261,
-  "dropped_vocab_size": 14750,
-  "dropped_merge_count": 28988
+  "pattern_matched_vocab_size": 17235,
+  "reachable_vocab_size": 17235,
+  "final_vocab_size": 17235,
+  "final_merge_count": 32193,
+  "dropped_vocab_size": 14765,
+  "dropped_merge_count": 29056
 }

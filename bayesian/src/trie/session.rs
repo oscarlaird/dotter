@@ -40,8 +40,8 @@ impl BayesianSession {
     // - prior update
     // - expansion
     pub fn apply_likelihood_update(&mut self, snapshot_json: String) {
-        let snapshot: TrieSnapshot =
-            serde_json::from_str(&snapshot_json).expect("snapshot_json should deserialize to TrieSnapshot");
+        let snapshot: TrieSnapshot = serde_json::from_str(&snapshot_json)
+            .expect("snapshot_json should deserialize to TrieSnapshot");
         self.trie.apply_likelihood_update(&snapshot);
     }
 
