@@ -1,0 +1,13 @@
+---
+description: Development-stage expectations for API and tests
+alwaysApply: true
+---
+
+# Development Stage
+
+This project is actively in development. Optimize for making progress over preserving temporary interfaces or test scaffolding.
+
+- Do not avoid useful changes just because they may break the current API.
+- Do not treat existing tests as constraints that must be preserved.
+- Freely delete stale, low-value, or obsolete tests.
+- Do not usually add new tests unless the user explicitly asks for them or a focused test is clearly high value.

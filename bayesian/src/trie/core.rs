@@ -10,6 +10,10 @@ use super::{
 
 #[derive(Clone, Debug)]
 struct Node {
+    // currently this is about 600B, but my napkin math says it could be as low as 132B
+    // a tokentrie heap absolutely needs at least 8B per heap item -> 8B x 20K = 160KB
+    // so >1000 nodes are less than a single prediction's heap burden
+    // furthermore, we don't have to add it all to the heap if we use a subheap
     // trie
     /// Index in `Trie::nodes` of the first child block, ordered like `Symbol::ALL` without the final `Start`.
     /// `None` if no child block has been allocated for this node yet.
@@ -280,25 +284,45 @@ impl Trie {
         (0.01_f64).ln()
     }
 
-    pub(crate) fn set_tl_array(&self, source_symbol_seq: &[Symbol], tl_array: &mut [f64]) {
+    pub(crate) fn root_index(&self) -> NodeIndex {
+        self.root
+    }
+
+    pub(crate) fn traverse_and_count_ul(
+        &self,
+        mut node_index: NodeIndex,
+        suffix_chars: &[Symbol],
+        mut ul: f64,
+    ) -> (Option<NodeIndex>, f64) {
+        // traverses from node_index to the target node+suffix
+        // while accumulating the .ul value of each node (not including the target node)
+        for symbol in suffix_chars {
+            ul += self.nodes[node_index].ul;
+            if self.nodes[node_index].children_start_index.is_none() {
+                return (None, ul); // could not reach
+            } else {
+                node_index = self.child_index(node_index, *symbol);
+            }
+        }
+        return (Some(node_index), ul);
+    }
+
+    pub(crate) fn set_tl_array(&self,
+        node_index: NodeIndex,
+        tl_array: &mut [f64],
+        accumed_ul: f64,
+    ) {
+        // caller is responsible for knowing the sum of .ul values for all
+        // strict ancestors of the provided node
         let mut token_prefix = Vec::new();
-        self.set_tl_array_inner(
-            source_symbol_seq,
-            &mut token_prefix,
-            tl_array,
-            self.root,
-            0,
-            0.0,
-        );
+        self.set_tl_array_inner(&mut token_prefix, tl_array, node_index, accumed_ul);
     }
 
     fn set_tl_array_inner(
         &self,
-        source_symbol_seq: &[Symbol],
         token_prefix: &mut Vec<Symbol>,
         tl_array: &mut [f64],
         node_index: NodeIndex,
-        depth: usize,
         accumed_ul: f64,
     ) {
         // N.B. we do this in a separate fn from recalc_to_frontier
@@ -307,76 +331,37 @@ impl Trie {
         let l = node.l + accumed_ul;
         let mtcdl = node.tl[0] + accumed_ul;
         let clf = node.cum_likelihood_frontier;
-        let reached_source = depth >= source_symbol_seq.len();
+        let prefix = Symbol::slice_to_string(token_prefix);
 
-        if !reached_source {
-            if clf {
-                tl_array.fill(l);
-                return;
+        if clf {
+            if !self.tokenizer.has_token_with_prefix(&prefix) {
+                panic!("Trie::set_tl_array reached a node that was not a prefix of any token!")
             }
+            let range = self.tokenizer.token_lex_range_for_prefix(&prefix);
+            let subslice = &mut tl_array[range.0..range.1];
+            subslice.fill(l);
+            return;
+        }
 
-            if node.children_start_index.is_none() {
-                panic!(
-                    "Trie::set_tl_array encountered a node with no children before reaching the likelihood frontier!"
-                );
-            }
+        // Set the MTCDL for the exact token represented by the current suffix from the start node.
+        if let Some(as_token_lexindex) = self.tokenizer.lex_index(&prefix) {
+            tl_array[as_token_lexindex] = mtcdl;
+        }
 
-            let next_symbol = source_symbol_seq[depth];
-            let child_index = self.child_index(node_index, next_symbol);
-            self.set_tl_array_inner(
-                source_symbol_seq,
-                token_prefix,
-                tl_array,
-                child_index,
-                depth + 1,
-                accumed_ul + node.ul,
-            );
-        } else {
-            let prefix = Symbol::slice_to_string(token_prefix);
+        if !self.tokenizer.has_token_with_strict_prefix(&prefix) {
+            return;
+        }
 
-            if clf {
-                if !self.tokenizer.has_token_with_prefix(&prefix) {
-                    panic!(
-                        "Trie::set_tl_array reached a node that was not a prefix of any token wrt the source!"
-                    )
-                }
-                let range = self.tokenizer.token_lex_range_for_prefix(&prefix);
-                let subslice = &mut tl_array[range.0..range.1];
-                subslice.fill(l);
-                return;
-            }
+        if node.children_start_index.is_none() {
+            panic!("Trie::set_tl_array encountered a node with no children before the likelihood frontier!")
+        }
 
-            // Set the MTCDL for the exact token represented by the current suffix after the source.
-            if let Some(as_token_lexindex) = self.tokenizer.lex_index(&prefix) {
-                tl_array[as_token_lexindex] = mtcdl;
-            }
-
-            if !self.tokenizer.has_token_with_strict_prefix(&prefix) {
-                return;
-            }
-
-            if node.children_start_index.is_none() {
-                panic!(
-                    "Trie::set_tl_array encountered a node with no children after reaching the likelihood frontier!"
-                );
-            }
-
-            for symbol in Symbol::ALL {
-                if symbol == Symbol::Start {
-                    continue;
-                }
-                let child_index = self.child_index(node_index, symbol);
-                token_prefix.push(symbol);
-                self.set_tl_array_inner(
-                    source_symbol_seq,
-                    token_prefix,
-                    tl_array,
-                    child_index,
-                    depth + 1,
-                    accumed_ul + node.ul,
-                );
-                token_prefix.pop();
-            }
+        for symbol in Symbol::ALL {
+            if symbol == Symbol::Start { continue; }
+            let child_index = self.child_index(node_index, symbol);
+            token_prefix.push(symbol);
+            self.set_tl_array_inner(token_prefix, tl_array, child_index, accumed_ul + node.ul);
+            token_prefix.pop();
         }
     }
 

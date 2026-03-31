@@ -1,0 +1,9 @@
+---
+description: TeX files should reference the formal proof
+globs: math/tex/**/*.tex
+alwaysApply: false
+---
+
+# TeX Reference
+
+When working on TeX files, the corresponding formal proof can be found in `formal/proof`.

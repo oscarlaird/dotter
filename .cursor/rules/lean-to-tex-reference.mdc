@@ -1,0 +1,9 @@
+---
+description: Lean files should reference the TeX math writeup
+globs: formal/**/*.lean
+alwaysApply: false
+---
+
+# Lean Reference
+
+When working on Lean files, the corresponding mathematical exposition can be found in `math/tex`.
