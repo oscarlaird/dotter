@@ -2,12 +2,15 @@
 
 pub type NodeIndex = usize;
 pub(crate) type PredictionIndex = usize;
+pub(crate) type TokenLexIndex = usize;
+pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 
 mod core;
 mod prediction;
 mod session;
 mod snapshot;
+mod tokentrie;
 
 pub use session::BayesianSession;
 pub use snapshot::{TrieSnapshot, TrieSnapshotNode};

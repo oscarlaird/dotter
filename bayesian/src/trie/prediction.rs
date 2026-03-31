@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
 
-use super::{logaddexp, PredictionIndex};
+use super::{logaddexp, PredictionIndex, TokenLexIndex};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PredictionOrder {
@@ -22,6 +22,7 @@ pub(crate) struct Prediction {
     pub(crate) follower_probs: Box<[f64]>,
     pub(crate) follower_prob_for_prefix: Box<[f64]>,
     pub(crate) stop_prob: f64,
+    pub(crate) children: Vec<(TokenLexIndex, PredictionIndex)>,
 }
 
 #[derive(Clone, Debug)]
@@ -159,7 +160,17 @@ impl Prediction {
             follower_probs,
             follower_prob_for_prefix,
             stop_prob,
+            children: Vec::new(),
         }
+    }
+
+    pub(crate) fn child_prediction_index(
+        &self,
+        token_lexindex: TokenLexIndex,
+    ) -> Option<PredictionIndex> {
+        self.children.iter().find_map(|&(child_token_lexindex, prediction_index)| {
+            (child_token_lexindex == token_lexindex).then_some(prediction_index)
+        })
     }
 }
 

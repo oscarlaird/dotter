@@ -4,7 +4,7 @@ use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
 use crate::symbol::Symbol;
 
 use super::{
-    logaddexp, NodeIndex, Prediction, PredictionIndex, PredictionOrder, PredictionRegistry,
+    logaddexp, NodeIndex, Prediction, PredictionIndex, PredictionOrder, PredictionRegistry, TokenLexIndex,
     SnapshotWalker, TrieSnapshot, TrieSnapshotNode, MAX_TOKEN_LENGTH,
 };
 
@@ -49,7 +49,7 @@ struct Node {
 #[derive(Clone, Debug)]
 pub(crate) struct Trie {
     nodes: Vec<Node>,
-    prediction_registry: PredictionRegistry,
+    pub(crate) prediction_registry: PredictionRegistry,
     pub(crate) tokenizer: TinyLlamaWordTokenizer,
     root: NodeIndex,
     n: i32, // determines meaning/correctness of ul
@@ -362,10 +362,14 @@ impl Trie {
                 let new_prediction_symbol_seq = new_prediction_symbol_seq
                     .expect("prior update requires prediction symbol sequence");
                 let cum_l_frontier = node_cum_likelihood_frontier;
-                let extends_pred_node =
-                    comparable_to_pred_node && walker.depth > new_prediction_symbol_seq.len() as u32;
+                let is_pred_node_prefix = 
+                    comparable_to_pred_node && walker.depth <= new_prediction_symbol_seq.len() as u32;
                 let is_space = node_symbol == Symbol::Space;
-                cum_l_frontier || !comparable_to_pred_node || (extends_pred_node && is_space)
+                !is_pred_node_prefix && (
+                    !comparable_to_pred_node ||  // no change case
+                    cum_l_frontier ||  // constant likelihood case
+                    is_space  // no-reweighting case
+                )
             }
             DescentType::Expansion => {
                 assert!(threshold.is_some());
