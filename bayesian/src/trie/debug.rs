@@ -4,6 +4,7 @@
 //!   prints to stderr only when the **`trie-trace`** feature is enabled (`cargo test -p bayesian --no-default-features --features trie-trace`, etc.).
 //! - [`eprint_json`], [`eprint_snapshot`], [`eprint_debug`], [`json_pretty`]: always use **`eprintln!`** / allocate a string — for ad-hoc inspection in tests or small programs.
 //! - [`snapshot_tree_format`] / [`eprint_snapshot_tree`]: `tree(1)`-style view of a [`TrieSnapshot`] with `z` and likelihood per node.
+//! - [`eprint_trie`]: like [`Trie::full_dump_format`](crate::trie::Trie::full_dump_format) but only **node** blocks for [`Symbol::Start`](crate::symbol::Symbol::Start), [`Symbol::Stop`](crate::symbol::Symbol::Stop), and `Symbol::A` / `B` / `C`; prediction registry is still listed in full.
 //! - [`format_top_followers_log_probs`] / [`format_prediction_top_followers`]: top BPE tokens (and stop) by stored log-probability.
 
 use std::fmt::Write;
@@ -11,7 +12,7 @@ use std::fmt::Write;
 use crate::bpe::TinyLlamaWordTokenizer;
 use crate::symbol::Symbol;
 
-use super::{NodeIndex, Prediction, TrieSnapshot, TrieSnapshotNode};
+use super::{NodeIndex, Prediction, Trie, TrieSnapshot, TrieSnapshotNode};
 
 #[cfg(feature = "wasm")]
 pub fn log(msg: &str) {
@@ -128,6 +129,19 @@ pub fn snapshot_tree_format(snapshot: &TrieSnapshot) -> String {
 /// `eprintln!` a [`snapshot_tree_format`] under a header line.
 pub fn eprint_snapshot_tree(label: &str, snapshot: &TrieSnapshot) {
     eprintln!("--- {label} ---\n{}", snapshot_tree_format(snapshot));
+}
+
+/// `eprintln!` a filtered trie dump (nodes only for [`Symbol::Start`], [`Symbol::Stop`], `A`–`C`) under a header line.
+pub(crate) fn eprint_trie(label: &str, trie: &Trie) {
+    eprintln!(
+        "--- {label} ---\n{}",
+        trie.full_dump_format_with_symbol_filter(|s| {
+            matches!(
+                s,
+                Symbol::Start | Symbol::Stop | Symbol::A | Symbol::B | Symbol::C
+            )
+        })
+    );
 }
 
 // --- prediction top followers ---

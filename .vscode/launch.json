@@ -5,13 +5,14 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug trie expand test",
+      "name": "Debug trie_exploratory_trace",
       "cargo": {
         "args": [
           "test",
           "--manifest-path",
           "${workspaceFolder}/bayesian/Cargo.toml",
           "--lib",
+          "--no-default-features",
           "--no-run"
         ],
         "filter": {
@@ -19,14 +20,19 @@
         }
       },
       "args": [
-        "trie_expand_threshold_smoke_test",
+        "trie_exploratory_trace",
         "--nocapture"
       ],
       "cwd": "${workspaceFolder}/bayesian",
       "sourceLanguages": ["rust"],
       "env": {
         "RUST_BACKTRACE": "1"
-      }
+      },
+      "initCommands": [
+        "settings set target.max-children-count 32",
+        "settings set target.max-string-summary-length 10",
+        "settings set target.max-children-depth 3"
+      ]
     }
   ]
 }

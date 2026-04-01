@@ -30,7 +30,7 @@ fn browser_trie() -> Trie {
 #[cfg_attr(feature = "python", pyclass)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
-    trie: Trie,
+    pub(crate) trie: Trie,
 }
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]

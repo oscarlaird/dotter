@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::Path;
 
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
@@ -8,6 +9,27 @@ use super::{
     SnapshotWalker, TrieSnapshot, TrieSnapshotNode, TRIE_EXPANSION_THRESHOLD, TRIE_MAX_VISITS,
     logaddexp,
 };
+
+fn dump_fmt_f64(x: f64) -> String {
+    if !x.is_finite() {
+        return format!("{x}");
+    }
+    let s = format!("{x:.6}");
+    let t = s.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() || t == "-" {
+        "0".into()
+    } else {
+        t.to_string()
+    }
+}
+
+fn dump_fmt_lex(x: usize) -> String {
+    if x == usize::MAX {
+        "_".into()
+    } else {
+        x.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Node {
@@ -20,6 +42,7 @@ pub(crate) struct Node {
     /// `None` if no child block has been allocated for this node yet.
     symbol: Symbol,
     pub(crate) children_start_index: Option<NodeIndex>,
+    is_root: bool,
     // tokenization
     truncation_possible: [bool; MAX_TOKEN_LENGTH],
     final_token_length: u8,
@@ -140,6 +163,7 @@ impl Node {
             // trie
             symbol: Symbol::Start,
             children_start_index: None,
+            is_root: false,
             // tokenization
             final_token_length: 0,
             n_tokens: 0,
@@ -176,6 +200,8 @@ impl Node {
 
     fn root() -> Self {
         Self {
+            // trie
+            is_root: true,
             // tokenization
             final_token_length: 1,
             n_tokens: 1,
@@ -231,19 +257,6 @@ impl Trie {
     }
 
     // walking
-    fn root_walker(&self) -> Walker {
-        Walker {
-            node: self.root,
-            depth: 0,
-            a_symbol: [None; MAX_TOKEN_LENGTH],
-            a_tp: [0.0; MAX_TOKEN_LENGTH],
-            a_prediction_index: [None; MAX_TOKEN_LENGTH],
-            a_p_last_change: [-1; MAX_TOKEN_LENGTH],
-            a_tp_last_change: [-1; MAX_TOKEN_LENGTH],
-            a_prediction_last_change: [-1; MAX_TOKEN_LENGTH],
-        }
-    }
-
     pub(crate) fn child_index(&self, node_index: NodeIndex, symbol: Symbol) -> NodeIndex {
         let current_node = &self.nodes[node_index];
         let base = current_node
@@ -251,10 +264,23 @@ impl Trie {
             .expect("Trie::child_index should be called on a node with children");
         base + symbol.to_slot() as usize
     }
+
+    fn root_walker(&self) -> Walker {
+        self.set0_walker(&Walker::new(), self.root_index())
+    }
+
     fn descend(&self, walker: &Walker, symbol: Symbol) -> Walker {
         let mut walker = walker.clone();
+        walker = self.roll_walker(&walker);
+        walker.depth += 1;
         let child_index = self.child_index(walker.node, symbol);
+        walker = self.set0_walker(&walker, child_index);
+        walker
+    }
 
+    fn roll_walker(&self, walker: &Walker) -> Walker {
+        // roll the walker
+        let mut walker = walker.clone();
         for i in (1..MAX_TOKEN_LENGTH).rev() {
             walker.a_symbol[i] = walker.a_symbol[i - 1];
             walker.a_tp[i] = walker.a_tp[i - 1];
@@ -263,17 +289,19 @@ impl Trie {
             walker.a_tp_last_change[i] = walker.a_tp_last_change[i - 1];
             walker.a_prediction_last_change[i] = walker.a_prediction_last_change[i - 1];
         }
+        walker
+    }
 
-        let child_node = &self.nodes[child_index];
-        walker.a_symbol[0] = Some(child_node.symbol);
-        walker.a_tp[0] = child_node.tp;
-        walker.a_prediction_index[0] = child_node.prediction;
-        walker.a_p_last_change[0] = child_node.p_last_change;
-        walker.a_tp_last_change[0] = child_node.tp_last_change;
-        walker.a_prediction_last_change[0] = child_node.prediction_last_change;
-
-        walker.node = child_index;
-        walker.depth += 1;
+    fn set0_walker(&self, walker: &Walker, node_index: NodeIndex) -> Walker {
+        let mut walker = walker.clone();
+        let node = &self.nodes[node_index];
+        walker.a_symbol[0] = Some(node.symbol);
+        walker.a_tp[0] = node.tp;
+        walker.a_prediction_index[0] = node.prediction;
+        walker.a_p_last_change[0] = node.p_last_change;
+        walker.a_tp_last_change[0] = node.tp_last_change;
+        walker.a_prediction_last_change[0] = node.prediction_last_change;
+        walker.node = node_index;
         walker
     }
 
@@ -401,20 +429,24 @@ impl Trie {
             "walker slot OOB: node_index={node_index} final_token_length={} idx={idx} MAX_TOKEN_LENGTH={MAX_TOKEN_LENGTH}",
             self.nodes[node_index].final_token_length,
         );
-        let new_tp_last_change =
-            walker.a_tp_last_change[idx].max(walker.a_prediction_last_change[idx]);
         let tp_last_change = self.nodes[node_index].tp_last_change;
+        let new_tp_last_change =
+            if self.nodes[node_index].is_root {
+                0
+            } else {
+                walker.a_tp_last_change[idx].max(walker.a_prediction_last_change[idx])
+            };
         if new_tp_last_change > tp_last_change {
             let a_pred_index = walker.a_prediction_index[idx].unwrap();
             let a_pred = self.prediction_registry.get(a_pred_index).unwrap();
             let node_symbol = self.nodes[node_index].symbol;
             let new_token_lexindex = self.nodes[node_index].new_token_lexindex;
-            assert!(
-                new_token_lexindex < a_pred.follower_probs.len(),
-                "follower_probs OOB: node_index={node_index} symbol={node_symbol:?} new_token_lexindex={new_token_lexindex} follower_probs_len={}",
-                a_pred.follower_probs.len(),
-            );
             let final_token_prob = if node_symbol != Symbol::Stop {
+                assert!(
+                    new_token_lexindex < a_pred.follower_probs.len(),
+                    "follower_probs OOB: node_index={node_index} symbol={node_symbol:?} new_token_lexindex={new_token_lexindex} follower_probs_len={}",
+                    a_pred.follower_probs.len(),
+                );
                 a_pred.follower_probs[new_token_lexindex]
             } else {
                 // Symbol::Stop
@@ -429,14 +461,14 @@ impl Trie {
         let node_symbol = self.nodes[node_index].symbol;
         let truncation_possible = self.nodes[node_index].truncation_possible;
         let new_prefix_lexindex = self.nodes[node_index].new_prefix_lexindex;
-        let mut new_p_last_change = self.nodes[node_index].p_last_change;
+        let p_last_change = self.nodes[node_index].p_last_change;
+        let mut new_p_last_change = p_last_change;
         for i in 0..MAX_TOKEN_LENGTH {
             if truncation_possible[i] {
                 new_p_last_change = new_p_last_change.max(walker.a_tp_last_change[i]);
                 new_p_last_change = new_p_last_change.max(walker.a_prediction_last_change[i]);
             }
         }
-        let p_last_change = self.nodes[node_index].p_last_change;
         if new_p_last_change > p_last_change {
             let mut new_p = -f64::INFINITY;
             let mut new_fp = self.nodes[node_index].fp;
@@ -616,6 +648,136 @@ impl Trie {
         self.to_snapshot()
     }
 
+    /// Every [`Node`] field, every index, plus a compact listing of [`PredictionRegistry`] entries (not full follower vectors).
+    pub(crate) fn full_dump_format(&self) -> String {
+        self.full_dump_format_with_symbol_filter(|_| true)
+    }
+
+    /// Like [`full_dump_format`], but only emits per-node blocks when `include_symbol(node.symbol)` is true.
+    pub(crate) fn full_dump_format_with_symbol_filter(
+        &self,
+        include_symbol: impl Fn(Symbol) -> bool,
+    ) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "=== Trie full dump ===");
+        let _ = writeln!(
+            out,
+            "summary: nodes.len()={} root_index={} n={} m={}",
+            self.nodes.len(),
+            self.root,
+            self.n,
+            self.m
+        );
+
+        for (idx, node) in self.nodes.iter().enumerate() {
+            if !include_symbol(node.symbol) {
+                continue;
+            }
+            let _ = writeln!(out);
+            let _ = writeln!(out, "--- nodes[{idx}] ---");
+            let _ = writeln!(out, "  symbol: {:?}", node.symbol);
+            let _ = writeln!(out, "  is_root: {}", node.is_root);
+            let _ = writeln!(
+                out,
+                "  children_start_index: {:?}",
+                node.children_start_index
+            );
+            let _ = writeln!(
+                out,
+                "  truncation_possible: {:?}",
+                node.truncation_possible
+            );
+            let _ = writeln!(out, "  final_token_length: {}", node.final_token_length);
+            let _ = writeln!(out, "  n_tokens: {}", node.n_tokens);
+            let pred_line = match node.prediction {
+                None => "None".to_string(),
+                Some(pi) => match self.prediction_registry.get(pi) {
+                    None => format!("Some({pi}) (missing in registry)"),
+                    Some(p) => format!("Some({pi}) order={:?}", p.order),
+                },
+            };
+            let _ = writeln!(out, "  prediction: {pred_line}");
+            let _ = writeln!(
+                out,
+                "  prediction_last_change: {}",
+                node.prediction_last_change
+            );
+            let _ = writeln!(
+                out,
+                "  new_token_lexindex: {}",
+                dump_fmt_lex(node.new_token_lexindex)
+            );
+            let np = node
+                .new_prefix_lexindex
+                .iter()
+                .map(|x| dump_fmt_lex(*x))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "  new_prefix_lexindex: [{np}]");
+            let _ = writeln!(out, "  p: {}", dump_fmt_f64(node.p));
+            let _ = writeln!(out, "  p_last_change: {}", node.p_last_change);
+            let _ = writeln!(out, "  p_old: {}", dump_fmt_f64(node.p_old));
+            let _ = writeln!(out, "  mp: {}", node.mp);
+            let fp_s = node
+                .fp
+                .iter()
+                .map(|x| dump_fmt_f64(*x))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "  fp: [{fp_s}]");
+            let _ = writeln!(out, "  tp: {}", dump_fmt_f64(node.tp));
+            let _ = writeln!(out, "  tp_last_change: {}", node.tp_last_change);
+            let _ = writeln!(out, "  mtp: {}", node.mtp);
+            let _ = writeln!(out, "  l: {}", dump_fmt_f64(node.l));
+            let _ = writeln!(out, "  l_old: {}", dump_fmt_f64(node.l_old));
+            let _ = writeln!(out, "  nl: {}", node.nl);
+            let _ = writeln!(out, "  ul: {}", dump_fmt_f64(node.ul));
+            #[cfg(feature = "tokentrie")]
+            {
+                let tl_s = node
+                    .tl
+                    .iter()
+                    .map(|x| dump_fmt_f64(*x))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let _ = writeln!(out, "  tl: [{tl_s}]");
+                let _ = writeln!(out, "  ntl: {}", node.ntl);
+            }
+            let _ = writeln!(
+                out,
+                "  cum_likelihood_frontier: {}",
+                node.cum_likelihood_frontier
+            );
+            let _ = writeln!(out, "  z: {}", dump_fmt_f64(node.z));
+            let _ = writeln!(out, "  nz: {}", node.nz);
+            let _ = writeln!(out, "  mz: {}", node.mz);
+        }
+
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "=== PredictionRegistry ({} predictions) ===",
+            self.prediction_registry.len()
+        );
+        for i in 0..self.prediction_registry.len() {
+            let Some(p) = self.prediction_registry.get(i) else {
+                continue;
+            };
+            let _ = writeln!(
+                out,
+                "[{i}] order={:?}  stop_prob={}  follower_probs.len={}  canonical_followers.len={}  prefix_prob_agg.len={}  children.len={}",
+                p.order,
+                dump_fmt_f64(p.stop_prob),
+                p.follower_probs.len(),
+                p.canonical_followers.len(),
+                p.follower_prob_for_prefix.len(),
+                p.children.len(),
+            );
+        }
+
+        out
+    }
+
     // EXPERIMENTAL (END)
 
     // ensure
@@ -693,12 +855,14 @@ impl Trie {
                 continue;
             }
 
-            for i in 0..available_prediction_depth {
-                let mut new_prefix = Walker::symbol_slice_to_string(&walker.a_symbol[..i]);
-                new_prefix.push(symbol.to_byte() as char);
+            // roll the indices of the walker, but don't set0 yet
+            let mut child_walker = self.roll_walker(walker);
+            child_walker.a_symbol[0] = Some(symbol);
+            for i in 1..=available_prediction_depth {
+                let new_prefix = Walker::symbol_slice_to_string(&child_walker.a_symbol[..i]);
                 let new_token = new_prefix.clone();
                 let prediction_index =
-                    walker.a_prediction_index[i].expect("prediction index must be valid");
+                    child_walker.a_prediction_index[i].expect("prediction index must be valid");
                 let prediction = self.prediction_registry.get(prediction_index).unwrap();
                 let maybe_new_token_lexindex = self.tokenizer.lex_index(&new_token);
                 let maybe_new_prefix_lexindex = self.tokenizer.prefix_lex_index(&new_prefix);
@@ -706,7 +870,7 @@ impl Trie {
                 if let Some(new_token_lexindex) = maybe_new_token_lexindex {
                     let canonical_pair = prediction.canonical_followers[new_token_lexindex];
                     if canonical_pair {
-                        child.final_token_length = (i + 1) as u8;
+                        child.final_token_length = i as u8;
                         child.new_token_lexindex = new_token_lexindex;
                     }
                 }
@@ -786,6 +950,18 @@ impl Trie {
 }
 
 impl Walker {
+    fn new() -> Self {
+        Self {
+            node: usize::MAX,
+            depth: 0,
+            a_symbol: [None; MAX_TOKEN_LENGTH],
+            a_tp: [0.0; MAX_TOKEN_LENGTH],
+            a_prediction_index: [None; MAX_TOKEN_LENGTH],
+            a_p_last_change: [-1; MAX_TOKEN_LENGTH],
+            a_tp_last_change: [-1; MAX_TOKEN_LENGTH],
+            a_prediction_last_change: [-1; MAX_TOKEN_LENGTH],
+        }
+    }
     fn symbol_slice_to_string(symbols: &[Option<Symbol>]) -> String {
         let ordered_symbols: Vec<Symbol> = symbols.iter().flatten().rev().copied().collect();
         Symbol::slice_to_string(&ordered_symbols)

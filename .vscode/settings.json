@@ -1,4 +1,5 @@
 {
+  "debug.focusEditorOnBreak": false,
   "latex-workshop.latex.autoBuild.run": "onSave",
   "latex-workshop.latex.rootFile.doNotPrompt": true,
   "latex-workshop.latex.rootFile.useSubfilePackage": false,

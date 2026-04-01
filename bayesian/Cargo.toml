@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["python"]
+default = []
 python = ["dep:pyo3"]
 wasm = ["dep:wasm-bindgen", "dep:web-sys"]
 # stderr tracing for `trie_debug!` / `trie::debug::log` on non-wasm targets

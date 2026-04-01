@@ -12,10 +12,14 @@ fn trie_exploratory_trace() {
     let mut session = crate::BayesianSession::new();
 
     let before = session.trie_snapshot_at_current();
+    super::debug::eprint_trie("trie before expand", &session.trie);
     super::debug::eprint_snapshot_tree("snapshot before expand", &before);
 
+    let alphabet_song = "abcdefghijklmnopqrstuvwxyz";
+    println!("pausing..");
     session.expand_trie();
 
     let after = session.trie_snapshot_at_current();
+    super::debug::eprint_trie("trie before expand", &session.trie);
     super::debug::eprint_snapshot_tree("snapshot after expand", &after);
 }
