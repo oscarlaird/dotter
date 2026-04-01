@@ -108,11 +108,6 @@ impl Queue {
         Self { queue }
     }
 
-    fn receive_prediction(&mut self) {
-        // Nothing to do here
-        // caller should just call next() again after updating the prediction registry
-    }
-
     fn next(&mut self, char_trie: &Trie) -> QueueItem {
         //
         // if has prediction, visit it

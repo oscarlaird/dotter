@@ -45,7 +45,9 @@ pub(crate) struct Node {
     nl: i32,    // likelihood tracking time
     pub(crate) ul: f64,    // log upper likelihood
     // I don't see how to avoid this, but perhaps we can determine the max number of nonzero entries and use a bitmap
+    #[cfg(feature = "tokentrie")]
     tl: [f64; MAX_TOKEN_LENGTH], // log token branch likelihood for each ancestor i,  i.e., log "Maximum Truncation Compatible Descendant Likelihood", for each ancestor i
+    #[cfg(feature = "tokentrie")]
     ntl: i32,                    // token branch likelihood tracking time
     cum_likelihood_frontier: bool,
     // posterior
@@ -64,7 +66,7 @@ pub(crate) struct Trie {
     m: i32, // determines meaning/correctness of last_changed
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Walker {
     node: NodeIndex,
     depth: u32,
@@ -150,24 +152,26 @@ impl Node {
             new_token_lexindex: usize::MAX, // invalid
             new_prefix_lexindex: [usize::MAX; MAX_TOKEN_LENGTH], // invalid
             // prior
-            p: -f64::INFINITY,
+            p: f64::NEG_INFINITY,
             p_last_change: -1,
-            p_old: -f64::INFINITY,
-            tp: -f64::INFINITY,
+            p_old: f64::NEG_INFINITY,
+            tp: f64::NEG_INFINITY,
             tp_last_change: -1,
             mp: -1,
             mtp: -1,
-            fp: [-f64::INFINITY; MAX_TOKEN_LENGTH],
+            fp: [f64::NEG_INFINITY; MAX_TOKEN_LENGTH],
             // likelihood
             ul: 0.0,
             l: 0.0,
             l_old: 0.0,
             nl: -1,
-            tl: [-f64::INFINITY; MAX_TOKEN_LENGTH],
+            #[cfg(feature = "tokentrie")]
+            tl: [f64::NEG_INFINITY; MAX_TOKEN_LENGTH],
+            #[cfg(feature = "tokentrie")]
             ntl: 0,
             cum_likelihood_frontier: true,
             // posterior
-            z: -f64::INFINITY,
+            z: f64::NEG_INFINITY,
             nz: -1,
             mz: -1,
         }
@@ -188,6 +192,7 @@ impl Node {
             mtp: 0,
             // likelihood
             nl: 0,
+            #[cfg(feature = "tokentrie")]
             ntl: 0,
             // posterior
             z: 0.0,
@@ -288,7 +293,7 @@ impl Trie {
         self.root
     }
 
-
+    #[cfg(feature = "tokentrie")]
     pub(crate) fn set_tl_array(&self,
         node_index: NodeIndex,
         tl_array: &mut [f64],
@@ -300,6 +305,7 @@ impl Trie {
         self.set_tl_array_inner(&mut token_prefix, tl_array, node_index, accumed_ul);
     }
 
+    #[cfg(feature = "tokentrie")]
     fn set_tl_array_inner(
         &self,
         token_prefix: &mut Vec<Symbol>,
@@ -370,6 +376,10 @@ impl Trie {
                     let node = &mut self.nodes[node_index];
                     node.ul += new_likelihood;
                     node.l += new_likelihood;
+                    #[cfg(feature = "tokentrie")]
+                    for i in 0..MAX_TOKEN_LENGTH {
+                        node.tl[i] += new_likelihood;
+                    }
                     node.nl = self.n;
                 } else {
                     let node = &mut self.nodes[node_index];
@@ -506,6 +516,10 @@ impl Trie {
                 let child_node = &mut self.nodes[child_walker.node];
                 child_node.ul += node_ul;
                 child_node.l += node_ul;
+                #[cfg(feature = "tokentrie")]
+                for i in 0..MAX_TOKEN_LENGTH {
+                    child_node.tl[i] += node_ul;
+                }
                 child_node.nl = self.n;
             }
             self.nodes[node_index].ul = 0.0;
@@ -513,7 +527,11 @@ impl Trie {
         // 7. recurse
         if !stop {
             let is_update = mode.is_update();
+            #[cfg(feature = "tokentrie")]
+            let is_likelihood_update = matches!(mode, RecalcMode::LikelihoodUpdate { .. });
             let mut children_sum = -f64::INFINITY;
+            #[cfg(feature = "tokentrie")]
+            let mut mtcdl = [f64::NEG_INFINITY; MAX_TOKEN_LENGTH];
             for symbol in Symbol::ALL {
                 if symbol == Symbol::Start {
                     continue;
@@ -529,9 +547,25 @@ impl Trie {
                 if is_update {
                     children_sum = logaddexp(children_sum, child_z);
                 }
+                // 9. upprop mtcdl
+                #[cfg(feature = "tokentrie")]
+                if is_likelihood_update {
+                    let child_mtcdl = self.nodes[child_walker.node].tl;
+                    let child_final_token_length = self.nodes[child_walker.node].final_token_length;
+                    for i in 0..(MAX_TOKEN_LENGTH-1) {
+                        mtcdl[i] = mtcdl[i].max(child_mtcdl[i+1]);
+                    }
+                    let i = child_final_token_length as usize - 1;
+                    mtcdl[i] = mtcdl[i].max(child_mtcdl[0]);
+                }
             }
             if is_update {
                 self.nodes[node_index].z = children_sum;
+            }
+            #[cfg(feature = "tokentrie")]
+            if is_likelihood_update {
+                self.nodes[node_index].tl = mtcdl;
+                self.nodes[node_index].ntl = self.n;
             }
         }
         self.nodes[node_index].z
@@ -662,7 +696,10 @@ impl Trie {
                     if truncation_possible {
                         child.new_prefix_lexindex[i] = new_prefix_lexindex;
                         child.truncation_possible[i] = true;
-                        child.tl[i] = 0.0;
+                        #[cfg(feature = "tokentrie")]
+                        {
+                            child.tl[i] = 0.0;
+                        }
                     }
                 }
             }

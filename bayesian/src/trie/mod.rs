@@ -10,6 +10,7 @@ mod core;
 mod prediction;
 mod session;
 mod snapshot;
+#[cfg(feature = "tokentrie")]
 mod tokentrie;
 
 pub use session::BayesianSession;
