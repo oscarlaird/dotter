@@ -6,7 +6,9 @@ pub mod bpe;
 pub mod symbol;
 pub mod trie;
 
-pub use trie::{BayesianSession, TrieSnapshot, TrieSnapshotNode};
+pub use trie::{
+    BayesianSession, TrieSnapshot, TrieSnapshotNode, TRIE_EXPANSION_THRESHOLD, TRIE_MAX_VISITS,
+};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;

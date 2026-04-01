@@ -18,19 +18,12 @@ export class BayesianSession {
         wasm.bayesiansession_apply_likelihood_update(this.__wbg_ptr, ptr0, len0);
     }
     /**
-     * @param {string | null | undefined} final_token
-     * @param {string} full_string
-     * @param {Float64Array} follower_logits
-     * @param {number} stop_logit
+     * @param {string} prior_json
      */
-    apply_prior_update(final_token, full_string, follower_logits, stop_logit) {
-        var ptr0 = isLikeNone(final_token) ? 0 : passStringToWasm0(final_token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(full_string, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArrayF64ToWasm0(follower_logits, wasm.__wbindgen_malloc);
-        const len2 = WASM_VECTOR_LEN;
-        wasm.bayesiansession_apply_prior_update(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, stop_logit);
+    apply_prior_update(prior_json) {
+        const ptr0 = passStringToWasm0(prior_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.bayesiansession_apply_prior_update(this.__wbg_ptr, ptr0, len0);
     }
     /**
      * @returns {string}
@@ -47,12 +40,8 @@ export class BayesianSession {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
-    /**
-     * @param {number} threshold
-     * @param {number} max_expand_budget
-     */
-    constructor(threshold, max_expand_budget) {
-        const ret = wasm.bayesiansession_new(threshold, max_expand_budget);
+    constructor() {
+        const ret = wasm.bayesiansession_new();
         this.__wbg_ptr = ret >>> 0;
         BayesianSessionFinalization.register(this, this.__wbg_ptr, this);
         return this;
@@ -68,22 +57,6 @@ export class BayesianSession {
         let deferred1_1;
         try {
             const ret = wasm.bayesiansession_snapshot_json(this.__wbg_ptr);
-            deferred1_0 = ret[0];
-            deferred1_1 = ret[1];
-            return getStringFromWasm0(ret[0], ret[1]);
-        } finally {
-            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @param {number} threshold
-     * @returns {string}
-     */
-    snapshot_json_with_threshold(threshold) {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const ret = wasm.bayesiansession_snapshot_json_with_threshold(this.__wbg_ptr, threshold);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);

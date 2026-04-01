@@ -6,7 +6,18 @@ use pyo3::prelude::*;
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
+use serde::Deserialize;
+
 use super::{Prediction, PredictionOrder, Trie, TrieSnapshot};
+
+/// JSON shape of websocket `prior_update` `content` (and payload passed to [`BayesianSession::apply_prior_update`]).
+#[derive(Debug, Deserialize)]
+struct PriorUpdatePayload {
+    final_token: Option<String>,
+    full_string: String,
+    follower_logits: Vec<f64>,
+    stop_logit: f64,
+}
 
 fn browser_tokenizer() -> crate::bpe::TinyLlamaWordTokenizer {
     crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(bpe::TOKENIZER_JSON_STR)
@@ -20,19 +31,13 @@ fn browser_trie() -> Trie {
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
     trie: Trie,
-    threshold: f64,
-    max_expand_budget: usize,
 }
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
-    pub fn new(threshold: f64, max_expand_budget: usize) -> Self {
-        Self {
-            trie: browser_trie(),
-            threshold,
-            max_expand_budget,
-        }
+    pub fn new() -> Self {
+        Self { trie: browser_trie() }
     }
 
     pub fn reset(&mut self) {
@@ -59,39 +64,37 @@ impl BayesianSession {
         crate::trie_debug!("[bayesian] apply_likelihood_update done");
     }
 
-    pub fn apply_prior_update(
-        &mut self,
-        final_token: Option<String>,
-        full_string: String,
-        follower_logits: Vec<f64>,
-        stop_logit: f64,
-    ) {
+    pub fn apply_prior_update(&mut self, prior_json: String) {
+        crate::trie_debug!(
+            "[bayesian] apply_prior_update json_len={}",
+            prior_json.len()
+        );
+        let payload: PriorUpdatePayload = serde_json::from_str(&prior_json)
+            .expect("prior_json should deserialize to prior update content shape");
         crate::trie_debug!(
             "[bayesian] apply_prior_update final_token={:?} full_string_len={} logits_len={} stop_logit={}",
-            final_token.as_deref(),
-            full_string.len(),
-            follower_logits.len(),
-            stop_logit
+            payload.final_token.as_deref(),
+            payload.full_string.len(),
+            payload.follower_logits.len(),
+            payload.stop_logit
         );
-        let order = PredictionOrder::FullOrder(final_token, full_string.clone());
+        let order = PredictionOrder::FullOrder(
+            payload.final_token,
+            payload.full_string.clone(),
+        );
         let prediction = Prediction::create_prediction(
             order,
-            Some(follower_logits.into_boxed_slice()),
-            Some(stop_logit),
+            Some(payload.follower_logits.into_boxed_slice()),
+            Some(payload.stop_logit),
             &self.trie.tokenizer,
         );
-        self.trie.apply_prior_update(full_string, prediction);
+        self.trie.apply_prior_update(payload.full_string, prediction);
         crate::trie_debug!("[bayesian] apply_prior_update done");
     }
 
     // expand and snapshot
     pub fn snapshot_json(&mut self) -> String {
-        let snapshot = self.trie.snapshot_trie(self.threshold);
-        serde_json::to_string(&snapshot).expect("TrieSnapshot should serialize to JSON")
-    }
-
-    pub fn snapshot_json_with_threshold(&mut self, threshold: f64) -> String {
-        let snapshot = self.trie.snapshot_trie(threshold);
+        let snapshot = self.trie.snapshot_trie();
         serde_json::to_string(&snapshot).expect("TrieSnapshot should serialize to JSON")
     }
 
@@ -101,12 +104,23 @@ impl BayesianSession {
     }
 }
 
+#[cfg(test)]
+impl BayesianSession {
+    pub(crate) fn trie_snapshot_at_current(&self) -> TrieSnapshot {
+        self.trie.snapshot_at_current()
+    }
+
+    pub(crate) fn expand_trie(&mut self) {
+        self.trie.expand_trie();
+    }
+}
+
 #[cfg(feature = "python")]
 #[pymethods]
 impl BayesianSession {
     #[new]
-    fn py_new(threshold: f64, max_expand_budget: usize) -> Self {
-        Self::new(threshold, max_expand_budget)
+    fn py_new() -> Self {
+        Self::new()
     }
 
     #[pyo3(name = "reset")]
@@ -120,24 +134,13 @@ impl BayesianSession {
     }
 
     #[pyo3(name = "apply_prior_update")]
-    fn py_apply_prior_update(
-        &mut self,
-        final_token: Option<String>,
-        full_string: String,
-        follower_logits: Vec<f64>,
-        stop_logit: f64,
-    ) {
-        self.apply_prior_update(final_token, full_string, follower_logits, stop_logit);
+    fn py_apply_prior_update(&mut self, prior_json: String) {
+        self.apply_prior_update(prior_json);
     }
 
     #[pyo3(name = "snapshot_json")]
     fn py_snapshot_json(&mut self) -> String {
         self.snapshot_json()
-    }
-
-    #[pyo3(name = "snapshot_json_with_threshold")]
-    fn py_snapshot_json_with_threshold(&mut self, threshold: f64) -> String {
-        self.snapshot_json_with_threshold(threshold)
     }
 
     #[pyo3(name = "lexicographic_tokens_json")]

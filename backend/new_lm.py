@@ -5,7 +5,6 @@ from __future__ import annotations
 import atexit
 import asyncio
 import json
-import math
 import os
 from pathlib import Path
 import signal
@@ -22,8 +21,6 @@ from fastapi import FastAPI, WebSocket
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-DEFAULT_THRESHOLD = math.log(1 / 200)
-DEFAULT_MAX_EXPAND_BUDGET = 100_000
 EXPECTED_FILTERED_TOKEN_COUNT = 17_235
 PIDFILE_PATH = Path("/tmp/dotter_new_lm.pid")
 START_TS = time.monotonic()
@@ -259,12 +256,10 @@ def top_snapshot_strings(snapshot_json: str, max_items: int) -> list[str]:
 
 
 class BackendRuntime:
-    def __init__(self, threshold: float, max_expand_budget: int) -> None:
+    def __init__(self) -> None:
         _log("BackendRuntime init start")
-        self.threshold = threshold
-        self.max_expand_budget = max_expand_budget
         self.prompt = ""
-        self.session = bayesian.BayesianSession(threshold, max_expand_budget)
+        self.session = bayesian.BayesianSession()
         _log("BayesianSession constructed")
         lexicographic_tokens = json.loads(self.session.lexicographic_tokens_json())
         _log(f"loaded lexicographic tokens count={len(lexicographic_tokens)}")
@@ -289,28 +284,21 @@ class BackendRuntime:
             final_token, full_string, follower_logits, stop_logit = (
                 self.prior_model.prior_update_for_string(self.prompt)
             )
-            self.session.apply_prior_update(
-                final_token,
-                full_string,
-                follower_logits.tolist(),
-                stop_logit,
-            )
-            payload = {
-                "type": "prior_update",
-                "content": {
-                    "final_token": final_token,
-                    "full_string": full_string,
-                    "follower_logits": follower_logits.tolist(),
-                    "stop_logit": stop_logit,
-                },
+            content = {
+                "final_token": final_token,
+                "full_string": full_string,
+                "follower_logits": follower_logits.tolist(),
+                "stop_logit": stop_logit,
             }
+            self.session.apply_prior_update(json.dumps(content))
+            payload = {"type": "prior_update", "content": content}
             await websocket.send_text(json.dumps(payload))
 
 
 _ensure_singleton_backend_process()
 
 app = FastAPI()
-runtime = BackendRuntime(DEFAULT_THRESHOLD, DEFAULT_MAX_EXPAND_BUDGET)
+runtime = BackendRuntime()
 
 
 @app.websocket("/ws")

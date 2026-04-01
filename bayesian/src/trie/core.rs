@@ -5,7 +5,8 @@ use crate::symbol::Symbol;
 
 use super::{
     MAX_TOKEN_LENGTH, NodeIndex, Prediction, PredictionIndex, PredictionOrder, PredictionRegistry,
-    SnapshotWalker, TrieSnapshot, TrieSnapshotNode, logaddexp,
+    SnapshotWalker, TrieSnapshot, TrieSnapshotNode, TRIE_EXPANSION_THRESHOLD, TRIE_MAX_VISITS,
+    logaddexp,
 };
 
 #[derive(Clone, Debug)]
@@ -89,9 +90,7 @@ enum RecalcMode<'a> {
         new_prediction_index: PredictionIndex,
         comparable_to_pred_node: bool,
     },
-    Expansion {
-        threshold: f64,
-    },
+    Expansion,
 }
 
 impl<'a> RecalcMode<'a> {
@@ -129,9 +128,7 @@ impl<'a> RecalcMode<'a> {
                     comparable_to_pred_node: child_comparable_to_pred_node,
                 }
             }
-            Self::Expansion { threshold } => Self::Expansion {
-                threshold: *threshold,
-            },
+            Self::Expansion => Self::Expansion,
         }
     }
 }
@@ -280,13 +277,8 @@ impl Trie {
         walker
     }
 
-    // defaults
-    fn default_visit_budget(&self) -> i32 {
-        200
-    }
-
-    fn default_expand_threshold(&self) -> f64 {
-        (0.01_f64).ln()
+    fn visit_budget() -> i32 {
+        TRIE_MAX_VISITS
     }
 
     pub(crate) fn root_index(&self) -> NodeIndex {
@@ -399,7 +391,7 @@ impl Trie {
                     node.prediction_last_change = self.m;
                 }
             }
-            RecalcMode::Expansion { .. } => {}
+            RecalcMode::Expansion => {}
         };
         // 2. recalc prior
         // tp
@@ -506,7 +498,7 @@ impl Trie {
                         // no-reweighting case
                     )
             }
-            RecalcMode::Expansion { threshold } => node_z < *threshold,
+            RecalcMode::Expansion => node_z < TRIE_EXPANSION_THRESHOLD,
         };
         // 5. ensure prediction and children
         if !stop {
@@ -591,7 +583,7 @@ impl Trie {
                 snapshot,
                 snapshot_walker,
             },
-            &mut self.default_visit_budget(),
+            &mut Self::visit_budget(),
         );
     }
 
@@ -606,17 +598,22 @@ impl Trie {
                 new_prediction_index: pred_index,
                 comparable_to_pred_node: true,
             },
-            &mut self.default_visit_budget(),
+            &mut Self::visit_budget(),
         );
     }
 
-    fn expand_trie_to_threshold(&mut self, threshold: f64) {
+    pub(crate) fn expand_trie(&mut self) {
         let walker = self.root_walker();
         self.recalc_to_frontier_and_back(
             walker,
-            RecalcMode::Expansion { threshold },
-            &mut self.default_visit_budget(),
+            RecalcMode::Expansion,
+            &mut Self::visit_budget(),
         );
+    }
+
+    /// Current trie as a snapshot (no expansion pass). Only nodes with `z > TRIE_EXPANSION_THRESHOLD` appear as children.
+    pub(crate) fn snapshot_at_current(&self) -> TrieSnapshot {
+        self.to_snapshot()
     }
 
     // EXPERIMENTAL (END)
@@ -732,15 +729,16 @@ impl Trie {
     }
 
     // snapshot
-    pub(crate) fn snapshot_trie(&mut self, threshold: f64) -> TrieSnapshot {
-        self.expand_trie_to_threshold(threshold);
-        self.to_snapshot(threshold)
+    pub(crate) fn snapshot_trie(&mut self) -> TrieSnapshot {
+        self.expand_trie();
+        self.to_snapshot()
     }
 
-    fn to_snapshot(&self, threshold: f64) -> TrieSnapshot {
+    fn to_snapshot(&self) -> TrieSnapshot {
         let mut index_map = vec![None; self.nodes.len()];
         let mut snapshot_nodes = Vec::new();
-        let root = self.snapshot_subtree(self.root, threshold, &mut index_map, &mut snapshot_nodes);
+        let root =
+            self.snapshot_subtree(self.root, &mut index_map, &mut snapshot_nodes);
         TrieSnapshot {
             nodes: snapshot_nodes,
             root,
@@ -750,7 +748,6 @@ impl Trie {
     fn snapshot_subtree(
         &self,
         node_index: NodeIndex,
-        threshold: f64,
         index_map: &mut [Option<NodeIndex>],
         snapshot_nodes: &mut Vec<TrieSnapshotNode>,
     ) -> NodeIndex {
@@ -776,9 +773,9 @@ impl Trie {
                 }
                 let child_index = base + symbol.to_slot() as usize;
                 let child = &self.nodes[child_index];
-                if child.z > threshold {
+                if child.z > TRIE_EXPANSION_THRESHOLD {
                     let child_snapshot_index =
-                        self.snapshot_subtree(child_index, threshold, index_map, snapshot_nodes);
+                        self.snapshot_subtree(child_index, index_map, snapshot_nodes);
                     children.push((symbol, child_snapshot_index));
                 }
             }
@@ -800,9 +797,9 @@ mod tests {
     use super::*;
     use crate::bpe::TOKENIZER_JSON_PATH;
 
-    fn dump_trie_after_expand(threshold: f64) {
+    fn dump_trie_after_expand() {
         let mut trie = Trie::from_tokenizer_json(TOKENIZER_JSON_PATH);
-        trie.expand_trie_to_threshold(threshold);
+        trie.expand_trie();
 
         let expanded_nodes = trie
             .nodes
@@ -915,18 +912,8 @@ mod tests {
     }
 
     #[test]
-    fn trie_expand_threshold_smoke_test() {
-        dump_trie_after_expand((1.0 / 30.0_f64).ln());
-    }
-
-    #[test]
-    fn trie_expand_threshold_one_over_one_hundred() {
-        dump_trie_after_expand((1.0 / 100.0_f64).ln());
-    }
-
-    #[test]
-    fn trie_expand_threshold_one_over_two_hundred() {
-        dump_trie_after_expand((1.0 / 200.0_f64).ln());
+    fn trie_expand_smoke_test() {
+        dump_trie_after_expand();
     }
 
     /// Mirrors V3 + `backend/new_lm.py`: expand, JSON round-trip snapshot, dummy letter
@@ -936,8 +923,7 @@ mod tests {
         use crate::bpe::NUM_TOKENS;
 
         let mut trie = Trie::from_tokenizer_json(TOKENIZER_JSON_PATH);
-        let threshold = (1.0_f64 / 200.0).ln();
-        let snapshot = trie.snapshot_trie(threshold);
+        let snapshot = trie.snapshot_trie();
         let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
         let mut snap: TrieSnapshot = serde_json::from_str(&json).expect("round-trip snapshot");
 

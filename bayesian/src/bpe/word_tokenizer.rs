@@ -296,6 +296,32 @@ impl TinyLlamaWordTokenizer {
         self.token_to_lex_index.get(normalized.as_str()).copied()
     }
 
+    /// Sparse follower logits as a full `NUM_TOKENS` vector: each supplied `(token, logit)` is
+    /// written at that token’s lex index (after [`normalize_surface_to_tokenizer`]); every other
+    /// slot is [`f64::NEG_INFINITY`].
+    ///
+    /// Panics if a token is not in the vocabulary, or if two pairs map to the same lex index.
+    pub fn follower_logits_from_token_logits<I, S>(&self, pairs: I) -> Box<[f64]>
+    where
+        I: IntoIterator<Item = (S, f64)>,
+        S: AsRef<str>,
+    {
+        let mut v = vec![f64::NEG_INFINITY; NUM_TOKENS];
+        for (s, logit) in pairs {
+            let token = s.as_ref();
+            let idx = self.lex_index(token).unwrap_or_else(|| {
+                panic!("unknown follower token for sparse logits: {token:?}")
+            });
+            if v[idx].is_finite() {
+                panic!(
+                    "duplicate follower token for sparse logits: second occurrence maps to lex index {idx} ({token:?})"
+                );
+            }
+            v[idx] = logit;
+        }
+        v.into_boxed_slice()
+    }
+
     pub fn prefix_lex_index(&self, prefix: &str) -> Option<usize> {
         let normalized = Self::normalize_surface_to_tokenizer(prefix);
         self.prefix_to_lex_index.get(normalized.as_str()).copied()

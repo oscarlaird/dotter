@@ -1,5 +1,11 @@
 //! Trie engine and public session API.
 
+/// `ln(1/200)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
+pub const TRIE_EXPANSION_THRESHOLD: f64 = -5.2983173665480363;
+
+/// Maximum node visits per `recalc_to_frontier_and_back` traversal.
+pub const TRIE_MAX_VISITS: i32 = 200;
+
 pub type NodeIndex = usize;
 pub(crate) type PredictionIndex = usize;
 pub(crate) type TokenLexIndex = usize;
@@ -7,12 +13,15 @@ pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 
 mod core;
-pub(crate) mod debug;
+pub mod debug;
 mod prediction;
 mod session;
 mod snapshot;
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
+
+#[cfg(test)]
+mod tests;
 
 pub use session::BayesianSession;
 pub use snapshot::{TrieSnapshot, TrieSnapshotNode};

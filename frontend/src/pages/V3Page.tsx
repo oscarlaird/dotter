@@ -42,14 +42,13 @@ function V3Page() {
 	const [wsStatus, setWsStatus] = useState('Connecting...');
 	const sessionRef = useRef<BayesianSession | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
-	const threshold = Math.log(1 / 200);
 
 	const refreshSnapshot = () => {
 		const session = sessionRef.current;
 		if (!session) {
 			return;
 		}
-		const snapshotJson = session.snapshot_json_with_threshold(threshold);
+		const snapshotJson = session.snapshot_json();
 		setSnapshot(JSON.parse(snapshotJson) as TrieSnapshot);
 	};
 
@@ -62,9 +61,9 @@ function V3Page() {
 				setError(null);
 				await initBayesianWasm();
 				if (!sessionRef.current) {
-					sessionRef.current = new BayesianSession(threshold, 100_000);
+					sessionRef.current = new BayesianSession();
 				}
-				const snapshotJson = sessionRef.current.snapshot_json_with_threshold(threshold);
+				const snapshotJson = sessionRef.current.snapshot_json();
 				const parsedSnapshot = JSON.parse(snapshotJson) as TrieSnapshot;
 				if (!cancelled) {
 					setSnapshot(parsedSnapshot);
@@ -84,7 +83,7 @@ function V3Page() {
 		return () => {
 			cancelled = true;
 		};
-	}, [threshold]);
+	}, []);
 
 	useEffect(() => {
 		const ws = new WebSocket('ws://localhost:8000/ws');
@@ -126,12 +125,7 @@ function V3Page() {
 						Array.isArray(content.follower_logits) &&
 						typeof content.stop_logit === 'number'
 					) {
-						session.apply_prior_update(
-							content.final_token ?? null,
-							content.full_string,
-							new Float64Array(content.follower_logits),
-							content.stop_logit,
-						);
+						session.apply_prior_update(JSON.stringify(content));
 						refreshSnapshot();
 					}
 					return;
@@ -208,7 +202,7 @@ function V3Page() {
 			<div className="mx-auto flex h-full max-w-7xl flex-col gap-4">
 				<h1 className="text-3xl font-semibold">V3 Trie Snapshot</h1>
 				<p className="text-sm text-gray-300">
-					Threshold <code>ln(1/200)</code>, budget <code>100000</code>
+					Expansion uses fixed Rust constants <code>ln(1/200)</code> and <code>200</code> visits.
 				</p>
 				<p className="text-sm text-gray-400">
 					WebSocket: <code>{wsStatus}</code>
