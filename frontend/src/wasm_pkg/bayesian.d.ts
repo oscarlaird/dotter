@@ -4,10 +4,13 @@
 export class BayesianSession {
     free(): void;
     [Symbol.dispose](): void;
+    apply_likelihood_update(snapshot_json: string): void;
+    apply_prior_update(final_token: string | null | undefined, full_string: string, follower_logits: Float64Array, stop_logit: number): void;
+    lexicographic_tokens_json(): string;
     constructor(threshold: number, max_expand_budget: number);
     reset(): void;
     snapshot_json(): string;
-    update_likelihoods(snapshot_json: string): string;
+    snapshot_json_with_threshold(threshold: number): string;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -15,14 +18,17 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_bayesiansession_free: (a: number, b: number) => void;
+    readonly bayesiansession_apply_likelihood_update: (a: number, b: number, c: number) => void;
+    readonly bayesiansession_apply_prior_update: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+    readonly bayesiansession_lexicographic_tokens_json: (a: number) => [number, number];
     readonly bayesiansession_new: (a: number, b: number) => number;
     readonly bayesiansession_reset: (a: number) => void;
     readonly bayesiansession_snapshot_json: (a: number) => [number, number];
-    readonly bayesiansession_update_likelihoods: (a: number, b: number, c: number) => [number, number];
+    readonly bayesiansession_snapshot_json_with_threshold: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

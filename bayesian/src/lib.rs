@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 
 #[cfg(feature = "python")]
 #[pymodule]
-fn bayesian(_m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn bayesian(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<BayesianSession>()?;
     Ok(())
 }

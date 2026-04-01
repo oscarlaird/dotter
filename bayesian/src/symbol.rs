@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 /// Number of symbols in the fixed trie alphabet.
 pub const RADIX: usize = 29;
 
-/// Default trie alphabet: `a`–`z`, space, `$`, `^` (slot order matches this slice).
-pub const DEFAULT_ALPHABET: [u8; RADIX] = *b"abcdefghijklmnopqrstuvwxyz $^";
+/// Default trie alphabet: `a`–`z`, `_` (word boundary), `$`, `^` (slot order matches this slice).
+pub const DEFAULT_ALPHABET: [u8; RADIX] = *b"abcdefghijklmnopqrstuvwxyz_$^";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
@@ -101,7 +101,7 @@ impl Symbol {
             b'x' => Some(Self::X),
             b'y' => Some(Self::Y),
             b'z' => Some(Self::Z),
-            b' ' => Some(Self::Space),
+            b'_' => Some(Self::Space),
             b'$' => Some(Self::Stop),
             b'^' => Some(Self::Start),
             _ => None,
@@ -136,7 +136,7 @@ impl Symbol {
             Self::X => b'x',
             Self::Y => b'y',
             Self::Z => b'z',
-            Self::Space => b' ',
+            Self::Space => b'_',
             Self::Stop => b'$',
             Self::Start => b'^',
         }

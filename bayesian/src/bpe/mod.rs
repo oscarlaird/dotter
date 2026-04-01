@@ -856,7 +856,7 @@ mod tests {
     fn canonical_pair_batch_supports_special_first_token_via_scalar_path() {
         let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
         let mask = tok.canonical_followers("<s>");
-        assert_eq!(mask, [false; NUM_TOKENS]);
+        assert_eq!(mask, vec![false; tok.tokens().len()]);
     }
 
     #[test]

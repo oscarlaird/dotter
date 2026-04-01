@@ -66,7 +66,7 @@ impl Prediction {
 
         let canonical_followers_array = match final_token.as_deref() {
             Some(final_token) => tokenizer.canonical_followers(final_token),
-            None => [true; NUM_TOKENS],
+            None => vec![true; tokenizer.tokens().len()],
         };
         let canonical_counts_by_prefix =
             tokenizer.count_true_tokens_by_prefix::<NUM_PREFIXES>(&canonical_followers_array);

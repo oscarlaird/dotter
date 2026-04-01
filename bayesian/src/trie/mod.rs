@@ -7,6 +7,7 @@ pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 
 mod core;
+pub(crate) mod debug;
 mod prediction;
 mod session;
 mod snapshot;

@@ -72,6 +72,18 @@ pub struct TinyLlamaWordTokenizer {
 }
 
 impl TinyLlamaWordTokenizer {
+    fn normalize_surface_to_tokenizer(surface: &str) -> String {
+        let mut out = String::with_capacity(surface.len());
+        for ch in surface.chars() {
+            if ch == ' ' || ch == '_' {
+                out.push(SPACESYMBOL);
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
     pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
         let text = fs::read_to_string(path.as_ref()).expect("failed to read tokenizer.json");
         Self::from_tokenizer_json_str(&text)
@@ -280,11 +292,13 @@ impl TinyLlamaWordTokenizer {
 
     /// The lexicographic index of `token`, if it is present in the tokenizer vocabulary.
     pub fn lex_index(&self, token: &str) -> Option<usize> {
-        self.token_to_lex_index.get(token).copied()
+        let normalized = Self::normalize_surface_to_tokenizer(token);
+        self.token_to_lex_index.get(normalized.as_str()).copied()
     }
 
     pub fn prefix_lex_index(&self, prefix: &str) -> Option<usize> {
-        self.prefix_to_lex_index.get(prefix).copied()
+        let normalized = Self::normalize_surface_to_tokenizer(prefix);
+        self.prefix_to_lex_index.get(normalized.as_str()).copied()
     }
 
     /// The token stored at `lex_index`.
@@ -320,7 +334,7 @@ impl TinyLlamaWordTokenizer {
 
     /// True iff `prefix` is a prefix of some token in lexicographic order.
     pub fn has_token_with_prefix(&self, prefix: &str) -> bool {
-        self.prefix_to_lex_index.contains_key(prefix)
+        self.prefix_lex_index(prefix).is_some()
     }
 
     /// True iff `prefix` is a strict prefix of some token in lexicographic order.
@@ -506,8 +520,8 @@ impl TinyLlamaWordTokenizer {
     pub fn canonical_pair_batch_with_first_token_right_spine(
         &self,
         first_token_right_spine: &PackedSpine,
-    ) -> [bool; NUM_TOKENS] {
-        let mut out = [false; NUM_TOKENS];
+    ) -> Vec<bool> {
+        let mut out = vec![false; self.lex_tokens.len()];
         self.canonical_pair_batch_with_first_token_right_spine_into(
             first_token_right_spine,
             &mut out,
@@ -515,13 +529,13 @@ impl TinyLlamaWordTokenizer {
         out
     }
 
-    pub fn canonical_followers_for_lex_index(&self, first_lex_index: usize) -> [bool; NUM_TOKENS] {
+    pub fn canonical_followers_for_lex_index(&self, first_lex_index: usize) -> Vec<bool> {
         let first_token = self.token_at(first_lex_index);
         if let Some(first_token_right_spine) = self.right_packed_spine(first_token) {
             return self
                 .canonical_pair_batch_with_first_token_right_spine(&first_token_right_spine);
         }
-        let mut out = [false; NUM_TOKENS];
+        let mut out = vec![false; self.lex_tokens.len()];
         self.seed_space_prefixed_second_tokens(&mut out);
         for (second_lex_index, second_token) in self.lex_tokens.iter().enumerate() {
             if out[second_lex_index] {
@@ -599,10 +613,13 @@ impl TinyLlamaWordTokenizer {
         .unwrap_or_else(|| self.merges.canonical_pair(a, b))
     }
 
-    pub fn canonical_followers(&self, token: &str) -> [bool; NUM_TOKENS] {
-        let first_lex_index = self
-            .lex_index(token)
-            .expect("token must be present in tokenizer vocabulary");
+    pub fn canonical_followers(&self, token: &str) -> Vec<bool> {
+        let first_lex_index = self.lex_index(token).unwrap_or_else(|| {
+            panic!(
+                "token must be present in tokenizer vocabulary: token={:?}",
+                token
+            )
+        });
         self.canonical_followers_for_lex_index(first_lex_index)
     }
 

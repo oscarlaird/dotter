@@ -404,6 +404,11 @@ impl Trie {
         // 2. recalc prior
         // tp
         let idx = self.nodes[node_index].final_token_length as usize;
+        assert!(
+            idx < MAX_TOKEN_LENGTH,
+            "walker slot OOB: node_index={node_index} final_token_length={} idx={idx} MAX_TOKEN_LENGTH={MAX_TOKEN_LENGTH}",
+            self.nodes[node_index].final_token_length,
+        );
         let new_tp_last_change =
             walker.a_tp_last_change[idx].max(walker.a_prediction_last_change[idx]);
         let tp_last_change = self.nodes[node_index].tp_last_change;
@@ -412,6 +417,11 @@ impl Trie {
             let a_pred = self.prediction_registry.get(a_pred_index).unwrap();
             let node_symbol = self.nodes[node_index].symbol;
             let new_token_lexindex = self.nodes[node_index].new_token_lexindex;
+            assert!(
+                new_token_lexindex < a_pred.follower_probs.len(),
+                "follower_probs OOB: node_index={node_index} symbol={node_symbol:?} new_token_lexindex={new_token_lexindex} follower_probs_len={}",
+                a_pred.follower_probs.len(),
+            );
             let final_token_prob = if node_symbol != Symbol::Stop {
                 a_pred.follower_probs[new_token_lexindex]
             } else {
@@ -478,7 +488,7 @@ impl Trie {
         let stop = match &mode {
             RecalcMode::LikelihoodUpdate {
                 snapshot_walker, ..
-            } => snapshot_walker.has_children_in_snapshot,
+            } => !snapshot_walker.has_children_in_snapshot,
             RecalcMode::PriorUpdate {
                 new_prediction_symbol_seq,
                 comparable_to_pred_node,
@@ -614,13 +624,21 @@ impl Trie {
     // ensure
     fn ensure_prediction(&mut self, walker: &mut Walker) -> PredictionIndex {
         let node_index = walker.node;
+        assert_ne!(
+            self.nodes[node_index].symbol,
+            Symbol::Stop,
+            "ensure_prediction must never be called on a Stop node"
+        );
         let prediction_index = if let Some(index) = self.nodes[node_index].prediction {
             index
         } else {
             let final_token_length = self.nodes[node_index].final_token_length;
             let final_token_string =
                 Walker::symbol_slice_to_string(&walker.a_symbol[..final_token_length as usize]);
-            let final_token = if final_token_string.is_empty() {
+            let final_token =
+                if final_token_string.is_empty()
+                    || final_token_string == "^"
+                {
                 None
             } else {
                 Some(final_token_string)
@@ -646,6 +664,11 @@ impl Trie {
 
     fn ensure_children(&mut self, walker: &Walker) {
         let parent_index = walker.node;
+        assert_ne!(
+            self.nodes[parent_index].symbol,
+            Symbol::Stop,
+            "ensure_children must never be called on a Stop node"
+        );
         if self.nodes[parent_index].children_start_index.is_some() {
             return;
         }
@@ -665,6 +688,7 @@ impl Trie {
                 continue;
             }
             let mut child = Node::fresh();
+            child.symbol = symbol;
 
             if symbol == Symbol::Stop {
                 child.final_token_length = 1;
@@ -903,5 +927,45 @@ mod tests {
     #[test]
     fn trie_expand_threshold_one_over_two_hundred() {
         dump_trie_after_expand((1.0 / 200.0_f64).ln());
+    }
+
+    /// Mirrors V3 + `backend/new_lm.py`: expand, JSON round-trip snapshot, dummy letter
+    /// likelihoods, then a full-order prior at the reset prompt.
+    #[test]
+    fn v3_likelihood_then_prior_like_browser() {
+        use crate::bpe::NUM_TOKENS;
+
+        let mut trie = Trie::from_tokenizer_json(TOKENIZER_JSON_PATH);
+        let threshold = (1.0_f64 / 200.0).ln();
+        let snapshot = trie.snapshot_trie(threshold);
+        let json = serde_json::to_string(&snapshot).expect("serialize snapshot");
+        let mut snap: TrieSnapshot = serde_json::from_str(&json).expect("round-trip snapshot");
+
+        for n in &mut snap.nodes {
+            if n.symbol == Symbol::A {
+                n.likelihood = 0.0;
+            } else {
+                n.likelihood = -2.0;
+            }
+        }
+
+        trie.apply_likelihood_update(&snap);
+
+        let prompt = concat!(
+            "my watch fell in the water\n",
+            "prevailing wind from the east\n",
+            "never too rich and never too thin\n",
+            "breathing is difficult\n",
+            "i can see the rings on saturn\n",
+        );
+
+        let logits = vec![0.0_f64; NUM_TOKENS].into_boxed_slice();
+        let prediction = Prediction::create_prediction(
+            PredictionOrder::FullOrder(None, prompt.to_string()),
+            Some(logits),
+            Some(0.0_f64),
+            &trie.tokenizer,
+        );
+        trie.apply_prior_update(prompt.to_string(), prediction);
     }
 }

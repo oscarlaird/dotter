@@ -11,3 +11,4 @@ This project is actively in development. Optimize for making progress over prese
 - Do not treat existing tests as constraints that must be preserved.
 - Freely delete stale, low-value, or obsolete tests.
 - Do not usually add new tests unless the user explicitly asks for them or a focused test is clearly high value.
+- *Never* implement "panic safe handling", "error handling", "graceful fallbacks" or other such banes. We never want to hide errors and mismatches, these are highly valuable indicators of fundamental problems in the code.
