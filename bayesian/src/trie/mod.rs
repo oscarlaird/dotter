@@ -17,6 +17,7 @@ pub mod debug;
 mod prediction;
 mod session;
 mod snapshot;
+mod rolling_hash;
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
 
