@@ -11,6 +11,7 @@ pub(crate) type PredictionIndex = usize;
 pub(crate) type TokenLexIndex = usize;
 pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
+pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 
 mod core;
 pub mod debug;

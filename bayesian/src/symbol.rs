@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Number of symbols in the fixed trie alphabet.
 pub const RADIX: usize = 29;
+pub type RadixBitmap = u32;
 
 /// Default trie alphabet: `a`–`z`, `_` (word boundary), `$`, `^` (slot order matches this slice).
 pub const DEFAULT_ALPHABET: [u8; RADIX] = *b"abcdefghijklmnopqrstuvwxyz_$^";

@@ -1,8 +1,11 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
-use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
-use crate::symbol::Symbol;
+use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer, TOKENIZER_JSON_STR};
+use crate::symbol::{Symbol, RADIX, RadixBitmap};
+use crate::trie::MAX_TRUNCATION_POSSIBLE;
+use crate::trie::rolling_hash as rh;
 
 use super::{
     MAX_TOKEN_LENGTH, NodeIndex, Prediction, PredictionIndex, PredictionOrder, PredictionRegistry,
@@ -31,348 +34,290 @@ fn dump_fmt_lex(x: usize) -> String {
     }
 }
 
+
+
 #[derive(Clone, Debug)]
-pub(crate) struct Node {
-    // currently this is about 600B, but my napkin math says it could be as low as 132B
-    // a tokentrie heap absolutely needs at least 8B per heap item -> 8B x 20K = 160KB
-    // so >1000 nodes are less than a single prediction's heap burden
-    // furthermore, we don't have to add it all to the heap if we use a subheap
-    // trie
-    /// Index in `Trie::nodes` of the first child block, ordered like `Symbol::ALL` without the final `Start`.
-    /// `None` if no child block has been allocated for this node yet.
+pub(crate) struct XNode {
     symbol: Symbol,
-    pub(crate) children_start_index: Option<NodeIndex>,
-    is_root: bool,
-    // tokenization
-    truncation_possible: [bool; MAX_TOKEN_LENGTH],
-    final_token_length: u8,
-    n_tokens: u32,
-    prediction: Option<PredictionIndex>,
-    prediction_last_change: i32,
-    new_token_lexindex: usize,
-    // can probably remove this by having a global map of prefix+char->prefix
-    // and making the walker responsible for tracking this
-    new_prefix_lexindex: [usize; MAX_TOKEN_LENGTH],
-    // prior
-    p: f64, // log string branch prior
-    p_last_change: i32,
-    p_old: f64, // log string branch prior at the posterior prior time
-    mp: i32,    // prior tracking time
-    // could probably re-lookup the fps on prior updates and not store this
-    fp: [f64; MAX_TOKEN_LENGTH], // token fans for each ancestor i
-    tp: f64,                     // log token branch prior
-    tp_last_change: i32,
-    mtp: i32, // token branch prior tracking time
-    // likelihood
-    l: f64,     // log likelihood
-    l_old: f64, // log likelihood at the posterior likelihood time
-    nl: i32,    // likelihood tracking time
-    pub(crate) ul: f64,    // log upper likelihood
-    // I don't see how to avoid this, but perhaps we can determine the max number of nonzero entries and use a bitmap
-    #[cfg(feature = "tokentrie")]
-    tl: [f64; MAX_TOKEN_LENGTH], // log token branch likelihood for each ancestor i,  i.e., log "Maximum Truncation Compatible Descendant Likelihood", for each ancestor i
-    #[cfg(feature = "tokentrie")]
-    ntl: i32,                    // token branch likelihood tracking time
-    cum_likelihood_frontier: bool,
-    // posterior
-    z: f64,  // log unnormalized posterior
-    nz: i32, // posterior likelihood time
-    mz: i32, // posterior prior time
+    // we don't store a node's hash, because there is no way to reach the node without knowing it
+    // for all matrices, children are arrayed on the major axis
+    c_truncation_possible: [u16; RADIX],
+    c_final_token_length: [u8; RADIX],
+    // c_final_token_lexindex: [u16; RADIX],
+    // c_prefix_lexindex: [[u16; MAX_TRUNCATION_POSSIBLE]; RADIX],
+    c_p: [f32; RADIX],
+    c_p_old: [f32; RADIX],
+    c_fp: [[f32; MAX_TRUNCATION_POSSIBLE]; RADIX],
+    c_tp: [f32; RADIX],
+    c_tp_time: [ContextWindowSize; RADIX],
+    c_old_a_tp_time: [[ContextWindowSize; MAX_TRUNCATION_POSSIBLE]; RADIX],
+    c_old_fp_time: [AncestorsBitmap; RADIX],
+    c_l: [f32; RADIX],
+    c_has_fullorder_pred: RadixBitmap,
+    // #[cfg(feature = "tokentrie")]
+    c_self_tl: [f32; RADIX],
+    c_a_tl: [[f32; MAX_TRUNCATION_POSSIBLE]; RADIX],
+    c_l_old: [f32; RADIX],
+    c_ul: [f32; RADIX],
+    c_cum_likelihood_frontier: RadixBitmap,
+    c_z: [f32; RADIX],
+    // ROOT
+    is_root_clf: bool,
 }
+
+pub(crate) struct XPrediction {
+}
+
+type Hash = u64;
+
+
+pub(crate) struct XBayes {
+    nodes: rh::RHashMap<XNode>,
+    full_predictions: rh::RHashMap<XPrediction>,
+    zero_order_predictions: rh::RHashMap<XPrediction>,
+    pending_likelihood: LUpdate,
+    pending_prior: PUpdate,
+    tokenizer: TinyLlamaWordTokenizer,
+
+}
+
+pub(crate) struct LUpdate {
+    likelihoods: rh::RHashMap<f32>,
+    cpc_form: bool, // complete prefix code form
+}
+
+pub(crate) struct PUpdate {
+    new_predictions: rh::RHashSet,
+}
+
+type ContextWindowSize = u8;
+type AncestorsBitmap = u16;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Trie {
-    pub(crate) nodes: Vec<Node>,
-    pub(crate) prediction_registry: PredictionRegistry,
-    pub(crate) tokenizer: TinyLlamaWordTokenizer,
-    root: NodeIndex,
-    n: i32, // determines meaning/correctness of ul
-    m: i32, // determines meaning/correctness of last_changed
+struct XWalker {
+    // policy: don't make consecutive zero order predictions; and don't expand if we are compelled to do so
+    // its a bad policy because we must go through weird finishers with weird ancestors
+    // still the time on a tp can meaningfully be the number of full order ancestors i.e. the context window or better; so u8s work fine for the time
+    hash: Hash,
+    depth: u16,
+    a_symbol: [Symbol; MAX_TOKEN_LENGTH],
+    a_tp: [f32; MAX_TOKEN_LENGTH],
+    a_tp_time: [ContextWindowSize; MAX_TOKEN_LENGTH],
+    a_pred_time: AncestorsBitmap, // last bit is most recent
 }
 
-#[derive(Copy, Clone, Debug)]
-struct Walker {
-    node: NodeIndex,
-    depth: u32,
-    a_symbol: [Option<Symbol>; MAX_TOKEN_LENGTH], // symbol for each ancestor i
-    a_tp: [f64; MAX_TOKEN_LENGTH],                // token branch prior for each ancestor i
-    a_prediction_index: [Option<PredictionIndex>; MAX_TOKEN_LENGTH], // prediction index for each ancestor i
-    a_p_last_change: [i32; MAX_TOKEN_LENGTH],
-    a_tp_last_change: [i32; MAX_TOKEN_LENGTH],
-    a_prediction_last_change: [i32; MAX_TOKEN_LENGTH],
-}
-
-#[derive(Debug)]
-enum RecalcMode<'a> {
-    LikelihoodUpdate {
-        snapshot: &'a TrieSnapshot,
-        snapshot_walker: SnapshotWalker,
-    },
-    PriorUpdate {
-        new_prediction_symbol_seq: &'a [Symbol],
-        new_prediction_index: PredictionIndex,
-        comparable_to_pred_node: bool,
-    },
-    Expansion,
-}
-
-impl<'a> RecalcMode<'a> {
-    fn is_update(&self) -> bool {
-        matches!(
-            self,
-            Self::LikelihoodUpdate { .. } | Self::PriorUpdate { .. }
-        )
+impl LUpdate {
+    fn new() -> Self {
+        Self {
+            likelihoods: rh::RHashMap::new(),
+            cpc_form: false,
+        }
     }
 
-    fn child(&self, walker: &Walker, symbol: Symbol) -> Self {
-        match self {
-            Self::LikelihoodUpdate {
-                snapshot,
-                snapshot_walker,
-            } => Self::LikelihoodUpdate {
-                snapshot,
-                snapshot_walker: snapshot.descend(snapshot_walker, symbol),
-            },
-            Self::PriorUpdate {
-                new_prediction_symbol_seq,
-                new_prediction_index,
-                comparable_to_pred_node,
-            } => {
-                let child_comparable_to_pred_node =
-                    if walker.depth < new_prediction_symbol_seq.len() as u32 {
-                        *comparable_to_pred_node
-                            && new_prediction_symbol_seq[walker.depth as usize] == symbol
-                    } else {
-                        *comparable_to_pred_node
-                    };
-                Self::PriorUpdate {
-                    new_prediction_symbol_seq,
-                    new_prediction_index: *new_prediction_index,
-                    comparable_to_pred_node: child_comparable_to_pred_node,
+    fn to_cpc_form(&mut self) {
+        // Complete prefix code form ensures that no node's prefix appears as another node: every sequence represented is maximal/non-overlapping.
+        // Example for alphabet {a, b, c}:
+        // Starting tree: 
+        //   root(4.0)
+        //     |- a(3.0)
+        //         |- aa(2.0)
+        //     |- b(1.0)
+        // Transformation yields set:
+        //   { aa(2.0), ab(3.0), ac(3.0), b(1.0), c(4.0) }
+        //   (each string is now maximal/non-prefix of any other in set)
+        if self.cpc_form { return; }
+        struct Entry {
+            hash: Hash,
+            likelihood: f32,
+        }
+        let mut new_entries: Vec<Entry> = Vec::new();
+        let mut remove_entries: Vec<Hash> = Vec::new();
+        for (hash, &likelihood) in self.likelihoods.iter() {
+            let mut has_any_children = false;
+            let mut non_preexisting_child_hashes: Vec<Hash> = Vec::new();
+            for symbol in Symbol::ALL {
+                let child_hash = rh::append_right(*hash, symbol.to_byte());
+                if self.likelihoods.contains_key(&child_hash) {
+                    has_any_children = true;
+                } else {
+                    non_preexisting_child_hashes.push(child_hash);
                 }
             }
-            Self::Expansion => Self::Expansion,
+            if !has_any_children {
+                continue;
+            }
+            new_entries.extend(non_preexisting_child_hashes.iter()
+                .map(|child_hash| Entry { hash: *child_hash, likelihood: likelihood })
+            );
+            remove_entries.push(*hash);
+        }
+        for hash in remove_entries {
+            self.likelihoods.remove(&hash);
+        }
+        self.likelihoods.extend(new_entries.into_iter().map(|entry| (entry.hash, entry.likelihood)));
+
+    }
+
+    fn merge_many(l_tries: &[&Self]) -> Self {
+        struct Frame {
+            hash: Hash,
+            likelihood: f32,
+            hit_count: u32,
+        }
+        // assume that all likelihood updates are already in complete prefix code form i.e. no node is the prefix of another
+        for &l_trie in l_tries {
+            assert!(l_trie.cpc_form, "All input tries must be in CPC form before merging");
+        }
+        let mut result = Self::new();
+        let mut walkers = vec![Frame { hash: 0, likelihood: 0.0, hit_count: 0 }];
+        let mut iters = 0;
+        while let Some(Frame { hash, likelihood, hit_count }) = walkers.pop() {
+            iters += 1;
+            assert!(iters < 100_000, "merge likelihood update trie: too many iterations");
+            //
+            let (hit_delta, likelihood_delta) = l_tries.iter()
+                .filter_map(|l_trie| l_trie.likelihoods.get(&hash))
+                .fold((0, 0.0f32), |(hits, sum), &v| (hits + 1, sum + v));
+            let new_hits = hit_count + hit_delta;
+            let new_likelihood = likelihood + likelihood_delta;
+            if new_hits == (l_tries.len() as u32) {
+                result.likelihoods.insert(hash, new_likelihood);
+                continue;
+            }
+            //
+            for symbol in Symbol::ALL {
+                if symbol == Symbol::Start { continue; }
+                let child_hash = rh::append_right(hash, symbol.to_byte());
+                walkers.push(Frame { hash: child_hash, likelihood: new_likelihood, hit_count: new_hits })
+            }
+        }
+        result.cpc_form = true;
+        result
+
+    }
+
+    fn merge(&self, other: &Self) -> Self {
+        Self::merge_many(&[self, other])
+    }
+}
+
+impl PUpdate {
+    fn new() -> Self {
+        Self {
+            new_predictions: HashSet::with_hasher(BuildHasherDefault::<IdentityHasher>::default()),
         }
     }
 }
 
-impl Node {
-    /// Default values for a new node (no children allocated).
-    fn fresh() -> Self {
+const ROOT_HASH: Hash = {
+    rh::append_right(0, Symbol::Start.to_byte())
+};
+
+impl XBayes {
+    fn new() -> Self {
+        let nodes = rh::RHashMap::new();
+        let full_predictions = rh::RHashMap::new();
+        let zero_order_predictions = rh::RHashMap::new();
+        let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json_str(TOKENIZER_JSON_STR);
         Self {
-            // trie
-            symbol: Symbol::Start,
-            children_start_index: None,
-            is_root: false,
-            // tokenization
-            final_token_length: 0,
-            n_tokens: 0,
-            prediction: None,
-            prediction_last_change: -1,
-            truncation_possible: [false; MAX_TOKEN_LENGTH],
-            new_token_lexindex: usize::MAX, // invalid
-            new_prefix_lexindex: [usize::MAX; MAX_TOKEN_LENGTH], // invalid
-            // prior
-            p: f64::NEG_INFINITY,
-            p_last_change: -1,
-            p_old: f64::NEG_INFINITY,
-            tp: f64::NEG_INFINITY,
-            tp_last_change: -1,
-            mp: -1,
-            mtp: -1,
-            fp: [f64::NEG_INFINITY; MAX_TOKEN_LENGTH],
-            // likelihood
-            ul: 0.0,
-            l: 0.0,
-            l_old: 0.0,
-            nl: -1,
-            #[cfg(feature = "tokentrie")]
-            tl: [f64::NEG_INFINITY; MAX_TOKEN_LENGTH],
-            #[cfg(feature = "tokentrie")]
-            ntl: 0,
-            cum_likelihood_frontier: true,
-            // posterior
-            z: f64::NEG_INFINITY,
-            nz: -1,
-            mz: -1,
+            nodes,
+            full_predictions,
+            zero_order_predictions,
+            pending_likelihood: LUpdate::new(),
+            pending_prior: PUpdate::new(),
+            tokenizer: tokenizer,
         }
     }
 
-    fn root() -> Self {
-        Self {
-            // trie
-            is_root: true,
-            // tokenization
-            final_token_length: 1,
-            n_tokens: 1,
-            // prior
-            p: 0.0,
-            p_last_change: 0,
-            p_old: 0.0,
-            tp: 0.0,
-            tp_last_change: 0,
-            mp: 0,
-            mtp: 0,
-            // likelihood
-            nl: 0,
-            #[cfg(feature = "tokentrie")]
-            ntl: 0,
-            // posterior
-            z: 0.0,
-            nz: 0,
-            mz: 0,
-            ..Self::fresh()
+    fn root_walker(&self) -> XWalker {
+        let root_pred_exists = self.full_predictions.contains_key(&ROOT_HASH);
+        XWalker {
+            hash: ROOT_HASH,
+            depth: 0,
+            a_symbol: [Symbol::Start; MAX_TOKEN_LENGTH], // invalid
+            a_tp: [0.0; MAX_TOKEN_LENGTH],
+            a_tp_time: [0; MAX_TOKEN_LENGTH],
+            a_pred_time: if root_pred_exists { 1u16 } else { 0u16 },
+        }
+    }
+
+    fn descend(&self, walker: &XWalker, symbol: Symbol) -> XWalker {
+        let mut walker = walker.clone();
+        let node = self.nodes.get(&walker.hash).unwrap();
+        let slot = symbol.to_slot() as usize;
+        walker.hash = rh::append_right(walker.hash, symbol.to_byte());
+        // roll the walker
+        for i in (1..MAX_TOKEN_LENGTH).rev() {
+            walker.a_symbol[i] = walker.a_symbol[i - 1];
+            walker.a_tp[i] = walker.a_tp[i - 1];
+            walker.a_tp_time[i] = walker.a_tp_time[i - 1];
+        }
+        walker.a_pred_time = walker.a_pred_time << 1;
+        // set 0
+        walker.a_symbol[0] = symbol;
+        walker.a_tp[0] = node.c_tp[slot];
+        walker.a_tp_time[0] = node.c_tp_time[slot];
+        let child_has_pred = (node.c_has_fullorder_pred & (1 << slot)) != 0;
+        if child_has_pred { walker.a_pred_time |= 1; }
+        //
+        walker.depth += 1;
+        walker
+    }
+
+    fn set_tl_array(&self, node_hash: Hash, tl_array: &mut [f32], ul: f32) {
+        struct Frame {
+            hash: Hash,
+            ul: f32, // ul at or above this node
+        }
+        let mut frames = vec![Frame {hash: node_hash, ul}];
+        if !self.nodes.contains_key(&node_hash) {
+            tl_array.fill(ul);
+            return;
+        }
+        let branch_clf = {
+            let is_clf = false;
+            let node = self.nodes.get(&node_hash).unwrap();
+            if node_hash == ROOT_HASH {
+                node.is_root_clf
+            } else {
+                let symbol = node.symbol;
+                let parent_hash = rh::pop_right(node_hash, symbol.to_byte());
+                let parent_node = self.nodes.get(&parent_hash).unwrap();
+                parent_node.c_cum_likelihood_frontier & (1 << symbol.to_slot()) != 0
+            }
+        };
+        let mut iters = 0;
+        while let Some(Frame { hash, ul }) = frames.pop() {
+            if iters < 1000 { iters += 1; } else { panic!("set_tl_array: too many iterations"); }
+            let node = self.nodes.get(&hash).unwrap();
+            // handle our children
+            for symbol in Symbol::ALL {
+                if symbol == Symbol::Start { continue; }
+                let child_slot = symbol.to_slot() as usize;
+                let child_hash = rh::append_right(hash, symbol.to_byte());
+                let child_is_clf = (node.c_cum_likelihood_frontier & (1 << child_slot)) != 0;
+                if child_is_clf {
+                    assert!(self.tokenizer.proper_prefix_hashset.contains(&child_hash), "set_tl_array: child hash is not a proper prefix");
+                    let range = self.tokenizer.token_lex_range_for_prefix_hash(&child_hash);
+                    let subslice = &mut tl_array[range.0..range.1];
+                    subslice.fill(ul + node.c_l[child_slot]);
+                    continue;
+                }
+                if self.tokenizer.token_hashset.contains(&child_hash) {
+                    let lexindex = self.tokenizer.lex_index_for_token_hash(&child_hash);
+                    tl_array[lexindex] = ul + node.c_self_tl[child_slot];
+                }
+                if !self.tokenizer.proper_prefix_hashset.contains(&child_hash) {
+                    continue;
+                }
+                assert!(self.nodes.contains_key(&child_hash), "set_tl_array: child hash is not in nodes");
+                frames.push(Frame { hash: child_hash, ul: ul + node.c_ul[child_slot]});
+            }
         }
     }
 }
 
 impl Trie {
-    // initialization
-    pub(crate) fn new(tokenizer: TinyLlamaWordTokenizer) -> Self {
-        assert_eq!(
-            tokenizer.tokens().len(),
-            NUM_TOKENS,
-            "Trie expects exactly {NUM_TOKENS} tokenizer entries"
-        );
-        assert_eq!(
-            tokenizer.prefix_count(),
-            NUM_PREFIXES,
-            "Trie expects exactly {NUM_PREFIXES} tokenizer prefixes"
-        );
-        let nodes = vec![Node::root()];
-
-        Self {
-            nodes,
-            prediction_registry: PredictionRegistry::new(),
-            tokenizer,
-            root: 0,
-            n: 0,
-            m: 0,
-        }
-    }
-
-    fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
-        let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json(path);
-        Self::new(tokenizer)
-    }
-
-    // walking
-    pub(crate) fn child_index(&self, node_index: NodeIndex, symbol: Symbol) -> NodeIndex {
-        let current_node = &self.nodes[node_index];
-        let base = current_node
-            .children_start_index
-            .expect("Trie::child_index should be called on a node with children");
-        base + symbol.to_slot() as usize
-    }
-
-    fn root_walker(&self) -> Walker {
-        self.set0_walker(&Walker::new(), self.root_index())
-    }
-
-    fn descend(&self, walker: &Walker, symbol: Symbol) -> Walker {
-        let mut walker = walker.clone();
-        walker = self.roll_walker(&walker);
-        walker.depth += 1;
-        let child_index = self.child_index(walker.node, symbol);
-        walker = self.set0_walker(&walker, child_index);
-        walker
-    }
-
-    fn roll_walker(&self, walker: &Walker) -> Walker {
-        // roll the walker
-        let mut walker = walker.clone();
-        for i in (1..MAX_TOKEN_LENGTH).rev() {
-            walker.a_symbol[i] = walker.a_symbol[i - 1];
-            walker.a_tp[i] = walker.a_tp[i - 1];
-            walker.a_prediction_index[i] = walker.a_prediction_index[i - 1];
-            walker.a_p_last_change[i] = walker.a_p_last_change[i - 1];
-            walker.a_tp_last_change[i] = walker.a_tp_last_change[i - 1];
-            walker.a_prediction_last_change[i] = walker.a_prediction_last_change[i - 1];
-        }
-        walker
-    }
-
-    fn set0_walker(&self, walker: &Walker, node_index: NodeIndex) -> Walker {
-        let mut walker = walker.clone();
-        let node = &self.nodes[node_index];
-        walker.a_symbol[0] = Some(node.symbol);
-        walker.a_tp[0] = node.tp;
-        walker.a_prediction_index[0] = node.prediction;
-        walker.a_p_last_change[0] = node.p_last_change;
-        walker.a_tp_last_change[0] = node.tp_last_change;
-        walker.a_prediction_last_change[0] = node.prediction_last_change;
-        walker.node = node_index;
-        walker
-    }
-
-    fn visit_budget() -> i32 {
-        TRIE_MAX_VISITS
-    }
-
-    pub(crate) fn root_index(&self) -> NodeIndex {
-        self.root
-    }
-
-    #[cfg(feature = "tokentrie")]
-    pub(crate) fn set_tl_array(&self,
-        node_index: NodeIndex,
-        tl_array: &mut [f64],
-        accumed_ul: f64,
-    ) {
-        // caller is responsible for knowing the sum of .ul values for all
-        // strict ancestors of the provided node
-        let mut token_prefix = Vec::new();
-        self.set_tl_array_inner(&mut token_prefix, tl_array, node_index, accumed_ul);
-    }
-
-    #[cfg(feature = "tokentrie")]
-    fn set_tl_array_inner(
-        &self,
-        token_prefix: &mut Vec<Symbol>,
-        tl_array: &mut [f64],
-        node_index: NodeIndex,
-        accumed_ul: f64,
-    ) {
-        // N.B. we do this in a separate fn from recalc_to_frontier
-        // because we want it to be a read-only operation
-        let node = &self.nodes[node_index];
-        let l = node.l + accumed_ul;
-        let mtcdl = node.tl[0] + accumed_ul;
-        let clf = node.cum_likelihood_frontier;
-        let prefix = Symbol::slice_to_string(token_prefix);
-
-        if clf {
-            if !self.tokenizer.has_token_with_prefix(&prefix) {
-                panic!("Trie::set_tl_array reached a node that was not a prefix of any token!")
-            }
-            let range = self.tokenizer.token_lex_range_for_prefix(&prefix);
-            let subslice = &mut tl_array[range.0..range.1];
-            subslice.fill(l);
-            return;
-        }
-
-        // Set the MTCDL for the exact token represented by the current suffix from the start node.
-        if let Some(as_token_lexindex) = self.tokenizer.lex_index(&prefix) {
-            tl_array[as_token_lexindex] = mtcdl;
-        }
-
-        if !self.tokenizer.has_token_with_strict_prefix(&prefix) {
-            return;
-        }
-
-        if node.children_start_index.is_none() {
-            panic!("Trie::set_tl_array encountered a node with no children before the likelihood frontier!")
-        }
-
-        for symbol in Symbol::ALL {
-            if symbol == Symbol::Start { continue; }
-            let child_index = self.child_index(node_index, symbol);
-            token_prefix.push(symbol);
-            self.set_tl_array_inner(token_prefix, tl_array, child_index, accumed_ul + node.ul);
-            token_prefix.pop();
-        }
-    }
-
     // recalc (expansion and updates)
     // Each of the three kinds corresponds to a public API
     // - apply likelihood updates
@@ -688,7 +633,6 @@ impl Trie {
                 node.truncation_possible
             );
             let _ = writeln!(out, "  final_token_length: {}", node.final_token_length);
-            let _ = writeln!(out, "  n_tokens: {}", node.n_tokens);
             let pred_line = match node.prediction {
                 None => "None".to_string(),
                 Some(pi) => match self.prediction_registry.get(pi) {
@@ -1015,13 +959,12 @@ mod tests {
                 let child_index = base + symbol.to_slot() as usize;
                 let child = &trie.nodes[child_index];
                 eprintln!(
-                    "root child {:?}: idx={} pred={:?} child_base={:?} final_token_length={} n_tokens={} p={} tp={} z={}",
+                    "root child {:?}: idx={} pred={:?} child_base={:?} final_token_length={}  p={} tp={} z={}",
                     symbol,
                     child_index,
                     child.prediction,
                     child.children_start_index,
                     child.final_token_length,
-                    child.n_tokens,
                     child.p,
                     child.tp,
                     child.z,
@@ -1038,12 +981,11 @@ mod tests {
         eprintln!("stop nodes: count={}", stop_nodes.len());
         for (index, node) in stop_nodes.iter().take(20) {
             eprintln!(
-                "stop node idx={} pred={:?} child_base={:?} final_token_length={} n_tokens={} p={} tp={} z={}",
+                "stop node idx={} pred={:?} child_base={:?} final_token_length={}  p={} tp={} z={}",
                 index,
                 node.prediction,
                 node.children_start_index,
                 node.final_token_length,
-                node.n_tokens,
                 node.p,
                 node.tp,
                 node.z,
@@ -1059,12 +1001,11 @@ mod tests {
         eprintln!("leaf nodes: count={}", leaf_nodes.len());
         for (index, node) in leaf_nodes.iter().take(20) {
             eprintln!(
-                "leaf node idx={} symbol={:?} pred={:?} final_token_length={} n_tokens={} p={} tp={} z={}",
+                "leaf node idx={} symbol={:?} pred={:?} final_token_length={}  p={} tp={} z={}",
                 index,
                 node.symbol,
                 node.prediction,
                 node.final_token_length,
-                node.n_tokens,
                 node.p,
                 node.tp,
                 node.z,

@@ -9,6 +9,7 @@
 
 const MOD: u64 = (1 << 61) - 1;
 const BASE: u64 = 257; // guarantees no collisions from a common prefix unto the seventh generation
+const INV_BASE: u64 = 1_327_878_464_449_909_357;
 const MAX_APPEND_LENGTH: usize = 16; // TODO: this should come from the tokenizer
 const POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
     let mut powers = [0u64; MAX_APPEND_LENGTH + 1];
@@ -21,6 +22,18 @@ const POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
     }
     powers
 };
+const INV_POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
+    let mut inv_powers = [0u64; MAX_APPEND_LENGTH + 1];
+    let mut cur_power: u128 = 1;  // need to use u128 to avoid overflow
+    let mut i = 0;
+    while i <= MAX_APPEND_LENGTH {
+        inv_powers[i] = cur_power as u64;
+        cur_power = fast_mod(cur_power * (INV_BASE as u128)) as u128;
+        i += 1;
+    }
+    inv_powers
+};
+
 
 const fn fast_mod(x: u128) -> u64 {
     debug_assert!((x >> 122) == 0, "We require x < MOD**2");
@@ -32,16 +45,36 @@ const fn fast_mod(x: u128) -> u64 {
     }
 }
 
-pub(crate) fn append_right_hash(hash: u64, right_hash: u64, right_length: usize) -> u64 {
+pub(crate) const fn extend_right(hash: u64, right_hash: u64, right_length: usize) -> u64 {
     let mut result = hash as u128;
     let power_shift = POWERS[right_length] as u128;
     result = (result * power_shift) + (right_hash as u128);
     fast_mod(result)
 }
 
-pub(crate) fn append_right_char(hash: u64, right_char: u8) -> u64 {
-    append_right_hash(hash, right_char as u64, 1)
+pub(crate) const fn append_right(hash: u64, right_char: u8) -> u64 {
+    extend_right(hash, right_char as u64, 1)
 }
+
+pub(crate) fn truncate_right(hash: u64, right_hash: u64, right_length: usize) -> u64 {
+    let sub = if hash < right_hash { right_hash - hash } else { hash - right_hash };
+    let invpower_shift = INV_POWERS[right_length] as u128;
+    fast_mod((sub as u128) * invpower_shift)
+}
+
+pub(crate) fn pop_right(hash: u64, right_char: u8) -> u64 {
+    truncate_right(hash, right_char as u64, 1)
+}
+
+pub(crate) fn hash_string(s: &str) -> u64 {
+    let mut hash = 0;
+    for c in s.as_bytes() {
+        hash = append_right(hash, *c);
+    }
+    hash
+}
+
+// Identity Hashser for rust
 
 #[cfg(test)]
 mod tests {
@@ -52,17 +85,45 @@ mod tests {
         let s = "hello world";
         let mut hash1 = 0;
         for c in s.as_bytes() {
-            hash1 = append_right_char(hash1, *c);
+            hash1 = append_right(hash1, *c);
         }
         let mut hash2_hello = 0;
         for c in "hello ".as_bytes() {
-            hash2_hello = append_right_char(hash2_hello, *c);
+            hash2_hello = append_right(hash2_hello, *c);
         }
         let mut hash2_world = 0;
         for c in "world".as_bytes() {
-            hash2_world = append_right_char(hash2_world, *c);
+            hash2_world = append_right(hash2_world, *c);
         }
-        let hash2 = append_right_hash(hash2_hello, hash2_world, 5);
+        let hash2 = extend_right(hash2_hello, hash2_world, 5);
         assert_eq!(hash1, hash2);
     }
 }
+
+
+
+use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher, Hash};
+
+/// [`Hash`] keys are already rolling-hash values; skip SipHash.
+#[derive(Default)]
+struct IdentityHasher(Hash);
+
+impl Hasher for IdentityHasher {
+    fn finish(&self) -> Hash {
+        self.0
+    }
+
+    fn write(&mut self, _: &[u8]) {
+        panic!("IdentityHasher: key type must hash only via write_u64 (use u64 keys)");
+    }
+
+    fn write_u64(&mut self, i: Hash) {
+        self.0 = i;
+    }
+}
+// Generic type definitions for rolling hash collections
+
+
+pub type RHashMap<V> = HashMap<u64, V, BuildHasherDefault<IdentityHasher>>;
+pub type RHashSet = HashSet<u64, BuildHasherDefault<IdentityHasher>>;
