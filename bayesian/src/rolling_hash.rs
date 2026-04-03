@@ -1,5 +1,5 @@
 // We desire a hash function that we can compute incrementally as we descend the trie.
-// We desire that we can increment a string by a character or by a token, and 
+// We desire that we can increment a string by a character or by a token, and
 // compute the new hash from the old hash.
 // A "Rolling Polynomial Hash" satisfies these requirements beautifully.
 
@@ -11,9 +11,12 @@ const MOD: u64 = (1 << 61) - 1;
 const BASE: u64 = 257; // guarantees no collisions from a common prefix unto the seventh generation
 const INV_BASE: u64 = 1_327_878_464_449_909_357;
 const MAX_APPEND_LENGTH: usize = 16; // TODO: this should come from the tokenizer
+
+pub(crate) type Hash = u64;
+
 const POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
     let mut powers = [0u64; MAX_APPEND_LENGTH + 1];
-    let mut cur_power: u128 = 1;  // need to use u128 to avoid overflow
+    let mut cur_power: u128 = 1; // need to use u128 to avoid overflow
     let mut i = 0;
     while i <= MAX_APPEND_LENGTH {
         powers[i] = cur_power as u64;
@@ -24,7 +27,7 @@ const POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
 };
 const INV_POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
     let mut inv_powers = [0u64; MAX_APPEND_LENGTH + 1];
-    let mut cur_power: u128 = 1;  // need to use u128 to avoid overflow
+    let mut cur_power: u128 = 1; // need to use u128 to avoid overflow
     let mut i = 0;
     while i <= MAX_APPEND_LENGTH {
         inv_powers[i] = cur_power as u64;
@@ -33,7 +36,6 @@ const INV_POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
     }
     inv_powers
 };
-
 
 const fn fast_mod(x: u128) -> u64 {
     debug_assert!((x >> 122) == 0, "We require x < MOD**2");
@@ -45,28 +47,32 @@ const fn fast_mod(x: u128) -> u64 {
     }
 }
 
-pub(crate) const fn extend_right(hash: u64, right_hash: u64, right_length: usize) -> u64 {
+pub(crate) const fn extend_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
     let mut result = hash as u128;
     let power_shift = POWERS[right_length] as u128;
     result = (result * power_shift) + (right_hash as u128);
     fast_mod(result)
 }
 
-pub(crate) const fn append_right(hash: u64, right_char: u8) -> u64 {
-    extend_right(hash, right_char as u64, 1)
+pub(crate) const fn append_right(hash: Hash, right_char: u8) -> Hash {
+    extend_right(hash, right_char as Hash, 1)
 }
 
-pub(crate) fn truncate_right(hash: u64, right_hash: u64, right_length: usize) -> u64 {
-    let sub = if hash < right_hash { right_hash - hash } else { hash - right_hash };
+pub(crate) fn truncate_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
+    let sub = if hash < right_hash {
+        right_hash - hash
+    } else {
+        hash - right_hash
+    };
     let invpower_shift = INV_POWERS[right_length] as u128;
     fast_mod((sub as u128) * invpower_shift)
 }
 
-pub(crate) fn pop_right(hash: u64, right_char: u8) -> u64 {
-    truncate_right(hash, right_char as u64, 1)
+pub(crate) fn pop_right(hash: Hash, right_char: u8) -> Hash {
+    truncate_right(hash, right_char as Hash, 1)
 }
 
-pub(crate) fn hash_string(s: &str) -> u64 {
+pub(crate) fn hash_string(s: &str) -> Hash {
     let mut hash = 0;
     for c in s.as_bytes() {
         hash = append_right(hash, *c);
@@ -100,8 +106,6 @@ mod tests {
     }
 }
 
-
-
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
@@ -124,6 +128,5 @@ impl Hasher for IdentityHasher {
 }
 // Generic type definitions for rolling hash collections
 
-
-pub type RHashMap<V> = HashMap<u64, V, BuildHasherDefault<IdentityHasher>>;
-pub type RHashSet = HashSet<u64, BuildHasherDefault<IdentityHasher>>;
+pub type RHashMap<V> = HashMap<Hash, V, BuildHasherDefault<IdentityHasher>>;
+pub type RHashSet = HashSet<Hash, BuildHasherDefault<IdentityHasher>>;

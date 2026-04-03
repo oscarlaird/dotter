@@ -12,11 +12,10 @@ pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 
 mod core;
-pub mod debug;
+// pub mod debug;
 mod prediction;
 mod session;
 mod snapshot;
-pub(crate) mod rolling_hash;
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
 

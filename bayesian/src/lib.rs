@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub mod bpe;
+pub(crate) mod rolling_hash;
 pub mod symbol;
 pub mod trie;
 

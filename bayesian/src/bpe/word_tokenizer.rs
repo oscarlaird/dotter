@@ -9,7 +9,7 @@ use super::tokenizer_config::NUM_TOKENS;
 use super::{
     BpeMerges, MAX_PACKED_SPINE_LEN, NO_PACKED_SPINE_INDEX, PackedSpine, SPACESYMBOL, SpineEntry,
 };
-use crate::trie::rolling_hash as rh;
+use crate::rolling_hash as rh;
 
 pub type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
 

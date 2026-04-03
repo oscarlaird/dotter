@@ -1,13 +1,6 @@
-use std::collections::HashMap;
-
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
-use crate::trie::rolling_hash as rh;
-use crate::symbol::Symbol;
-use super::{TokenLexIndex, logaddexp};
+use super::{logaddexp};
 
-const ROOT_HASH: u64 = {
-    rh::append_right(0, Symbol::Start.to_byte())
-};
 pub(crate) struct XPrediction {
     pub(crate) canonical_followers: Box<[bool]>,
     pub(crate) canonical_follower_for_prefix: Box<[bool]>,
@@ -19,7 +12,8 @@ pub(crate) struct XPrediction {
 impl XPrediction {
     pub(crate) fn create_prediction(
         is_zero_order: bool,
-        final_token_hash: Hash,
+        final_token_hash: u64,
+        final_token_hash_is_root: bool,
         follower_logits: Option<Box<[f32]>>,
         stop_logit: Option<f32>,
         tokenizer: &TinyLlamaWordTokenizer,
@@ -44,16 +38,16 @@ impl XPrediction {
             );
         }
 
-        let canonical_followers_array = if final_token_hash == ROOT_HASH {
+        let canonical_followers_array = if final_token_hash_is_root {
             vec![true; tokenizer.tokens().len()]
         } else {
-            tokenizer.canonical_followers_for_token_hash(final_token_hash)
+            let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_token_hash);
+            tokenizer.canonical_followers_for_lex_index(final_token_lexindex)
         };
         let canonical_counts_by_prefix =
             tokenizer.count_true_tokens_by_prefix::<NUM_PREFIXES>(&canonical_followers_array);
         let canonical_total = canonical_counts_by_prefix[tokenizer
-            .prefix_lex_index_for_prefix_hash(&0u64) // hash("")=0
-            .expect("empty prefix must always be present")];
+            .prefix_lex_index_for_prefix_hash(&0u64)]; // hash("")=0
 
         assert!(canonical_total != 0, "canonical_total must not be zero");
         let log_canonical_total = (canonical_total as f32).ln();
