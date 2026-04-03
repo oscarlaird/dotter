@@ -89,16 +89,26 @@ pub(crate) struct PUpdate {
 type ContextWindowSize = u8;
 type AncestorsBitmap = u16;
 
-#[derive(Clone, Debug)]
-struct XWalker {
-    hash: Hash,
-    depth: u16,
-    a_symbol: [Symbol; MAX_TOKEN_LENGTH],
-    a_tp: [f32; MAX_TOKEN_LENGTH],
-    a_tp0: [f32; MAX_TOKEN_LENGTH],
-    a_final_token_hash: [u64; MAX_TOKEN_LENGTH], // TODO: would it be more efficient to store the lexindex instead?
-    a_pred_changed: AncestorsBitmap, // ancestors which have changed since we visited this node
-    a_tp_changed: AncestorsBitmap, // ancestors which have changed since we visited this node
+struct YWalker {
+    a_hash: Vec<Hash>,
+    a_symbol: Vec<Symbol>,
+    a_tp: Vec<f32>,
+    a_tp0: Vec<f32>,
+    a_final_token_hash: Vec<u64>,
+    a_a_pred_changed: Vec<AncestorsBitmap>,
+    a_a_tp_changed: Vec<AncestorsBitmap>,
+}
+
+impl YWalker {
+    fn truncate(&mut self, depth: usize) {
+        self.a_hash.truncate(depth);
+        self.a_symbol.truncate(depth);
+        self.a_tp.truncate(depth);
+        self.a_tp0.truncate(depth);
+        self.a_final_token_hash.truncate(depth);
+        self.a_a_pred_changed.truncate(depth);
+        self.a_a_tp_changed.truncate(depth);
+    }
 }
 
 impl LUpdate {
@@ -238,52 +248,41 @@ impl XBayes {
         }
     }
 
-    fn root_walker(&self) -> XWalker {
+    fn root_walker(&self) -> YWalker {
         let root_node = self.nodes.get(&ROOT_HASH).unwrap();
-        XWalker {
-            hash: ROOT_HASH,
-            depth: 0,
-            a_symbol: [Symbol::Start; MAX_TOKEN_LENGTH], // invalid
-            a_tp: [0.0; MAX_TOKEN_LENGTH],
-            a_tp0: [0.0; MAX_TOKEN_LENGTH],
-            a_final_token_hash: [u64::MAX; MAX_TOKEN_LENGTH],
-            a_tp_changed: 0,
-            a_pred_changed: if root_node.if_root_then_root_pred_changed { 1u16 } else { 0u16 },
+        YWalker {
+            a_hash: vec![ROOT_HASH],
+            a_symbol: vec![Symbol::Start], // invalid
+            a_tp: vec![0.0],
+            a_tp0: vec![0.0],
+            a_final_token_hash: vec![ROOT_HASH],
+            a_a_pred_changed: vec![if root_node.if_root_then_root_pred_changed { 1u16 } else { 0u16 }],
+            a_a_tp_changed: vec![0],
         }
     }
 
-    fn descend(&self, walker: &XWalker, symbol: Symbol) -> XWalker {
+    fn descend(&self, walker: &mut YWalker, symbol: Symbol) {
         // requires looking up the node of the input walker,
         // but does not need to look up the child node
-        let mut walker = walker.clone();
-        let node = self.nodes.get(&walker.hash).unwrap();
+        let p_hash = walker.a_hash.last().unwrap();
+        let p_node = self.nodes.get(&p_hash).unwrap();
         let slot = symbol.to_slot() as usize;
-        walker.hash = rh::append_right(walker.hash, symbol.to_byte());
-        // roll the walker
-        for i in (1..MAX_TOKEN_LENGTH).rev() {
-            walker.a_symbol[i] = walker.a_symbol[i - 1];
-            walker.a_tp[i] = walker.a_tp[i - 1];
-            walker.a_tp0[i] = walker.a_tp0[i - 1];
-            walker.a_final_token_hash[i] = walker.a_final_token_hash[i - 1];
-        }
-        walker.a_tp_changed = walker.a_tp_changed << 1;
-        walker.a_pred_changed = walker.a_pred_changed << 1;
+        let n_hash = rh::append_right(*p_hash, symbol.to_byte());
+        walker.a_hash.push(n_hash);
+        walker.a_symbol.push(symbol);
+        //
         // set 0
-        walker.a_symbol[0] = symbol;
-        walker.a_tp[0] = node.c_tp[slot];
-        walker.a_tp0[0] = node.c_tp0[slot];
-        walker.a_final_token_hash[0] = node.c_final_token_hash[slot];
+        walker.a_tp.push(p_node.c_tp[slot]);
+        walker.a_tp0.push(p_node.c_tp0[slot]);
+        walker.a_final_token_hash.push(p_node.c_final_token_hash[slot]);
         // if we are up to date, that does not imply that our node.a_tp_changed==0,
         // but merely that for every strict ancestor, we have a.a_tp_changed==0
         //
         // the walker should show the sum over our ancestors and ourself,
         // since we will be updating our children, and we are included in our child's strict ancestors
         //
-        walker.a_tp_changed |= node.c_a_tp_changed[slot];
-        walker.a_pred_changed |= node.c_a_pred_changed[slot];
-        //
-        walker.depth += 1;
-        walker
+        walker.a_a_tp_changed.push((walker.a_a_tp_changed.last().unwrap() << 1) | p_node.c_a_tp_changed[slot]);
+        walker.a_a_pred_changed.push((walker.a_a_pred_changed.last().unwrap() << 1) | p_node.c_a_pred_changed[slot]);
     }
 
     fn set_tl_array(&self, node_hash: Hash, tl_array: &mut [f32], ul: f32) {
@@ -297,6 +296,9 @@ impl XBayes {
             return;
         }
         let branch_clf = self.cum_likelihood.deref().contains_key(&node_hash);
+        if branch_clf {
+            // TODO, fill with ul, or ul+l?
+        }
         let mut iters = 0;
         while let Some(Frame { hash, ul }) = frames.pop() {
             if iters < 1000 { iters += 1; } else { panic!("set_tl_array: too many iterations"); }
@@ -325,8 +327,8 @@ impl XBayes {
         }
     }
     fn apply_updates(&mut self) {
-        let l_update = self.pending_likelihood.likelihoods;
-        let mut p_update = self.pending_prior.new_predictions;
+        let l_update = &self.pending_likelihood.likelihoods;
+        let p_update = &mut self.pending_prior.new_predictions;
         self.cum_likelihood = self.cum_likelihood.merge(&self.pending_likelihood);
         // mark all the nodes, for which there is a prior update ahead of us, but behind the clf
         // this indicator set is valid for nodes inside the clf, 
@@ -350,31 +352,49 @@ impl XBayes {
         };
         self.unread_predictions.new_predictions.extend(p_update.drain());
         struct Frame {
-            walker: XWalker,
+            symbol: Symbol,
+            depth: u16,
+            target_hash: Hash,
             hit_l_update: bool,
             hit_p_update: bool,
         }
+        let mut walker = self.root_walker();
         let root_frame = Frame {
-            walker: self.root_walker(),
+            symbol: Symbol::Start,
+            depth: 0,
+            target_hash: ROOT_HASH,
             hit_l_update: false,
             hit_p_update: false,
         };
         let mut frames: Vec<Frame> = vec![root_frame];
-        let mut upprop_frames: Vec<XWalker> = vec![];
+        let mut upprop_frames: Vec<Hash> = vec![];
         let mut iters = 0;
         // 1. descend to valid frontier
-        while let Some(Frame { walker, hit_l_update, hit_p_update }) = frames.pop() {
+        while let Some(Frame {
+            symbol,
+            depth,
+            target_hash,
+            hit_l_update,
+            hit_p_update,
+        }) = frames.pop() {
+            // move the walker to the frame's node
+            if *walker.a_hash.last().unwrap() != target_hash {
+                assert!(depth > 0);
+                walker.truncate(depth as usize);
+                self.descend(&mut walker, symbol);
+                assert!(*walker.a_hash.last().unwrap() == target_hash);
+            }
             {
                 self.ensure_zero_order_prediction(walker.a_final_token_hash[0]);
                 self.ensure_node(&walker);
             }
             if iters < 1000 { iters += 1; } else { panic!("apply_updates: too many iterations"); }
-            upprop_frames.push(walker.clone());
-            let node = self.nodes.get_mut(&walker.hash).unwrap();
+            upprop_frames.push(target_hash);
+            let node = self.nodes.get_mut(&target_hash).unwrap();
             for slot in 0..RADIX {
                 let child_symbol = Symbol::from_slot(slot);
                 let child_byte = Symbol::slot_to_byte(slot);
-                let child_hash = rh::append_right(walker.hash, child_byte);
+                let child_hash = rh::append_right(target_hash, child_byte);
                 // determine children's validity
                 // - valid = const_likelihood || no_reweighting
                 let const_likelihood = self.cum_likelihood.deref().contains_key(&child_hash);
@@ -407,11 +427,11 @@ impl XBayes {
                 }
                 // propagate tp changed
                 let ftl = node.c_final_token_length[slot] as usize;
-                let token_a_tp_changed = (walker.a_tp_changed << 1) & (1 << ftl) != 0;
-                let token_a_pred_changed = (walker.a_pred_changed << 1) & (1 << ftl) != 0;
+                let token_a_tp_changed = (walker.a_a_tp_changed.last().unwrap() << 1) & (1 << ftl) != 0;
+                let token_a_pred_changed = (walker.a_a_pred_changed.last().unwrap() << 1) & (1 << ftl) != 0;
                 if token_a_pred_changed {
                     let token_a_tp = walker.a_tp[ftl - 1];
-                    let mut token_a_hash = walker.hash;
+                    let mut token_a_hash = target_hash;
                     let mut final_token_hash = child_byte as u64;
                     for i in 0..(ftl-1) {
                         let s = walker.a_symbol[i].to_byte();
@@ -434,13 +454,13 @@ impl XBayes {
                 // has the prediction changed at any of our possible truncations?
                 // invariant: "the predictions which have changed since we last refreshed our fp array...
                 // ... are exactly those indicated by the union of our strict ancestor's a_pred_changed arrays"
-                let relevant_preds_changed = node.c_can_trunc[slot] & (walker.a_pred_changed << 1);
+                let relevant_preds_changed = node.c_can_trunc[slot] & (walker.a_a_pred_changed.last().unwrap() << 1);
                 let fp_changed = relevant_preds_changed != 0;
-                let relevant_tps_changed = node.c_can_trunc[slot] & (walker.a_tp_changed << 1);
+                let relevant_tps_changed = node.c_can_trunc[slot] & (walker.a_a_tp_changed.last().unwrap() << 1);
                 let tp_changed = relevant_tps_changed != 0;
                 if fp_changed {
                     let mut dense_idx = 0;
-                    let mut token_a_hash = walker.hash;
+                    let mut token_a_hash = target_hash;
                     let mut final_prefix_hash = child_byte as u64;
                     for i in 1..MAX_TOKEN_LENGTH {
                         if relevant_preds_changed & (1 << i) != 0 {
@@ -486,21 +506,22 @@ impl XBayes {
                         node.c_z[slot] += z_delta;
                     }
                     // since we won't be descending from this valid child, we should set the changed arrays
-                    node.c_a_pred_changed[slot] |= walker.a_pred_changed << 1;
-                    node.c_a_tp_changed[slot] |= walker.a_tp_changed << 1;
+                    node.c_a_pred_changed[slot] |= walker.a_a_pred_changed.last().unwrap() << 1;
+                    node.c_a_tp_changed[slot] |= walker.a_a_tp_changed.last().unwrap() << 1;
                 }
                 node.c_p_old[slot] = p;
                 node.c_accumed_l_old[slot] = l;
                 // add invalid children to the stack
                 if !valid {
-                    let child_walker = self.descend(&walker, child_symbol);
                     // since the invalid child will be visited and all its children set to the
                     // current time, its changed arrays can be set to 0
-                    node.c_a_pred_changed[slot] = 0;
+                    node.c_a_pred_changed[slot] = 0;  // TODO
                     node.c_a_tp_changed[slot] = 0;
                     // TODO: keeping the final token hash would be convenient
                     frames.push(Frame {
-                        walker: child_walker,
+                        symbol: child_symbol,
+                        depth: depth + 1,
+                        target_hash: child_hash,
                         hit_l_update,
                         hit_p_update,
                     });
@@ -508,50 +529,60 @@ impl XBayes {
             }
         }
         // up-prop z (and mtcdl)
-        while let Some(walker) = upprop_frames.pop() {
+        while let Some(n_hash) = upprop_frames.pop() {
             // we are proceeding in reverse-topological order
             // hence we are guaranteed that our invalid children have already been
             // up-propagated and therefore our c_z array is correct
-            let node = self.nodes.get(&walker.hash).unwrap();
             let mut z = f32::NEG_INFINITY;
-            for slot in 0..RADIX {
-                z = logaddexp(z, node.c_z[slot]);
+            let mut symbol = Symbol::Start;
+            {
+                let node = self.nodes.get(&n_hash).unwrap();
+                for slot in 0..RADIX {
+                    z = logaddexp(z, node.c_z[slot]);
+                }
+                symbol = node.symbol;
             }
             // since only child values are stored, 
             // we must store our own value on our parent
-            if walker.hash == ROOT_HASH {
-                node.if_root_then_z = z;
+            if n_hash == ROOT_HASH {
+                {
+                    let node = self.nodes.get_mut(&n_hash).unwrap();
+                    node.if_root_then_z = z;
+                }
             } else {
-                let parent_hash = rh::pop_right(walker.hash, node.symbol.to_byte());
+                let parent_hash = rh::pop_right(n_hash, symbol.to_byte());
                 let parent_node = self.nodes.get_mut(&parent_hash).unwrap();
-                parent_node.c_z[node.symbol.to_slot()] = z;
+                parent_node.c_z[symbol.to_slot()] = z;
             }
             // upprop mtcdl
             // todo feature=tokentrie
             let mut mtcdl = [f32::NEG_INFINITY; MAX_TOKEN_LENGTH];
-            for slot in 0..RADIX {
-                let c_mtcdl = node.c_a_tl[slot];
-                let c_can_trunc = node.c_can_trunc[slot];
-                let nz = c_can_trunc | 1;
-                let expanded_c_mtcdl = dense_to_sparse16( &c_mtcdl, nz, f32::NEG_INFINITY);
-                for i in 0..(MAX_TOKEN_LENGTH-1) {
-                    mtcdl[i] = mtcdl[i].max(expanded_c_mtcdl[i+1]);
+            {
+                let node = self.nodes.get(&n_hash).unwrap();
+                for slot in 0..RADIX {
+                    let c_mtcdl = node.c_a_tl[slot];
+                    let c_can_trunc = node.c_can_trunc[slot];
+                    let nz = c_can_trunc | 1;
+                    let expanded_c_mtcdl = dense_to_sparse16( &c_mtcdl, nz, f32::NEG_INFINITY);
+                    for i in 0..(MAX_TOKEN_LENGTH-1) {
+                        mtcdl[i] = mtcdl[i].max(expanded_c_mtcdl[i+1]);
+                    }
+                    let c_ftl = node.c_final_token_length[slot] as usize;
+                    mtcdl[c_ftl - 1] = mtcdl[c_ftl - 1].max(expanded_c_mtcdl[0]);
                 }
-                let c_ftl = node.c_final_token_length[slot] as usize;
-                mtcdl[c_ftl - 1] = mtcdl[c_ftl - 1].max(expanded_c_mtcdl[0]);
             }
             // since only child values are stored, we must store our own value on our parent
-            if walker.hash == ROOT_HASH {
+            if n_hash == ROOT_HASH {
                 // Don't do anything because root.mtcdl is unnecessary since the root is always queried first
             } else {
-                let parent_hash = rh::pop_right(walker.hash, node.symbol.to_byte());
+                let parent_hash = rh::pop_right(n_hash, symbol.to_byte());
                 let parent_node = self.nodes.get_mut(&parent_hash).unwrap();
                 let mut mtcdl_dense = [f32::NAN; MAX_TRUNCATION_POSSIBLE+1];
-                let nz = parent_node.c_can_trunc[node.symbol.to_slot()] | 1;
+                let nz = parent_node.c_can_trunc[symbol.to_slot()] | 1;
                 for (i, v) in sparse16_to_dense(&mtcdl, nz).iter().enumerate() {
                     mtcdl_dense[i] = *v;
                 }
-                parent_node.c_a_tl[node.symbol.to_slot()] = mtcdl_dense;
+                parent_node.c_a_tl[symbol.to_slot()] = mtcdl_dense;
             }
 
         }
@@ -584,8 +615,8 @@ impl XBayes {
         self.zero_order_predictions.insert(final_token_hash, prediction);
     }
 
-    fn ensure_node(&mut self, walker: &XWalker) {
-        if self.nodes.contains_key(&walker.hash) {
+    fn ensure_node(&mut self, walker: &YWalker) {
+        if self.nodes.contains_key(&walker.a_hash.last().unwrap()) {
             return;
         }
         assert!(walker.a_symbol[0] != Symbol::Stop, "ensure_node must never be called on a Stop node");
@@ -610,7 +641,7 @@ impl XBayes {
             if_root_then_root_pred_changed: false,
         };
         //
-        let available_prediction_depth = usize::min(MAX_TOKEN_LENGTH, walker.depth as usize + 1);
+        let available_prediction_depth = usize::min(MAX_TOKEN_LENGTH, walker.a_symbol.len() + 1);
         for slot in 0..RADIX {
             let child_symbol = Symbol::from_slot(slot);
             let child_byte = Symbol::slot_to_byte(slot);
@@ -645,7 +676,7 @@ impl XBayes {
             }
         }
         // at no greater price than keeping tp0 on nodes we can initialize nodes to the beginning of time
-        self.nodes.insert(walker.hash, node);
+        self.nodes.insert(*walker.a_hash.last().unwrap(), node);
     }
 
 }
