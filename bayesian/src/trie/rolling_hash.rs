@@ -103,14 +103,14 @@ mod tests {
 
 
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasherDefault, Hasher, Hash};
+use std::hash::{BuildHasherDefault, Hasher};
 
-/// [`Hash`] keys are already rolling-hash values; skip SipHash.
+/// Keys are raw rolling-hash `u64` values; skip SipHash on lookup.
 #[derive(Default)]
-struct IdentityHasher(Hash);
+struct IdentityHasher(u64);
 
 impl Hasher for IdentityHasher {
-    fn finish(&self) -> Hash {
+    fn finish(&self) -> u64 {
         self.0
     }
 
@@ -118,7 +118,7 @@ impl Hasher for IdentityHasher {
         panic!("IdentityHasher: key type must hash only via write_u64 (use u64 keys)");
     }
 
-    fn write_u64(&mut self, i: Hash) {
+    fn write_u64(&mut self, i: u64) {
         self.0 = i;
     }
 }

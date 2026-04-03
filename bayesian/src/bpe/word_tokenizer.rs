@@ -9,6 +9,7 @@ use super::tokenizer_config::NUM_TOKENS;
 use super::{
     BpeMerges, MAX_PACKED_SPINE_LEN, NO_PACKED_SPINE_INDEX, PackedSpine, SPACESYMBOL, SpineEntry,
 };
+use crate::trie::rolling_hash as rh;
 
 pub type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
 
@@ -69,6 +70,13 @@ pub struct TinyLlamaWordTokenizer {
     space_prefixed_second_token_mask: Box<[bool]>,
     prepared_merge_rows: MergeRows,
     prepared_second_buckets: PreparedSecondBuckets,
+    /// Rolling hashes of full vocabulary strings (same scheme as [`rh::hash_string`] / trie descent).
+    pub token_hashset: rh::RHashSet,
+    /// Rolling hashes of strings that are a strict prefix of at least one vocabulary token.
+    pub proper_prefix_hashset: rh::RHashSet,
+    token_lex_range_by_prefix_hash: rh::RHashMap<(usize, usize)>,
+    prefix_lex_index_by_prefix_hash: rh::RHashMap<usize>,
+    lex_index_by_token_hash: rh::RHashMap<usize>,
 }
 
 impl TinyLlamaWordTokenizer {
@@ -202,6 +210,35 @@ impl TinyLlamaWordTokenizer {
             &lex_tokens,
         );
 
+        let mut token_hashset = rh::RHashSet::default();
+        let mut lex_index_by_token_hash = rh::RHashMap::default();
+        for (lex_index, token) in lex_tokens.iter().enumerate() {
+            let h = rh::hash_string(token);
+            token_hashset.insert(h);
+            lex_index_by_token_hash.insert(h, lex_index);
+        }
+
+        let mut proper_prefix_hashset = rh::RHashSet::default();
+        for token in &lex_tokens {
+            let prefixes = token_prefixes(token);
+            let proper_count = if token.is_empty() {
+                0
+            } else {
+                prefixes.len() - 1
+            };
+            for &p in prefixes.iter().take(proper_count) {
+                proper_prefix_hashset.insert(rh::hash_string(p));
+            }
+        }
+
+        let mut token_lex_range_by_prefix_hash = rh::RHashMap::default();
+        let mut prefix_lex_index_by_prefix_hash = rh::RHashMap::default();
+        for (i, prefix) in lex_prefixes.iter().enumerate() {
+            let h = rh::hash_string(prefix);
+            token_lex_range_by_prefix_hash.insert(h, (prefix_token_starts[i], prefix_token_stops[i]));
+            prefix_lex_index_by_prefix_hash.insert(h, i);
+        }
+
         Self {
             merges,
             vocab,
@@ -221,6 +258,11 @@ impl TinyLlamaWordTokenizer {
             space_prefixed_second_token_mask,
             prepared_merge_rows,
             prepared_second_buckets,
+            token_hashset,
+            proper_prefix_hashset,
+            token_lex_range_by_prefix_hash,
+            prefix_lex_index_by_prefix_hash,
+            lex_index_by_token_hash,
         }
     }
 
@@ -392,6 +434,31 @@ impl TinyLlamaWordTokenizer {
             .get(prefix_lex_index)
             .expect("prefix lex index out of range");
         (start, stop)
+    }
+
+    /// Half-open lexicographic token range for tokens whose string has this rolling hash.
+    /// Keys match [`rh::hash_string`] on the corresponding prefix string.
+    pub fn token_lex_range_for_prefix_hash(&self, prefix_hash: &u64) -> (usize, usize) {
+        *self
+            .token_lex_range_by_prefix_hash
+            .get(prefix_hash)
+            .expect("prefix hash must be in tokenizer prefix map")
+    }
+
+    /// Prefix lex index for a string with this rolling hash (same index space as [`Self::prefix_lex_index`]).
+    pub fn prefix_lex_index_for_prefix_hash(&self, prefix_hash: &u64) -> usize {
+        *self
+            .prefix_lex_index_by_prefix_hash
+            .get(prefix_hash)
+            .expect("prefix hash must be in tokenizer prefix lex map")
+    }
+
+    /// Lex index for a full vocabulary token with this rolling hash.
+    pub fn lex_index_for_token_hash(&self, token_hash: &u64) -> usize {
+        *self
+            .lex_index_by_token_hash
+            .get(token_hash)
+            .expect("token hash must be in tokenizer token map")
     }
 
     pub fn count_true_tokens_by_prefix<const PREFIX_COUNT: usize>(

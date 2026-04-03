@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 /// Number of symbols in the fixed trie alphabet.
-pub const RADIX: usize = 29;
+pub const RADIX: usize = 28;
+pub const N_SYMBOLS: usize = RADIX + 1;
 pub type RadixBitmap = u32;
 
 /// Default trie alphabet: `a`–`z`, `_` (word boundary), `$`, `^` (slot order matches this slice).
-pub const DEFAULT_ALPHABET: [u8; RADIX] = *b"abcdefghijklmnopqrstuvwxyz_$^";
+pub const DEFAULT_ALPHABET: [u8; N_SYMBOLS] = *b"abcdefghijklmnopqrstuvwxyz_$^";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
@@ -42,7 +43,7 @@ pub enum Symbol {
 }
 
 impl Symbol {
-    pub const ALL: [Self; RADIX] = [
+    pub const ALL: [Self; N_SYMBOLS] = [
         Self::A,
         Self::B,
         Self::C,
@@ -143,43 +144,113 @@ impl Symbol {
         }
     }
 
-    pub const fn from_slot(slot: u8) -> Option<Self> {
+    pub const fn from_slot(slot: usize) -> Self {
         match slot {
-            0 => Some(Self::A),
-            1 => Some(Self::B),
-            2 => Some(Self::C),
-            3 => Some(Self::D),
-            4 => Some(Self::E),
-            5 => Some(Self::F),
-            6 => Some(Self::G),
-            7 => Some(Self::H),
-            8 => Some(Self::I),
-            9 => Some(Self::J),
-            10 => Some(Self::K),
-            11 => Some(Self::L),
-            12 => Some(Self::M),
-            13 => Some(Self::N),
-            14 => Some(Self::O),
-            15 => Some(Self::P),
-            16 => Some(Self::Q),
-            17 => Some(Self::R),
-            18 => Some(Self::S),
-            19 => Some(Self::T),
-            20 => Some(Self::U),
-            21 => Some(Self::V),
-            22 => Some(Self::W),
-            23 => Some(Self::X),
-            24 => Some(Self::Y),
-            25 => Some(Self::Z),
-            26 => Some(Self::Space),
-            27 => Some(Self::Stop),
-            28 => Some(Self::Start),
-            _ => None,
+            0 => Self::A,
+            1 => Self::B,
+            2 => Self::C,
+            3 => Self::D,
+            4 => Self::E,
+            5 => Self::F,
+            6 => Self::G,
+            7 => Self::H,
+            8 => Self::I,
+            9 => Self::J,
+            10 => Self::K,
+            11 => Self::L,
+            12 => Self::M,
+            13 => Self::N,
+            14 => Self::O,
+            15 => Self::P,
+            16 => Self::Q,
+            17 => Self::R,
+            18 => Self::S,
+            19 => Self::T,
+            20 => Self::U,
+            21 => Self::V,
+            22 => Self::W,
+            23 => Self::X,
+            24 => Self::Y,
+            25 => Self::Z,
+            26 => Self::Space,
+            27 => Self::Stop,
+            28 => Self::Start,
+            _ => panic!("Symbol::from_slot: invalid slot"),
         }
     }
 
-    pub const fn to_slot(self) -> u8 {
-        self as u8
+    pub const fn to_slot(self) -> usize {
+        self as usize
+    }
+
+    pub fn slot_to_byte(slot: usize) -> u8 {
+        match slot {
+            0 => b'a',
+            1 => b'b',
+            2 => b'c',
+            3 => b'd',
+            4 => b'e',
+            5 => b'f',
+            6 => b'g',
+            7 => b'h',
+            8 => b'i',
+            9 => b'j',
+            10 => b'k',
+            11 => b'l',
+            12 => b'm',
+            13 => b'n',
+            14 => b'o',
+            15 => b'p',
+            16 => b'q',
+            17 => b'r',
+            18 => b's',
+            19 => b't',
+            20 => b'u',
+            21 => b'v',
+            22 => b'w',
+            23 => b'x',
+            24 => b'y',
+            25 => b'z',
+            26 => b'_',
+            27 => b'$',
+            28 => b'^',
+            _ => panic!("invalid slot: {}", slot),
+        }
+    }
+
+    pub fn byte_to_slot(byte: u8) -> usize {
+        match byte {
+            b'a' => 0,
+            b'b' => 1,
+            b'c' => 2,
+            b'd' => 3,
+            b'e' => 4,
+            b'f' => 5,
+            b'g' => 6,
+            b'h' => 7,
+            b'i' => 8,
+            b'j' => 9,
+            b'k' => 10,
+            b'l' => 11,
+            b'm' => 12,
+            b'n' => 13,
+            b'o' => 14,
+            b'p' => 15,
+            b'q' => 16,
+            b'r' => 17,
+            b's' => 18,
+            b't' => 19,
+            b'u' => 20,
+            b'v' => 21,
+            b'w' => 22,
+            b'x' => 23,
+            b'y' => 24,
+            b'z' => 25,
+            b'_' => 26,
+            b'$' => 27,
+            b'^' => 28,
+            _ => panic!("invalid byte: {}", byte),
+        }
     }
 
     pub fn slice_to_string(symbols: &[Self]) -> String {

@@ -6,8 +6,6 @@ pub const TRIE_EXPANSION_THRESHOLD: f64 = -5.2983173665480363;
 /// Maximum node visits per `recalc_to_frontier_and_back` traversal.
 pub const TRIE_MAX_VISITS: i32 = 200;
 
-pub type NodeIndex = usize;
-pub(crate) type PredictionIndex = usize;
 pub(crate) type TokenLexIndex = usize;
 pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
@@ -18,7 +16,7 @@ pub mod debug;
 mod prediction;
 mod session;
 mod snapshot;
-mod rolling_hash;
+pub(crate) mod rolling_hash;
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
 
@@ -32,11 +30,11 @@ pub(crate) use core::Trie;
 pub(crate) use prediction::{Prediction, PredictionOrder, PredictionRegistry};
 pub(crate) use snapshot::SnapshotWalker;
 
-pub(crate) fn logaddexp(a: f64, b: f64) -> f64 {
-    if a == f64::NEG_INFINITY {
+pub(crate) fn logaddexp(a: f32, b: f32) -> f32 {
+    if a == f32::NEG_INFINITY {
         return b;
     }
-    if b == f64::NEG_INFINITY {
+    if b == f32::NEG_INFINITY {
         return a;
     }
     let m = a.max(b);
