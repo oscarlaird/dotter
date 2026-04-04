@@ -73,10 +73,14 @@ pub(crate) enum RecalcResult {
 
 impl XBayes {
     pub(crate) fn new() -> Self {
-        let nodes = rh::RHashMap::default();
+        let mut nodes = rh::RHashMap::default();
         let full_predictions = rh::RHashMap::default();
-        let zero_order_predictions = rh::RHashMap::default();
+        let mut zero_order_predictions = rh::RHashMap::default();
         let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json_str(TOKENIZER_JSON_STR);
+        //
+        XBayes::ensure_zero_order_prediction(&mut zero_order_predictions, &tokenizer, ROOT_HASH);
+        XBayes::ensure_node(&mut nodes, &zero_order_predictions, &tokenizer, &YWalker::root(ROOT_HASH));
+        //
         Self {
             nodes,
             full_predictions,
@@ -119,8 +123,8 @@ impl XBayes {
             tl_array.fill(accumed_l);
             return;
         }
-        // TODO: what if the branch is beyond the clf?
         // TODO: the caller should be responsible for knowing if it hit the clf (it can do this when it traverses A to B for accumed l)
+        unimplemented!();
         let branch_clf = self.cum_likelihood.deref().contains_key(&node_hash);
         if branch_clf {
             tl_array.fill(accumed_l);
@@ -333,7 +337,7 @@ impl XBayes {
                     let mut dense_idx = 0;
                     // let mut token_a_hash = n_hash; // leave in case we decide to revert later
                     let mut final_prefix_hash = child_byte as u64;
-                    for i in 1..MAX_TOKEN_LENGTH {
+                    for i in 1..MAX_TOKEN_LENGTH { // indexing is from child's perspective
                         if relevant_preds_changed & (1 << i) != 0 {
                             let new_fp = full_predictions
                                 .get(
@@ -343,7 +347,8 @@ impl XBayes {
                                     tokenizer.prefix_lex_index_for_prefix_hash(&final_prefix_hash)
                                 ];
                             node.c_fp[slot][dense_idx] = new_fp;
-                            unimplemented!("Dense indexing is wrong since it only increments on relevant");
+                        }
+                        if node.c_can_trunc[slot] & (1 << i) != 0 {
                             dense_idx += 1;
                         }
                         // token_a_hash = rh::pop_right(token_a_hash, n_walker.a_symbol().from_end(i-1).to_byte()); // leave in case we decide to revert later
@@ -386,17 +391,23 @@ impl XBayes {
                 }
                 node.c_p_old[slot] = p;
                 node.c_accumed_l_old[slot] = accumed_l_new;
-                //
+                // push to upprop arrays and determine wether to stop descending
                 let stop = match recalc_type {
-                    RecalcType::Update => valid_z, // which also implies valid_mtcdl
+                    RecalcType::Update => {
+                        if !valid_z {
+                            invalid_z_hashes.push(child_hash);
+                        }
+                        if !valid_mtcdl {
+                            invalid_mtcdl_hashes.push(child_hash);
+                        }
+                        valid_z && valid_mtcdl
+                    }
                     RecalcType::Expand { threshold } => {
                         let met_threshold = node.c_z[slot] - root_z.unwrap() >= threshold;
                         if met_threshold {
                             nodes_over_threshold.push(child_hash);
-                            false
-                        } else {
-                            true
                         }
+                        !met_threshold
                     }
                 };
                 if !stop {
@@ -414,14 +425,9 @@ impl XBayes {
                 if !valid_z {
                     // since the invalid child will be visited and all its children set to the
                     // current time, its changed array should be zero after its children are updated
-                    // we can do it now, since we won't be coming back here
-                    node.c_a_pred_changed[slot] = 0;  // TODO
+                    // we can do it now, since we won't be coming back here (and walker doesn't read this field)
+                    node.c_a_pred_changed[slot] = 0;
                     node.c_a_tp_changed[slot] = 0;
-                    //
-                    invalid_z_hashes.push(child_hash);
-                }
-                if !valid_mtcdl {
-                    invalid_mtcdl_hashes.push(child_hash);
                 }
             }
         }
@@ -457,7 +463,7 @@ impl XBayes {
         // up-prop mtcdl
         while let Some(n_hash) = invalid_mtcdl_hashes.pop() {
             // upprop mtcdl
-            // todo feature=tokentrie
+            // TODO: #[cfg(feature = "tokentrie")]
             let mut mtcdl = [f32::NEG_INFINITY; MAX_TOKEN_LENGTH];
             let symbol;
             {
@@ -494,20 +500,6 @@ impl XBayes {
             RecalcType::Expand {..} => RecalcResult::Expanded { nodes_over_threshold },
         }
     }
-    // TODO:
-    // *set cum_likelihood_frontier
-    // *set mtcdl
-    // *is_space
-    // *node.a_tp_changed (pending updates)
-    // *node.a_pred_changed (pending updates)
-    // *walker.a_tp_changed
-    // *walker.a_pred_changed
-    // Ensure children / Ensure prediction
-    // *Walker roll prefix hashes (no, too expensive 8x16=128 bytes per walker)
-    // Expand trie
-    // update l
-    // hit l update / hit p update
-    
     // NOTE: a_pred_changed
     // Logically the order of operations is:
     // - update children based on n's a_pred_changed and a_tp_changed
@@ -569,16 +561,14 @@ impl XBayes {
         let available_prediction_depth = usize::min(MAX_TOKEN_LENGTH, walker.len() + 1);
         for slot in 0..RADIX {
             let child_byte = Symbol::slot_to_byte(slot);
-            let final_chars_hash = child_byte as u64;
+            let mut final_chars_hash = child_byte as u64;
             let mut can_trunc_count = 0;
             let mut p = f32::NEG_INFINITY;
+            let mut found_canonical_ancestor = false;
             for i in 1..available_prediction_depth { // index is from child's perspective
                 let a_pred = zero_order_predictions
                     .get(walker.a_final_token_hash().from_end(i-1))
                     .unwrap();
-                // let a_pred_prob = a_pred.follower_prob_for_prefix[
-                //     tokenizer.prefix_lex_index_for_prefix_hash(&final_chars_hash)
-                // ];
                 // Determine Canonical Token Ancestor
                 if tokenizer.token_hashset.contains(&final_chars_hash) {
                     let new_token_lexindex = tokenizer.lex_index_for_token_hash(&final_chars_hash);
@@ -591,6 +581,7 @@ impl XBayes {
                         node.c_final_token_prob[slot] = final_token_prob;
                         node.c_tp0[slot] = tp0;
                         node.c_tp[slot] = tp0;
+                        found_canonical_ancestor = true;
                     }
                 }
                 // Determine Possible Truncations
@@ -600,16 +591,18 @@ impl XBayes {
                     let new_prefix_lexindex = tokenizer.prefix_lex_index_for_prefix_hash(&final_chars_hash);
                     let can_trunc = a_pred.canonical_follower_for_prefix[new_prefix_lexindex];
                     if can_trunc {
-                        can_trunc_count += 1;
-                        let fp = a_pred.follower_probs[new_prefix_lexindex];
+                        let fp = a_pred.follower_prob_for_prefix[new_prefix_lexindex];
                         let a_tp0 = walker.a_tp0().from_end(i-1);
                         p = logaddexp(p, a_tp0 + fp);
-                        node.c_fp[slot][can_trunc_count-1] = fp;
+                        node.c_fp[slot][can_trunc_count] = fp;
                         node.c_can_trunc[slot] |= 1 << i;
-                        node.c_a_tl[slot][can_trunc_count] = 0.0; // intentionally different index than for c_fp
+                        node.c_a_tl[slot][can_trunc_count+1] = 0.0; // intentionally different index than for c_fp
+                        can_trunc_count += 1;
                     }
                 }
+                final_chars_hash = rh::extend_right(walker.a_symbol().from_end(i-1).to_byte() as u64, final_chars_hash, i);
             }
+            assert!(found_canonical_ancestor);
             node.c_a_tl[slot][0] = 0.0;
             node.c_p[slot] = p;
             node.c_z[slot] = 0.0 + p; // accumed_l is 0.0

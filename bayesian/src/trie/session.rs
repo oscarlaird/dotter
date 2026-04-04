@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 
 #[cfg_attr(feature = "python", pyclass)]
 pub struct BayesianSession {
-    trie: XBayes,
+    pub(crate) trie: XBayes,
 }
 
 const THRESHOLD: f32 = -5.2983174; // precomputed value of (1.0/200.0).ln()
@@ -125,6 +125,11 @@ impl BayesianSession {
 
     pub fn lexicographic_tokens_json(&self) -> String {
         serde_json::to_string(self.trie.tokenizer.tokens()).unwrap()
+    }
+
+    /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary), `^` (start); empty shows all nodes (root is always shown when filtered).
+    pub fn debug_eprint_trie(&self, filter: &str) {
+        crate::trie::debug::eprint_trie(&self.trie, filter);
     }
 }
 

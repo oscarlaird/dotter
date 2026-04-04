@@ -7,7 +7,8 @@ use super::prepared_allpairs::{
 };
 use super::tokenizer_config::NUM_TOKENS;
 use super::{
-    BpeMerges, MAX_PACKED_SPINE_LEN, NO_PACKED_SPINE_INDEX, PackedSpine, SPACESYMBOL, SpineEntry,
+    hf_token_to_internal, BpeMerges, HF_SPACE_MARKER, MAX_PACKED_SPINE_LEN, NO_PACKED_SPINE_INDEX,
+    PackedSpine, SPACESYMBOL, SpineEntry,
 };
 use crate::rolling_hash as rh;
 
@@ -83,7 +84,7 @@ impl TinyLlamaWordTokenizer {
     fn normalize_surface_to_tokenizer(surface: &str) -> String {
         let mut out = String::with_capacity(surface.len());
         for ch in surface.chars() {
-            if ch == ' ' || ch == '_' {
+            if ch == ' ' || ch == SPACESYMBOL || ch == HF_SPACE_MARKER {
                 out.push(SPACESYMBOL);
             } else {
                 out.push(ch);
@@ -107,7 +108,7 @@ impl TinyLlamaWordTokenizer {
             .expect("missing model.vocab object");
 
         let mut vocab = HashMap::with_capacity(vocab_obj.len());
-        let mut entries = Vec::with_capacity(vocab_obj.len());
+        let mut entries: Vec<(String, u32)> = Vec::with_capacity(vocab_obj.len());
         let mut max_id = 0usize;
         for (token, id_val) in vocab_obj {
             let id = id_val
@@ -119,8 +120,9 @@ impl TinyLlamaWordTokenizer {
             }
             let id = id as u32;
             max_id = max_id.max(id as usize);
-            vocab.insert(token.clone(), id);
-            entries.push((token.as_str(), id));
+            let internal = hf_token_to_internal(token);
+            vocab.insert(internal.clone(), id);
+            entries.push((internal, id));
         }
 
         let mut id_to_token = vec![String::new(); max_id + 1];
@@ -131,7 +133,7 @@ impl TinyLlamaWordTokenizer {
                 panic!("duplicate vocab id");
             }
             *slot = true;
-            id_to_token[id as usize] = token.to_string();
+            id_to_token[id as usize] = token;
         }
         if seen.iter().any(|present| !present) {
             panic!("vocab ids must be dense from 0..max");

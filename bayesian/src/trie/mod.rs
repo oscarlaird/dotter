@@ -21,7 +21,7 @@ pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 mod l_update;
 mod p_update;
 mod core;
-// pub mod debug;
+mod debug;
 mod session;
 mod prediction;
 

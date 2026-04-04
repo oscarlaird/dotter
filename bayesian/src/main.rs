@@ -6,7 +6,7 @@ use std::env;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bayesian::bpe::TinyLlamaWordTokenizer;
+use bayesian::bpe::{HF_SPACE_MARKER, SPACESYMBOL, TinyLlamaWordTokenizer};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -42,11 +42,11 @@ fn encode_words_cli(tokenizer_path: &str, words: &[String]) -> ExitCode {
     let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json(tokenizer_path);
 
     for word in words {
-        let text = if word.starts_with('▁') {
-            word.clone()
-        } else {
-            format!("▁{word}")
-        };
+        let body = word
+            .strip_prefix(SPACESYMBOL)
+            .or_else(|| word.strip_prefix(HF_SPACE_MARKER))
+            .unwrap_or(word.as_str());
+        let text = format!("{SPACESYMBOL}{body}");
         let encoded = tokenizer.tokenize_string_with_lex_indices(&text);
         let pieces: Vec<&str> = encoded.iter().map(|(piece, _)| piece.as_str()).collect();
         let lex_indices: Vec<usize> = encoded.iter().map(|(_, idx)| *idx).collect();
@@ -132,13 +132,13 @@ fn canonical_pair_rate_cli(mut args: impl Iterator<Item = String>) -> ExitCode {
         vocab
             .iter()
             .copied()
-            .filter(|token| !token.contains('▁'))
+            .filter(|token| !token.starts_with(SPACESYMBOL))
             .collect()
     } else if first_has_sp {
         vocab
             .iter()
             .copied()
-            .filter(|token| token.contains('▁'))
+            .filter(|token| token.starts_with(SPACESYMBOL))
             .collect()
     } else {
         vocab.clone()
@@ -158,13 +158,13 @@ fn canonical_pair_rate_cli(mut args: impl Iterator<Item = String>) -> ExitCode {
         vocab
             .iter()
             .copied()
-            .filter(|token| !token.contains('▁'))
+            .filter(|token| !token.starts_with(SPACESYMBOL))
             .collect()
     } else if second_has_sp {
         vocab
             .iter()
             .copied()
-            .filter(|token| token.contains('▁'))
+            .filter(|token| token.starts_with(SPACESYMBOL))
             .collect()
     } else {
         vocab.clone()

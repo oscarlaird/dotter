@@ -1,8 +1,8 @@
 //! Byte-pair encoding: load merges and run the usual merge loop on a string.
 //!
-//! For **TinyLlama** (and similar HF SentencePiece+BPE models), space-free words are encoded
-//! like Hugging Face when you prepend the SentencePiece whitespace marker **`▁`** (U+2581)
-//! before char-level BPE. See [`TinyLlamaWordTokenizer`].
+//! For **TinyLlama** (and similar HF SentencePiece+BPE models), `tokenizer.json` uses the
+//! SentencePiece whitespace marker **`▁`** (U+2581). We normalize that to ASCII **`_`** (U+005F)
+//! everywhere inside this crate so BPE strings match the trie alphabet. See [`TinyLlamaWordTokenizer`].
 
 use std::collections::HashMap;
 use std::fs;
@@ -20,8 +20,27 @@ pub use self::tokenizer_config::{
 };
 pub use self::word_tokenizer::{TinyLlamaPreparedFirstAllPairs, TinyLlamaWordTokenizer};
 
-/// SentencePiece "space" / word-boundary marker used in TinyLlama vocab and merges.
-pub const SPACESYMBOL: char = '\u{2581}';
+/// Hugging Face / SentencePiece surface form in `tokenizer.json` only (not used after load).
+pub const HF_SPACE_MARKER: char = '\u{2581}';
+
+/// Word-boundary / “space” marker in all internally stored BPE strings (`lex_tokens`, merges, etc.).
+pub const SPACESYMBOL: char = '_';
+
+/// Map `tokenizer.json` token strings to internal form: every `HF_SPACE_MARKER` → `SPACESYMBOL`.
+pub fn hf_token_to_internal(s: &str) -> String {
+    if !s.contains(HF_SPACE_MARKER) {
+        return s.to_string();
+    }
+    s.chars()
+        .map(|ch| {
+            if ch == HF_SPACE_MARKER {
+                SPACESYMBOL
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
 
 type PieceId = u32;
 pub const MAX_PACKED_SPINE_LEN: usize = 8;
@@ -321,7 +340,7 @@ impl BpeMerges {
         let mut out = Self::new();
         if let Some(vocab) = model.get("vocab").and_then(|v| v.as_object()) {
             for token in vocab.keys() {
-                out.intern_piece(token);
+                out.intern_piece(&hf_token_to_internal(token));
             }
         }
         let merges = model
@@ -332,11 +351,13 @@ impl BpeMerges {
             let line = item.as_str().expect("merge entry is not a string");
             let line_no = idx + 1;
             let (left, right) = parse_merge_line(line, line_no).expect("invalid merge line");
-            let left_id = out.intern_piece(left);
-            let right_id = out.intern_piece(right);
+            let left = hf_token_to_internal(left);
+            let right = hf_token_to_internal(right);
+            let left_id = out.intern_piece(&left);
+            let right_id = out.intern_piece(&right);
             let mut merged = String::with_capacity(left.len() + right.len());
-            merged.push_str(left);
-            merged.push_str(right);
+            merged.push_str(&left);
+            merged.push_str(&right);
             let merged_id = out.intern_owned_piece(merged);
             out.insert_merge(left_id, right_id, merged_id, idx as u32);
         }
@@ -580,6 +601,7 @@ fn parse_merge_line(line: &str, line_no: usize) -> Result<(&str, &str), BpeError
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::path::Path;
 
     fn tokenizer_json_with_merges(merges: &[&str]) -> String {
         let mut seen = HashSet::new();
@@ -789,40 +811,31 @@ mod tests {
     }
 
     #[test]
-    fn tinyllama_encode_string_if_cache_present() {
-        let Some(home) = std::env::var_os("HOME") else {
-            return;
-        };
-        let path = Path::new(&home).join(
-            ".cache/huggingface/hub/models--TinyLlama--TinyLlama-1.1B-Chat-v1.0/snapshots/fe8a4ea1ffedaf415f4da2f062534de366a451e6/tokenizer.json",
-        );
-        if !path.is_file() {
-            return;
-        }
-        let tok = TinyLlamaWordTokenizer::from_tokenizer_json(&path);
-        let hello = tok.lex_index("▁hello").expect("expected tokenizer token");
-        let okay = tok.lex_index("▁okay").expect("expected tokenizer token");
-        let abc = tok.lex_index("▁abc").expect("expected tokenizer token");
+    fn tinyllama_encode_string_bundled_tokenizer() {
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json(Path::new(TOKENIZER_JSON_PATH));
+        let hello = tok.lex_index("_hello").expect("expected tokenizer token");
+        let okay = tok.lex_index("_okay").expect("expected tokenizer token");
+        let abc = tok.lex_index("_abc").expect("expected tokenizer token");
         let def = tok.lex_index("def").expect("expected tokenizer token");
-        let the = tok.lex_index("▁the").expect("expected tokenizer token");
-        assert_eq!(tok.tokenize_string_to_lex_indices("▁hello"), vec![hello]);
-        assert_eq!(tok.tokenize_string_to_lex_indices("▁okay"), vec![okay]);
+        let the = tok.lex_index("_the").expect("expected tokenizer token");
+        assert_eq!(tok.tokenize_string_to_lex_indices("_hello"), vec![hello]);
+        assert_eq!(tok.tokenize_string_to_lex_indices("_okay"), vec![okay]);
         assert_eq!(
-            tok.tokenize_string_to_lex_indices("▁abcdef"),
+            tok.tokenize_string_to_lex_indices("_abcdef"),
             vec![abc, def]
         );
-        assert_eq!(tok.tokenize_string_to_lex_indices("▁the"), vec![the]);
+        assert_eq!(tok.tokenize_string_to_lex_indices("_the"), vec![the]);
         assert_eq!(tok.tokenize_string_to_lex_indices("def"), vec![def]);
         assert_eq!(
-            tok.tokenize_string_to_lex_indices("▁abcdef"),
+            tok.tokenize_string_to_lex_indices("_abcdef"),
             vec![abc, def]
         );
-        assert_eq!(tok.token_at(hello), "▁hello");
-        assert!(tok.can_canonically_follow("▁abc", "def"));
+        assert_eq!(tok.token_at(hello), "_hello");
+        assert!(tok.can_canonically_follow("_abc", "def"));
         assert!(tok.lex_indices_with_left_spines().contains(&def));
         assert_eq!(
-            tok.tokenize_string_with_lex_indices("▁abcdef"),
-            vec![("▁abc".to_string(), abc), ("def".to_string(), def)]
+            tok.tokenize_string_with_lex_indices("_abcdef"),
+            vec![("_abc".to_string(), abc), ("def".to_string(), def)]
         );
         assert_eq!(
             tok.tokenize_string_with_lex_indices("def"),

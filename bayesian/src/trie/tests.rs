@@ -1,21 +1,15 @@
 //! Trie tests that need `pub(crate)` APIs (`Trie`, `Prediction`, `SnapshotWalker`, …).
 //!
 //! For tests that only use the public `bayesian` surface, prefer `bayesian/tests/` at the crate root.
+use crate::trie::ROOT_HASH;
 
 
 #[test]
 fn trie_exploratory_trace() {
+    println!("ROOT_HASH: {}", ROOT_HASH);
     let mut session = crate::BayesianSession::new();
+    session.expand_to_threshold();
+    println!("Trie nodes: {}", session.trie.nodes.len());
+    session.debug_eprint_trie("abcdefghijklmnopqrstuvwxyz_");
 
-    // let before = session.trie_snapshot_at_current();
-    // super::debug::eprint_trie("trie before expand", &session.trie);
-    // super::debug::eprint_snapshot_tree("snapshot before expand", &before);
-
-    let alphabet_song = "abcdefghijklmnopqrstuvwxyz";
-    println!("pausing..");
-    // session.expand_trie();
-
-    // let after = session.trie_snapshot_at_current();
-    // super::debug::eprint_trie("trie before expand", &session.trie);
-    // super::debug::eprint_snapshot_tree("snapshot after expand", &after);
 }
