@@ -109,9 +109,13 @@ mod tests {
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
+
 /// Keys are raw rolling-hash `u64` values; skip SipHash on lookup.
+///
+/// Must be `pub` so `RHashMap` / `RHashSet` can appear in `pub` fields and APIs
+/// without violating Rust’s “public type uses private type” rule.
 #[derive(Default)]
-struct IdentityHasher(u64);
+pub struct IdentityHasher(u64);
 
 impl Hasher for IdentityHasher {
     fn finish(&self) -> u64 {

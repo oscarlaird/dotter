@@ -1,5 +1,12 @@
 //! Trie engine and public session API.
 
+use crate::rolling_hash as rh;
+use crate::symbol::Symbol;
+
+/// Rolling hash of the trie root context (only the start symbol `^`).
+pub(crate) const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte());
+pub(crate) const ROOT_STRING: &str = "^";
+
 /// `ln(1/200)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
 pub const TRIE_EXPANSION_THRESHOLD: f64 = -5.2983173665480363;
 
@@ -11,23 +18,19 @@ pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 
+mod l_update;
+mod p_update;
 mod core;
 // pub mod debug;
-mod prediction;
 mod session;
-mod snapshot;
+mod prediction;
+
+pub use session::BayesianSession;
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
 
 #[cfg(test)]
 mod tests;
-
-pub use session::BayesianSession;
-pub use snapshot::{TrieSnapshot, TrieSnapshotNode};
-
-pub(crate) use core::Trie;
-pub(crate) use prediction::{Prediction, PredictionOrder, PredictionRegistry};
-pub(crate) use snapshot::SnapshotWalker;
 
 pub(crate) fn logaddexp(a: f32, b: f32) -> f32 {
     if a == f32::NEG_INFINITY {

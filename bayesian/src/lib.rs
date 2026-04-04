@@ -7,9 +7,7 @@ pub(crate) mod rolling_hash;
 pub mod symbol;
 pub mod trie;
 
-pub use trie::{
-    BayesianSession, TrieSnapshot, TrieSnapshotNode, TRIE_EXPANSION_THRESHOLD, TRIE_MAX_VISITS,
-};
+pub use trie::BayesianSession;
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;

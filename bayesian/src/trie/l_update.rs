@@ -2,28 +2,29 @@ use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 use crate::symbol::Symbol;
 
-pub(super) struct LUpdate {
-    likelihoods: rh::RHashMap<f32>,
-    cpc_form: bool, // complete prefix code form
+#[derive(Clone)]
+pub(crate) struct LUpdate {
+    pub(crate) likelihoods: rh::RHashMap<f32>,
+    pub(crate) cpc_form: bool, // complete prefix code form
 }
 
 impl LUpdate {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             likelihoods: rh::RHashMap::default(),
             cpc_form: false,
         }
     }
 
-    pub(super) fn deref(&self) -> &rh::RHashMap<f32> {
+    pub(crate) fn deref(&self) -> &rh::RHashMap<f32> {
         &self.likelihoods
     }
 
-    pub(super) fn deref_mut(&mut self) -> &mut rh::RHashMap<f32> {
+    pub(crate) fn deref_mut(&mut self) -> &mut rh::RHashMap<f32> {
         &mut self.likelihoods
     }
 
-    pub(super) fn to_cpc_form(&mut self) {
+    pub(crate) fn to_cpc_form(&mut self) {
         // Complete prefix code form ensures that no node's prefix appears as another node: every sequence represented is maximal/non-overlapping.
         // Example for alphabet {a, b, c}:
         // Starting tree:
@@ -37,6 +38,7 @@ impl LUpdate {
         if self.cpc_form {
             return;
         }
+        self.cpc_form = true;
         struct Entry {
             hash: Hash,
             likelihood: f32,
@@ -77,6 +79,7 @@ impl LUpdate {
     fn merge_many(l_tries: &[&Self]) -> Self {
         // TODO: it is possible to make this faster with an in-place merge
         // where we stop descent if we haven't hit ourself and we have hit_count=len-1
+        // TODO: this function needs to take account of empty likelihood updates
         struct Frame {
             hash: Hash,
             likelihood: f32,
@@ -130,7 +133,13 @@ impl LUpdate {
         result
     }
 
-    pub(super) fn merge(&self, other: &Self) -> Self {
+    pub(crate) fn merge(&self, other: &Self) -> Self {
+        if self.deref().is_empty() {
+            return other.clone();
+        }
+        if other.deref().is_empty() {
+            return self.clone();
+        }
         Self::merge_many(&[self, other])
     }
 }

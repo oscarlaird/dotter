@@ -1,21 +1,19 @@
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
 use super::{logaddexp};
+use crate::trie::ROOT_HASH;
 
 pub(crate) struct XPrediction {
     pub(crate) canonical_followers: Box<[bool]>,
     pub(crate) canonical_follower_for_prefix: Box<[bool]>,
     pub(crate) follower_probs: Box<[f32]>,
     pub(crate) follower_prob_for_prefix: Box<[f32]>,
-    pub(crate) stop_prob: f32,
 }
 
 impl XPrediction {
     pub(crate) fn create_prediction(
         is_zero_order: bool,
         final_token_hash: u64,
-        final_token_hash_is_root: bool,
         follower_logits: Option<Box<[f32]>>,
-        stop_logit: Option<f32>,
         tokenizer: &TinyLlamaWordTokenizer,
     ) -> Self {
         if is_zero_order {
@@ -23,22 +21,14 @@ impl XPrediction {
                 follower_logits.is_none(),
                 "zero-order predictions must not provide follower_logits"
             );
-            assert!(
-                stop_logit.is_none(),
-                "zero-order predictions must not provide stop_logit"
-            );
         } else {
             assert!(
                 follower_logits.is_some(),
                 "non-zero-order predictions must provide follower_logits"
             );
-            assert!(
-                stop_logit.is_some(),
-                "non-zero-order predictions must provide stop_logit"
-            );
         }
 
-        let canonical_followers_array = if final_token_hash_is_root {
+        let canonical_followers_array = if final_token_hash == ROOT_HASH {
             vec![true; tokenizer.tokens().len()]
         } else {
             let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_token_hash);
@@ -57,27 +47,22 @@ impl XPrediction {
             .map(|&count| count != 0)
             .collect::<Box<[_]>>();
 
-        let (follower_probs, stop_prob) = if is_zero_order {
-            (
-                canonical_followers_array
-                    .iter()
-                    .map(|&is_canonical| {
-                        if is_canonical {
-                            -log_canonical_total
-                        } else {
-                            f32::NEG_INFINITY
-                        }
-                    })
-                    .collect::<Box<[_]>>(),
-                f32::NEG_INFINITY,
-            )
+        let follower_probs = if is_zero_order {
+            canonical_followers_array
+                .iter()
+                .map(|&is_canonical| {
+                    if is_canonical {
+                        -log_canonical_total
+                    } else {
+                        f32::NEG_INFINITY
+                    }
+                })
+                .collect::<Box<[_]>>()
         } else {
-            // Caller-provided logits are masked to canonical support and normalized together
-            // with the stop logit so the stored values are proper log-probabilities.
+            // Caller-provided logits are masked to canonical support and normalized
+            // over the surviving follower set.
             let follower_logits =
                 follower_logits.expect("non-zero-order predictions must provide follower_logits");
-            let stop_logit =
-                stop_logit.expect("non-zero-order predictions must provide stop_logit");
             assert_eq!(
                 follower_logits.len(),
                 NUM_TOKENS,
@@ -97,24 +82,21 @@ impl XPrediction {
             let normalizer = masked_follower_logits
                 .iter()
                 .copied()
-                .fold(stop_logit, logaddexp);
+                .fold(f32::NEG_INFINITY, logaddexp);
             assert!(
                 normalizer.is_finite(),
                 "prediction logits must assign finite total mass"
             );
-            (
-                masked_follower_logits
-                    .iter()
-                    .map(|&logit| {
-                        if logit.is_finite() {
-                            logit - normalizer
-                        } else {
-                            f32::NEG_INFINITY
-                        }
-                    })
-                    .collect::<Box<[_]>>(),
-                stop_logit - normalizer,
-            )
+            masked_follower_logits
+                .iter()
+                .map(|&logit| {
+                    if logit.is_finite() {
+                        logit - normalizer
+                    } else {
+                        f32::NEG_INFINITY
+                    }
+                })
+                .collect::<Box<[_]>>()
         };
 
         let follower_prob_for_prefix = (0..NUM_PREFIXES)
@@ -134,7 +116,6 @@ impl XPrediction {
             canonical_follower_for_prefix,
             follower_probs,
             follower_prob_for_prefix,
-            stop_prob,
         }
     }
 }

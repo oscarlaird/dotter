@@ -5,22 +5,20 @@ use crate::trie::MAX_TRUNCATION_POSSIBLE;
 use crate::rolling_hash as rh;
 use crate::trie::prediction::XPrediction;
 
-mod l_update;
-mod p_update;
 mod sparse16;
 mod y_walker;
 
 use super::{
-    MAX_TOKEN_LENGTH, logaddexp,
+    MAX_TOKEN_LENGTH, ROOT_HASH, logaddexp,
 };
-use l_update::LUpdate;
-use p_update::PUpdate;
+use super::l_update::LUpdate;
+use super::p_update::PUpdate;
 use sparse16::{dense_to_sparse16, sparse16_to_dense};
 use y_walker::{FromEnd as _, YWalker, YWalkerRow};
 
 #[derive(Clone, Debug)]
 pub(crate) struct XNode {
-    symbol: Symbol,
+    pub(crate) symbol: Symbol,
     // we don't store a node's hash, because there is no way to reach the node without knowing it
     // for all matrices, children are arrayed on the major axis
     c_can_trunc: [u16; RADIX],
@@ -38,23 +36,23 @@ pub(crate) struct XNode {
     c_a_tl: [[f32; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
     c_cond_l: [f32; RADIX],
     c_accumed_l_old: [f32; RADIX],
-    c_z: [f32; RADIX],
+    pub(crate) c_z: [f32; RADIX],
     //
     c_a_pred_changed: [AncestorsBitmap; RADIX], // ancestor predictions which have changed since we visited this child
     c_a_tp_changed: [AncestorsBitmap; RADIX], // ancestor tps which have changed since we visited this child
     // ROOT
-    if_root_then_z: f32,
+    pub(crate) if_root_then_z: f32,
 }
 
 pub(crate) struct XBayes {
-    nodes: rh::RHashMap<XNode>,
-    full_predictions: rh::RHashMap<XPrediction>,
+    pub(crate) nodes: rh::RHashMap<XNode>,
+    pub(crate) full_predictions: rh::RHashMap<XPrediction>,
     zero_order_predictions: rh::RHashMap<XPrediction>,
-    pending_likelihood: LUpdate,
+    pub(crate) pending_likelihood: LUpdate,
     cum_likelihood: LUpdate,
-    pending_prior: PUpdate,
+    pub(crate) pending_prior: PUpdate,
     unread_predictions: PUpdate,
-    tokenizer: TinyLlamaWordTokenizer,
+    pub(crate) tokenizer: TinyLlamaWordTokenizer,
 
 }
 
@@ -62,18 +60,19 @@ pub(crate) struct XBayes {
 type ContextWindowSize = u8;
 type AncestorsBitmap = u16;
 
-const ROOT_HASH: Hash = {
-    rh::append_right(0, Symbol::Start.to_byte())
-};
-
-enum RecalcType {
+pub(crate) enum RecalcType {
     Update,
     Expand { threshold: f32 },
     // N.B. you can't do both at the same time since checking threshold requires knowing the root's z which is not known until after uppropping an update
 }
 
+pub(crate) enum RecalcResult {
+    Updated,
+    Expanded { nodes_over_threshold: Vec<Hash> }
+}
+
 impl XBayes {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let nodes = rh::RHashMap::default();
         let full_predictions = rh::RHashMap::default();
         let zero_order_predictions = rh::RHashMap::default();
@@ -155,7 +154,15 @@ impl XBayes {
         }
     }
 
-    fn recalc_to_frontier(&mut self, recalc_type: RecalcType) {
+    pub(crate) fn recalc_to_frontier(&mut self, recalc_type: RecalcType) -> RecalcResult {
+        // assert that there are no pending updates if we are expanding
+        match recalc_type {
+            RecalcType::Update => {},
+            RecalcType::Expand { .. } => {
+                assert!(self.pending_prior.deref().is_empty());
+                assert!(self.pending_likelihood.deref().is_empty());
+            }
+        }
         let p_update = self.pending_prior.deref_mut();
         self.cum_likelihood = self.cum_likelihood.merge(&self.pending_likelihood);
         // mark all the nodes, for which there is a prior update ahead of us, but behind the clf
@@ -209,13 +216,14 @@ impl XBayes {
             symbol: Symbol::Start,
             depth: 0,
             target_hash: ROOT_HASH,
-            n_hit_l_update: false,
+            n_hit_l_update: !l_update.is_empty(),
             n_hit_p_update: root_pred_changed,
             n_a_pred_changed: if root_pred_changed { 1u16 } else { 0u16 },
             n_a_tp_changed: 0,
             n_accumed_l: 0.0f32, // WLOG we don't allow the root to have cond_l
         };
         let mut frames: Vec<Frame> = vec![root_frame];
+        let mut nodes_over_threshold: Vec<Hash> = vec![];
         let mut invalid_z_hashes: Vec<Hash> = vec![];
         let mut invalid_mtcdl_hashes: Vec<Hash> = vec![];
         let mut iters = 0;
@@ -239,6 +247,7 @@ impl XBayes {
                 assert!(n_hash == target_hash, "hash mismatch");
             } else {
                 n_hash = ROOT_HASH;
+                nodes_over_threshold.push(n_hash);
                 invalid_z_hashes.push(n_hash);
                 invalid_mtcdl_hashes.push(n_hash);
             }
@@ -334,6 +343,7 @@ impl XBayes {
                                     tokenizer.prefix_lex_index_for_prefix_hash(&final_prefix_hash)
                                 ];
                             node.c_fp[slot][dense_idx] = new_fp;
+                            unimplemented!("Dense indexing is wrong since it only increments on relevant");
                             dense_idx += 1;
                         }
                         // token_a_hash = rh::pop_right(token_a_hash, n_walker.a_symbol().from_end(i-1).to_byte()); // leave in case we decide to revert later
@@ -379,7 +389,15 @@ impl XBayes {
                 //
                 let stop = match recalc_type {
                     RecalcType::Update => valid_z, // which also implies valid_mtcdl
-                    RecalcType::Expand { threshold } => node.c_z[slot] - root_z.unwrap() >= threshold,
+                    RecalcType::Expand { threshold } => {
+                        let met_threshold = node.c_z[slot] - root_z.unwrap() >= threshold;
+                        if met_threshold {
+                            nodes_over_threshold.push(child_hash);
+                            false
+                        } else {
+                            true
+                        }
+                    }
                 };
                 if !stop {
                     frames.push(Frame {
@@ -407,6 +425,7 @@ impl XBayes {
                 }
             }
         }
+        assert!(self.pending_likelihood.deref().is_empty()); // ensure we consumed all likelihood updates
         // up-prop z 
         while let Some(n_hash) = invalid_z_hashes.pop() {
             // we are proceeding in reverse-topological order
@@ -470,6 +489,10 @@ impl XBayes {
                 parent_node.c_a_tl[symbol.to_slot()] = mtcdl_dense;
             }
         }
+        match recalc_type {
+            RecalcType::Update => RecalcResult::Updated,
+            RecalcType::Expand {..} => RecalcResult::Expanded { nodes_over_threshold },
+        }
     }
     // TODO:
     // *set cum_likelihood_frontier
@@ -508,8 +531,6 @@ impl XBayes {
         let prediction = XPrediction::create_prediction(
             true,
             final_token_hash,
-            final_token_hash == ROOT_HASH,
-            None,
             None,
             tokenizer,
         );
@@ -525,7 +546,6 @@ impl XBayes {
         if nodes.contains_key(walker.a_hash().last().unwrap()) {
             return;
         }
-        assert!(*walker.a_symbol().from_end(0) != Symbol::Stop, "ensure_node must never be called on a Stop node");
         let mut node = XNode {
             symbol: *walker.a_symbol().from_end(0),
             c_can_trunc: [0; RADIX], // ok

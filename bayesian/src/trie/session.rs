@@ -1,117 +1,130 @@
-use crate::bpe;
+use std::collections::HashMap;
+
+use crate::trie::core::{XBayes, RecalcType, RecalcResult};
+use crate::trie::l_update::LUpdate;
+use crate::trie::prediction::XPrediction;
+use crate::rolling_hash as rh;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-#[cfg(feature = "wasm")]
-use wasm_bindgen::prelude::*;
-
-use serde::Deserialize;
-
-use super::{Prediction, PredictionOrder, Trie, TrieSnapshot};
-
-/// JSON shape of websocket `prior_update` `content` (and payload passed to [`BayesianSession::apply_prior_update`]).
-#[derive(Debug, Deserialize)]
-struct PriorUpdatePayload {
-    final_token: Option<String>,
-    full_string: String,
-    follower_logits: Vec<f64>,
-    stop_logit: f64,
-}
-
-fn browser_tokenizer() -> crate::bpe::TinyLlamaWordTokenizer {
-    crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(bpe::TOKENIZER_JSON_STR)
-}
-
-fn browser_trie() -> Trie {
-    Trie::new(browser_tokenizer())
-}
-
 #[cfg_attr(feature = "python", pyclass)]
-#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
-    pub(crate) trie: Trie,
+    trie: XBayes,
 }
 
-#[cfg_attr(feature = "wasm", wasm_bindgen)]
+const THRESHOLD: f32 = -5.2983174; // precomputed value of (1.0/200.0).ln()
+
 impl BayesianSession {
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
     pub fn new() -> Self {
-        Self { trie: browser_trie() }
+        Self { trie: XBayes::new() }
     }
 
     pub fn reset(&mut self) {
-        self.trie = browser_trie();
+        self.trie = XBayes::new();
     }
 
-    // three kinds of descent:
-    // - likelihood update
-    // - prior update
-    // - expansion
-    pub fn apply_likelihood_update(&mut self, snapshot_json: String) {
-        crate::trie_debug!(
-            "[bayesian] apply_likelihood_update json_len={}",
-            snapshot_json.len()
-        );
-        let snapshot: TrieSnapshot = serde_json::from_str(&snapshot_json)
-            .expect("snapshot_json should deserialize to TrieSnapshot");
-        crate::trie_debug!(
-            "[bayesian] snapshot nodes={} root={}",
-            snapshot.nodes.len(),
-            snapshot.root
-        );
-        self.trie.apply_likelihood_update(&snapshot);
-        crate::trie_debug!("[bayesian] apply_likelihood_update done");
+    pub fn receive_likelihood_update(&mut self, likelihood_json: String) {
+        #[derive(Deserialize)]
+        struct NHash {
+            // by default, serde will ignore extra fields
+            hash: rh::Hash,
+            l: f32,
+        }
+        let n_by_string =
+            serde_json::from_str::<HashMap<String, NHash>>(&likelihood_json).unwrap();
+        let l_by_hash = n_by_string.iter()
+            .map(|(_string, nhash)| (nhash.hash, nhash.l))
+            .collect::<rh::RHashMap<f32>>();
+        let mut new_l_update = LUpdate {
+            likelihoods: l_by_hash,
+            cpc_form: false,
+        };
+        new_l_update.to_cpc_form();
+        //
+        self.trie.pending_likelihood = self.trie.pending_likelihood.merge(&new_l_update);
     }
 
-    pub fn apply_prior_update(&mut self, prior_json: String) {
-        crate::trie_debug!(
-            "[bayesian] apply_prior_update json_len={}",
-            prior_json.len()
-        );
-        let payload: PriorUpdatePayload = serde_json::from_str(&prior_json)
-            .expect("prior_json should deserialize to prior update content shape");
-        crate::trie_debug!(
-            "[bayesian] apply_prior_update final_token={:?} full_string_len={} logits_len={} stop_logit={}",
-            payload.final_token.as_deref(),
-            payload.full_string.len(),
-            payload.follower_logits.len(),
-            payload.stop_logit
-        );
-        let order = PredictionOrder::FullOrder(
-            payload.final_token,
-            payload.full_string.clone(),
-        );
-        let prediction = Prediction::create_prediction(
-            order,
+    pub fn receive_prior_update(&mut self, prior_json: String) {
+        #[derive(Deserialize)]
+        struct Payload {
+            full_string: String,
+            final_token_hash: rh::Hash,
+            follower_logits: Vec<f32>
+        }
+        let payload= serde_json::from_str::<Payload>(&prior_json).unwrap();
+        // hash the full string
+        let mut full_hash = 0u64;
+        for byte in payload.full_string.bytes() {
+            full_hash = rh::append_right(full_hash, byte)
+        }
+        //
+        let new_prediction = XPrediction::create_prediction(
+            false,
+            payload.final_token_hash,
             Some(payload.follower_logits.into_boxed_slice()),
-            Some(payload.stop_logit),
-            &self.trie.tokenizer,
+            &self.trie.tokenizer
         );
-        self.trie.apply_prior_update(payload.full_string, prediction);
-        crate::trie_debug!("[bayesian] apply_prior_update done");
+        // insert prediction into the registry
+        self.trie.full_predictions.insert(
+            full_hash,
+            new_prediction
+        );
+        self.trie.pending_prior.deref_mut().insert(full_hash);
     }
 
-    // expand and snapshot
-    pub fn snapshot_json(&mut self) -> String {
-        let snapshot = self.trie.snapshot_trie();
-        serde_json::to_string(&snapshot).expect("TrieSnapshot should serialize to JSON")
+    pub fn apply_updates(&mut self) {
+        self.trie.recalc_to_frontier(RecalcType::Update);
+    }
+
+    pub fn expand_to_threshold(&mut self) -> String {
+        let nodes_list = match self.trie.recalc_to_frontier(
+            RecalcType::Expand { threshold: THRESHOLD },
+        ) {
+            RecalcResult::Updated => unreachable!(),
+            RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
+        };
+        // node list is in topological order
+        struct NString {
+            string: String,
+            z: f32,
+        }
+        let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
+        for n_hash in nodes_list {
+            let node = self.trie.nodes.get(&n_hash).unwrap();
+            let n = if n_hash == super::ROOT_HASH {
+                let s = super::ROOT_STRING.to_string();
+                let z = node.if_root_then_z;
+                NString { string: s, z }
+            } else {
+                let p_hash = rh::pop_right(n_hash, node.symbol.to_byte());
+                // p_hash is guaranteed to be in the snapshot_by_hash
+                // because nodes_list is in topological order
+                let p_string = snapshot_by_hash.get(&p_hash).unwrap().string.clone();
+                let p_node = self.trie.nodes.get(&p_hash).unwrap();
+                let s = p_string + &node.symbol.to_byte().to_string();
+                let z = p_node.c_z[node.symbol.to_slot()];
+                NString { string: s, z }
+            };
+            snapshot_by_hash.insert(n_hash, n);
+        }
+        // swap out the string for the hash as the primary key
+        #[derive(Serialize)]
+        struct NHash {
+            z: f32,
+            hash: rh::Hash,
+        }
+        let snapshot_by_string = snapshot_by_hash.into_iter()
+            .map(|(hash, n_string)| (n_string.string, NHash { z: n_string.z, hash }))
+            .collect::<HashMap<String, NHash>>();
+        let snapshot_json = serde_json::to_string(&snapshot_by_string).unwrap();
+        snapshot_json
     }
 
     pub fn lexicographic_tokens_json(&self) -> String {
-        serde_json::to_string(self.trie.tokenizer.tokens())
-            .expect("token list should serialize to JSON")
-    }
-}
-
-#[cfg(test)]
-impl BayesianSession {
-    pub(crate) fn trie_snapshot_at_current(&self) -> TrieSnapshot {
-        self.trie.snapshot_at_current()
-    }
-
-    pub(crate) fn expand_trie(&mut self) {
-        self.trie.expand_trie();
+        serde_json::to_string(self.trie.tokenizer.tokens()).unwrap()
     }
 }
 
@@ -120,31 +133,36 @@ impl BayesianSession {
 impl BayesianSession {
     #[new]
     fn py_new() -> Self {
-        Self::new()
+        BayesianSession::new()
     }
 
     #[pyo3(name = "reset")]
     fn py_reset(&mut self) {
-        self.reset();
+        BayesianSession::reset(self);
     }
 
-    #[pyo3(name = "apply_likelihood_update")]
-    fn py_apply_likelihood_update(&mut self, snapshot_json: String) {
-        self.apply_likelihood_update(snapshot_json);
+    #[pyo3(name = "receive_likelihood_update")]
+    fn py_receive_likelihood_update(&mut self, likelihood_json: String) {
+        BayesianSession::receive_likelihood_update(self, likelihood_json);
     }
 
-    #[pyo3(name = "apply_prior_update")]
-    fn py_apply_prior_update(&mut self, prior_json: String) {
-        self.apply_prior_update(prior_json);
+    #[pyo3(name = "receive_prior_update")]
+    fn py_receive_prior_update(&mut self, prior_json: String) {
+        BayesianSession::receive_prior_update(self, prior_json);
     }
 
-    #[pyo3(name = "snapshot_json")]
-    fn py_snapshot_json(&mut self) -> String {
-        self.snapshot_json()
+    #[pyo3(name = "apply_updates")]
+    fn py_apply_updates(&mut self) {
+        BayesianSession::apply_updates(self);
+    }
+
+    #[pyo3(name = "expand_to_threshold")]
+    fn py_expand_to_threshold(&mut self) -> String {
+        BayesianSession::expand_to_threshold(self)
     }
 
     #[pyo3(name = "lexicographic_tokens_json")]
     fn py_lexicographic_tokens_json(&self) -> String {
-        self.lexicographic_tokens_json()
+        BayesianSession::lexicographic_tokens_json(self)
     }
 }
