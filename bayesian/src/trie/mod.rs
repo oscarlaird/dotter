@@ -1,6 +1,7 @@
 //! Trie engine and public session API.
 
 use crate::rolling_hash as rh;
+use crate::safe_float::Float;
 use crate::symbol::Symbol;
 
 /// Rolling hash of the trie root context (only the start symbol `^`).
@@ -32,11 +33,11 @@ mod tokentrie;
 #[cfg(test)]
 mod tests;
 
-pub(crate) fn logaddexp(a: f32, b: f32) -> f32 {
-    if a == f32::NEG_INFINITY {
+pub(crate) fn logaddexp(a: Float, b: Float) -> Float {
+    if a == Float::NEG_INFINITY {
         return b;
     }
-    if b == f32::NEG_INFINITY {
+    if b == Float::NEG_INFINITY {
         return a;
     }
     let m = a.max(b);

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::safe_float::{Float, into_f32};
 use crate::trie::core::{XBayes, RecalcType, RecalcResult};
 use crate::trie::l_update::LUpdate;
 use crate::trie::prediction::XPrediction;
@@ -36,8 +37,8 @@ impl BayesianSession {
         let n_by_string =
             serde_json::from_str::<HashMap<String, NHash>>(&likelihood_json).unwrap();
         let l_by_hash = n_by_string.iter()
-            .map(|(_string, nhash)| (nhash.hash, nhash.l))
-            .collect::<rh::RHashMap<f32>>();
+            .map(|(_string, nhash)| (nhash.hash, Float::from(nhash.l)))
+            .collect::<rh::RHashMap<Float>>();
         let mut new_l_update = LUpdate {
             likelihoods: l_by_hash,
             cpc_form: false,
@@ -64,7 +65,14 @@ impl BayesianSession {
         let new_prediction = XPrediction::create_prediction(
             false,
             payload.final_token_hash,
-            Some(payload.follower_logits.into_boxed_slice()),
+            Some(
+                payload
+                    .follower_logits
+                    .into_iter()
+                    .map(Float::from)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
             &self.trie.tokenizer
         );
         // insert prediction into the registry
@@ -81,7 +89,7 @@ impl BayesianSession {
 
     pub fn expand_to_threshold(&mut self) -> String {
         let nodes_list = match self.trie.recalc_to_frontier(
-            RecalcType::Expand { threshold: THRESHOLD },
+            RecalcType::Expand { threshold: Float::from(THRESHOLD) },
         ) {
             RecalcResult::Updated => unreachable!(),
             RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
@@ -89,7 +97,7 @@ impl BayesianSession {
         // node list is in topological order
         struct NString {
             string: String,
-            z: f32,
+            z: Float,
         }
         let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
         for n_hash in nodes_list {
@@ -117,7 +125,7 @@ impl BayesianSession {
             hash: rh::Hash,
         }
         let snapshot_by_string = snapshot_by_hash.into_iter()
-            .map(|(hash, n_string)| (n_string.string, NHash { z: n_string.z, hash }))
+            .map(|(hash, n_string)| (n_string.string, NHash { z: into_f32(n_string.z), hash }))
             .collect::<HashMap<String, NHash>>();
         let snapshot_json = serde_json::to_string(&snapshot_by_string).unwrap();
         snapshot_json

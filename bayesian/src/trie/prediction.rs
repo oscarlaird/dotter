@@ -1,19 +1,20 @@
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
+use crate::safe_float::Float;
 use super::{logaddexp};
 use crate::trie::ROOT_HASH;
 
 pub(crate) struct XPrediction {
     pub(crate) canonical_followers: Box<[bool]>,
     pub(crate) canonical_follower_for_prefix: Box<[bool]>,
-    pub(crate) follower_probs: Box<[f32]>,
-    pub(crate) follower_prob_for_prefix: Box<[f32]>,
+    pub(crate) follower_probs: Box<[Float]>,
+    pub(crate) follower_prob_for_prefix: Box<[Float]>,
 }
 
 impl XPrediction {
     pub(crate) fn create_prediction(
         is_zero_order: bool,
         final_token_hash: u64,
-        follower_logits: Option<Box<[f32]>>,
+        follower_logits: Option<Box<[Float]>>,
         tokenizer: &TinyLlamaWordTokenizer,
     ) -> Self {
         if is_zero_order {
@@ -40,7 +41,7 @@ impl XPrediction {
             .prefix_lex_index_for_prefix_hash(&0u64)]; // hash("")=0
 
         assert!(canonical_total != 0, "canonical_total must not be zero");
-        let log_canonical_total = (canonical_total as f32).ln();
+        let log_canonical_total = Float::from(canonical_total as f32).ln();
 
         let canonical_follower_for_prefix = canonical_counts_by_prefix
             .iter()
@@ -54,7 +55,7 @@ impl XPrediction {
                     if is_canonical {
                         -log_canonical_total
                     } else {
-                        f32::NEG_INFINITY
+                        Float::NEG_INFINITY
                     }
                 })
                 .collect::<Box<[_]>>()
@@ -75,14 +76,14 @@ impl XPrediction {
                     if is_canonical {
                         logit
                     } else {
-                        f32::NEG_INFINITY
+                        Float::NEG_INFINITY
                     }
                 })
                 .collect::<Box<[_]>>();
             let normalizer = masked_follower_logits
                 .iter()
                 .copied()
-                .fold(f32::NEG_INFINITY, logaddexp);
+                .fold(Float::NEG_INFINITY, logaddexp);
             assert!(
                 normalizer.is_finite(),
                 "prediction logits must assign finite total mass"
@@ -93,7 +94,7 @@ impl XPrediction {
                     if logit.is_finite() {
                         logit - normalizer
                     } else {
-                        f32::NEG_INFINITY
+                        Float::NEG_INFINITY
                     }
                 })
                 .collect::<Box<[_]>>()
@@ -105,7 +106,7 @@ impl XPrediction {
                 follower_probs[start..stop]
                     .iter()
                     .copied()
-                    .fold(f32::NEG_INFINITY, logaddexp)
+                    .fold(Float::NEG_INFINITY, logaddexp)
             })
             .collect::<Box<[_]>>();
 

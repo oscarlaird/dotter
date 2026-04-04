@@ -1,10 +1,11 @@
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
+use crate::safe_float::{Float, ZERO};
 use crate::symbol::Symbol;
 
 #[derive(Clone)]
 pub(crate) struct LUpdate {
-    pub(crate) likelihoods: rh::RHashMap<f32>,
+    pub(crate) likelihoods: rh::RHashMap<Float>,
     pub(crate) cpc_form: bool, // complete prefix code form
 }
 
@@ -16,11 +17,11 @@ impl LUpdate {
         }
     }
 
-    pub(crate) fn deref(&self) -> &rh::RHashMap<f32> {
+    pub(crate) fn deref(&self) -> &rh::RHashMap<Float> {
         &self.likelihoods
     }
 
-    pub(crate) fn deref_mut(&mut self) -> &mut rh::RHashMap<f32> {
+    pub(crate) fn deref_mut(&mut self) -> &mut rh::RHashMap<Float> {
         &mut self.likelihoods
     }
 
@@ -41,7 +42,7 @@ impl LUpdate {
         self.cpc_form = true;
         struct Entry {
             hash: Hash,
-            likelihood: f32,
+            likelihood: Float,
         }
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut remove_entries: Vec<Hash> = Vec::new();
@@ -82,7 +83,7 @@ impl LUpdate {
         // TODO: this function needs to take account of empty likelihood updates
         struct Frame {
             hash: Hash,
-            likelihood: f32,
+            likelihood: Float,
             hit_count: u32,
         }
         // assume that all likelihood updates are already in complete prefix code form i.e. no node is the prefix of another
@@ -95,7 +96,7 @@ impl LUpdate {
         let mut result = Self::new();
         let mut walkers = vec![Frame {
             hash: 0,
-            likelihood: 0.0,
+            likelihood: ZERO,
             hit_count: 0,
         }];
         let mut iters = 0;
@@ -110,7 +111,7 @@ impl LUpdate {
             let (hit_delta, likelihood_delta) = l_tries
                 .iter()
                 .filter_map(|l_trie| l_trie.likelihoods.get(&hash))
-                .fold((0, 0.0f32), |(hits, sum), &v| (hits + 1, sum + v));
+                .fold((0, ZERO), |(hits, sum), &v| (hits + 1, sum + v));
             let new_hits = hit_count + hit_delta;
             let new_likelihood = likelihood + likelihood_delta;
             if new_hits == (l_tries.len() as u32) {

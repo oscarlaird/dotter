@@ -1,5 +1,6 @@
 use crate::bpe::{TinyLlamaWordTokenizer, TOKENIZER_JSON_STR};
 use crate::rolling_hash::Hash;
+use crate::safe_float::{Float, ZERO};
 use crate::symbol::{Symbol, RADIX};
 use crate::trie::MAX_TRUNCATION_POSSIBLE;
 use crate::rolling_hash as rh;
@@ -26,22 +27,22 @@ pub(crate) struct XNode {
     c_final_token_hash: [u64; RADIX],  // TODO: would it be more efficient to store the lexindex instead?
     // c_final_token_lexindex: [u16; RADIX],
     // c_prefix_lexindex: [[u16; MAX_TRUNCATION_POSSIBLE]; RADIX],
-    c_p: [f32; RADIX],
-    c_p_old: [f32; RADIX],
-    c_fp: [[f32; MAX_TRUNCATION_POSSIBLE]; RADIX],
-    c_tp: [f32; RADIX],
-    c_tp0: [f32; RADIX],
-    c_final_token_prob: [f32; RADIX],
+    c_p: [Float; RADIX],
+    c_p_old: [Float; RADIX],
+    c_fp: [[Float; MAX_TRUNCATION_POSSIBLE]; RADIX],
+    c_tp: [Float; RADIX],
+    c_tp0: [Float; RADIX],
+    c_final_token_prob: [Float; RADIX],
     // TODO: #[cfg(feature = "tokentrie")]
-    c_a_tl: [[f32; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
-    c_cond_l: [f32; RADIX],
-    c_accumed_l_old: [f32; RADIX],
-    pub(crate) c_z: [f32; RADIX],
+    c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
+    c_cond_l: [Float; RADIX],
+    c_accumed_l_old: [Float; RADIX],
+    pub(crate) c_z: [Float; RADIX],
     //
     c_a_pred_changed: [AncestorsBitmap; RADIX], // ancestor predictions which have changed since we visited this child
     c_a_tp_changed: [AncestorsBitmap; RADIX], // ancestor tps which have changed since we visited this child
     // ROOT
-    pub(crate) if_root_then_z: f32,
+    pub(crate) if_root_then_z: Float,
 }
 
 pub(crate) struct XBayes {
@@ -62,7 +63,7 @@ type AncestorsBitmap = u16;
 
 pub(crate) enum RecalcType {
     Update,
-    Expand { threshold: f32 },
+    Expand { threshold: Float },
     // N.B. you can't do both at the same time since checking threshold requires knowing the root's z which is not known until after uppropping an update
 }
 
@@ -113,10 +114,10 @@ impl XBayes {
         ));
     }
 
-    fn set_tl_array(&self, node_hash: Hash, tl_array: &mut [f32], accumed_l: f32) {
+    fn set_tl_array(&self, node_hash: Hash, tl_array: &mut [Float], accumed_l: Float) {
         struct Frame {
             hash: Hash,
-            accumed_l: f32, // accumed_l at or above this node
+            accumed_l: Float, // accumed_l at or above this node
         }
         let mut frames = vec![Frame {hash: node_hash, accumed_l}];
         if !self.nodes.contains_key(&node_hash) {
@@ -205,7 +206,7 @@ impl XBayes {
             n_hit_p_update: bool,  // (inclusive of n)
             n_a_pred_changed: AncestorsBitmap,
             n_a_tp_changed: AncestorsBitmap,
-            n_accumed_l: f32, // (inclusive of n)
+            n_accumed_l: Float, // (inclusive of n)
         }
         let mut n_walker = Self::root_walker();
         let root_pred_changed = unread_predictions.remove(&ROOT_HASH);
@@ -224,7 +225,7 @@ impl XBayes {
             n_hit_p_update: root_pred_changed,
             n_a_pred_changed: if root_pred_changed { 1u16 } else { 0u16 },
             n_a_tp_changed: 0,
-            n_accumed_l: 0.0f32, // WLOG we don't allow the root to have cond_l
+            n_accumed_l: ZERO, // WLOG we don't allow the root to have cond_l
         };
         let mut frames: Vec<Frame> = vec![root_frame];
         let mut nodes_over_threshold: Vec<Hash> = vec![];
@@ -357,7 +358,7 @@ impl XBayes {
                 }
                 let p_changed = fp_changed || tp_changed;
                 if p_changed {
-                    p = f32::NEG_INFINITY;
+                    p = Float::NEG_INFINITY;
                     let mut dense_idx = 0;
                     for i in 1..MAX_TOKEN_LENGTH {
                         let can_trunc = (node.c_can_trunc[slot] & (1 << i)) != 0;
@@ -437,7 +438,7 @@ impl XBayes {
             // we are proceeding in reverse-topological order
             // hence we are guaranteed that our invalid children have already been
             // up-propagated and therefore our c_z array is correct
-            let mut z = f32::NEG_INFINITY;
+            let mut z = Float::NEG_INFINITY;
             let symbol;
             {
                 let node = nodes.get(&n_hash).unwrap();
@@ -464,7 +465,7 @@ impl XBayes {
         while let Some(n_hash) = invalid_mtcdl_hashes.pop() {
             // upprop mtcdl
             // TODO: #[cfg(feature = "tokentrie")]
-            let mut mtcdl = [f32::NEG_INFINITY; MAX_TOKEN_LENGTH];
+            let mut mtcdl = [Float::NEG_INFINITY; MAX_TOKEN_LENGTH];
             let symbol;
             {
                 let node = nodes.get(&n_hash).unwrap();
@@ -473,7 +474,7 @@ impl XBayes {
                     let c_mtcdl = node.c_a_tl[slot];
                     let c_can_trunc = node.c_can_trunc[slot];
                     let nz = c_can_trunc | 1;
-                    let expanded_c_mtcdl = dense_to_sparse16( &c_mtcdl, nz, f32::NEG_INFINITY);
+                    let expanded_c_mtcdl = dense_to_sparse16( &c_mtcdl, nz, Float::NEG_INFINITY);
                     for i in 0..(MAX_TOKEN_LENGTH-1) {
                         mtcdl[i] = mtcdl[i].max(expanded_c_mtcdl[i+1]);
                     }
@@ -487,7 +488,7 @@ impl XBayes {
             } else {
                 let parent_hash = rh::pop_right(n_hash, symbol.to_byte());
                 let parent_node = nodes.get_mut(&parent_hash).unwrap();
-                let mut mtcdl_dense = [f32::NAN; MAX_TRUNCATION_POSSIBLE+1];
+                let mut mtcdl_dense = [Float::NAN; MAX_TRUNCATION_POSSIBLE+1];
                 let nz = parent_node.c_can_trunc[symbol.to_slot()] | 1;
                 for (i, v) in sparse16_to_dense(&mtcdl, nz).iter().enumerate() {
                     mtcdl_dense[i] = *v;
@@ -543,19 +544,19 @@ impl XBayes {
             c_can_trunc: [0; RADIX], // ok
             c_final_token_length: [0; RADIX], // ok
             c_final_token_hash: [u64::MAX; RADIX], // ok
-            c_p: [f32::NAN; RADIX], // ok
-            c_p_old: [f32::NAN; RADIX], // ok
-            c_fp: [[f32::NAN; MAX_TRUNCATION_POSSIBLE]; RADIX], // ok
-            c_tp0: [f32::NAN; RADIX], // ok
-            c_tp: [f32::NAN; RADIX], // ok
-            c_final_token_prob: [f32::NAN; RADIX], // ok
-            c_cond_l: [0.0; RADIX], // ok
-            c_a_tl: [[f32::NAN; MAX_TRUNCATION_POSSIBLE+1]; RADIX], // ok
-            c_accumed_l_old: [0.0; RADIX], // ok
-            c_z: [f32::NAN; RADIX], // ok
+            c_p: [Float::NAN; RADIX], // ok
+            c_p_old: [Float::NAN; RADIX], // ok
+            c_fp: [[Float::NAN; MAX_TRUNCATION_POSSIBLE]; RADIX], // ok
+            c_tp0: [Float::NAN; RADIX], // ok
+            c_tp: [Float::NAN; RADIX], // ok
+            c_final_token_prob: [Float::NAN; RADIX], // ok
+            c_cond_l: [ZERO; RADIX], // ok
+            c_a_tl: [[Float::NAN; MAX_TRUNCATION_POSSIBLE+1]; RADIX], // ok
+            c_accumed_l_old: [ZERO; RADIX], // ok
+            c_z: [Float::NAN; RADIX], // ok
             c_a_pred_changed: [0; RADIX], // ok
             c_a_tp_changed: [0; RADIX], // ok
-            if_root_then_z: f32::NAN, // ok
+            if_root_then_z: Float::NAN, // ok
         };
         //
         let available_prediction_depth = usize::min(MAX_TOKEN_LENGTH, walker.len() + 1);
@@ -563,7 +564,7 @@ impl XBayes {
             let child_byte = Symbol::slot_to_byte(slot);
             let mut final_chars_hash = child_byte as u64;
             let mut can_trunc_count = 0;
-            let mut p = f32::NEG_INFINITY;
+            let mut p = Float::NEG_INFINITY;
             let mut found_canonical_ancestor = false;
             for i in 1..available_prediction_depth { // index is from child's perspective
                 let a_pred = zero_order_predictions
@@ -596,16 +597,16 @@ impl XBayes {
                         p = logaddexp(p, a_tp0 + fp);
                         node.c_fp[slot][can_trunc_count] = fp;
                         node.c_can_trunc[slot] |= 1 << i;
-                        node.c_a_tl[slot][can_trunc_count+1] = 0.0; // intentionally different index than for c_fp
+                        node.c_a_tl[slot][can_trunc_count+1] = ZERO; // intentionally different index than for c_fp
                         can_trunc_count += 1;
                     }
                 }
                 final_chars_hash = rh::extend_right(walker.a_symbol().from_end(i-1).to_byte() as u64, final_chars_hash, i);
             }
             assert!(found_canonical_ancestor);
-            node.c_a_tl[slot][0] = 0.0;
+            node.c_a_tl[slot][0] = ZERO;
             node.c_p[slot] = p;
-            node.c_z[slot] = 0.0 + p; // accumed_l is 0.0
+            node.c_z[slot] = ZERO + p; // accumed_l is 0.0
             node.c_p_old[slot] = p;
         }
         // at no greater price than keeping tp0 on nodes we can initialize nodes to the beginning of time

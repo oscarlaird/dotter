@@ -1,5 +1,6 @@
 use crate::symbol::Symbol;
 use crate::rolling_hash::Hash;
+use crate::safe_float::{Float, ZERO};
 
 pub(super) trait FromEnd<T> {
     fn from_end(&self, i: usize) -> &T;
@@ -17,16 +18,16 @@ pub(super) struct YWalker {
     a_hash: Vec<Hash>,
     a_final_token_hash: Vec<u64>,
     a_symbol: Vec<Symbol>,
-    a_tp: Vec<f32>,
-    a_tp0: Vec<f32>,
+    a_tp: Vec<Float>,
+    a_tp0: Vec<Float>,
 }
 
 pub(super) struct YWalkerRow {
     hash: Hash,
     final_token_hash: u64,
     symbol: Symbol,
-    tp: f32,
-    tp0: f32,
+    tp: Float,
+    tp0: Float,
 }
 
 impl YWalkerRow {
@@ -34,8 +35,8 @@ impl YWalkerRow {
         hash: Hash,
         final_token_hash: u64,
         symbol: Symbol,
-        tp: f32,
-        tp0: f32,
+        tp: Float,
+        tp0: Float,
     ) -> Self {
         Self {
             hash,
@@ -53,8 +54,8 @@ impl YWalker {
             len: 1,
             a_hash: vec![root_hash],
             a_symbol: vec![Symbol::Start],
-            a_tp: vec![0.0],
-            a_tp0: vec![0.0],
+            a_tp: vec![ZERO],
+            a_tp0: vec![ZERO],
             a_final_token_hash: vec![root_hash],
         }
     }
@@ -93,11 +94,11 @@ impl YWalker {
         &self.a_symbol
     }
 
-    pub(super) fn a_tp(&self) -> &[f32] {
+    pub(super) fn a_tp(&self) -> &[Float] {
         &self.a_tp
     }
 
-    pub(super) fn a_tp0(&self) -> &[f32] {
+    pub(super) fn a_tp0(&self) -> &[Float] {
         &self.a_tp0
     }
 }

@@ -4,6 +4,7 @@
 
 pub mod bpe;
 pub(crate) mod rolling_hash;
+pub(crate) mod safe_float;
 pub mod symbol;
 pub mod trie;
 
