@@ -68,7 +68,7 @@ pub(crate) const fn append_right(hash: Hash, right_char: u8) -> Hash {
 
 pub(crate) fn truncate_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
     let sub = if hash < right_hash {
-        right_hash - hash
+        MOD + hash - right_hash
     } else {
         hash - right_hash
     };
@@ -111,6 +111,14 @@ mod tests {
         }
         let hash2 = extend_right(hash2_hello, hash2_world, 5);
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_extend_truncate_right_round_trip() {
+        let left = hash_string("hello ");
+        let right = hash_string("world");
+        let combined = extend_right(left, right, "world".len());
+        assert_eq!(truncate_right(combined, right, "world".len()), left);
     }
 }
 
