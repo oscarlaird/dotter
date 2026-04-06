@@ -65,6 +65,12 @@ impl SafeFloat {
     }
 
     #[inline]
+    pub(crate) fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.assert_valid_inputs(*other, "total_cmp");
+        self.0.total_cmp(&other.0)
+    }
+
+    #[inline]
     pub(crate) fn is_finite(self) -> bool {
         self.0.is_finite()
     }

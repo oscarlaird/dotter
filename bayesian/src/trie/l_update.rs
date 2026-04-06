@@ -1,7 +1,7 @@
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
-use crate::symbol::Symbol;
+use crate::symbol::{Symbol, RADIX};
 
 #[derive(Clone)]
 pub(crate) struct LUpdate {
@@ -49,8 +49,8 @@ impl LUpdate {
         for (hash, &likelihood) in self.likelihoods.iter() {
             let mut has_any_children = false;
             let mut non_preexisting_child_hashes: Vec<Hash> = Vec::new();
-            for symbol in Symbol::ALL {
-                let child_hash = rh::append_right(*hash, symbol.to_byte());
+            for slot in 0..RADIX {
+                let child_hash = rh::append_right(*hash, Symbol::slot_to_byte(slot));
                 if self.likelihoods.contains_key(&child_hash) {
                     has_any_children = true;
                 } else {
@@ -118,11 +118,8 @@ impl LUpdate {
                 result.likelihoods.insert(hash, new_likelihood);
                 continue;
             }
-            for symbol in Symbol::ALL {
-                if symbol == Symbol::Start {
-                    continue;
-                }
-                let child_hash = rh::append_right(hash, symbol.to_byte());
+            for slot in 0..RADIX {
+                let child_hash = rh::append_right(hash, Symbol::slot_to_byte(slot));
                 walkers.push(Frame {
                     hash: child_hash,
                     likelihood: new_likelihood,

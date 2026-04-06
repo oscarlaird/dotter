@@ -8,8 +8,16 @@
 // H(s) = \sum_{i<|s|} s_i * p^(|s| - 1 - i)
 
 const MOD: u64 = (1 << 61) - 1;
+#[cfg(not(any(test, debug_assertions)))]
 const BASE: u64 = 257; // guarantees no collisions from a common prefix unto the seventh generation
+#[cfg(not(any(test, debug_assertions)))]
 const INV_BASE: u64 = 1_327_878_464_449_909_357;
+
+#[cfg(any(test, debug_assertions))]
+const BASE: u64 = 10000;
+#[cfg(any(test, debug_assertions))]
+const INV_BASE: u64 = 1_487_038_156_641_911_229;
+
 const MAX_APPEND_LENGTH: usize = 16; // TODO: this should come from the tokenizer
 
 pub(crate) type Hash = u64;

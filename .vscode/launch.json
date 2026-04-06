@@ -13,6 +13,8 @@
           "${workspaceFolder}/bayesian/Cargo.toml",
           "--lib",
           "--no-default-features",
+          "--features",
+          "tokentrie",
           "--no-run"
         ],
         "filter": {

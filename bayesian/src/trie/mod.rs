@@ -15,6 +15,7 @@ pub const TRIE_EXPANSION_THRESHOLD: f64 = -5.2983173665480363;
 pub const TRIE_MAX_VISITS: i32 = 200;
 
 pub(crate) type TokenLexIndex = usize;
+pub(crate) const INVALID_TOKEN_LEXINDEX: TokenLexIndex = usize::MAX;
 pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;

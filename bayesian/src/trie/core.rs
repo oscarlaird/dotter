@@ -1,10 +1,13 @@
+use std::collections::BinaryHeap;
+
 use crate::bpe::{TinyLlamaWordTokenizer, TOKENIZER_JSON_STR};
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
 use crate::symbol::{Symbol, RADIX};
-use crate::trie::MAX_TRUNCATION_POSSIBLE;
+use crate::trie::{MAX_TRUNCATION_POSSIBLE, TokenLexIndex, INVALID_TOKEN_LEXINDEX};
 use crate::rolling_hash as rh;
 use crate::trie::prediction::XPrediction;
+use crate::bpe::NUM_TOKENS;
 
 mod sparse16;
 mod y_walker;
@@ -14,6 +17,8 @@ use super::{
 };
 use super::l_update::LUpdate;
 use super::p_update::PUpdate;
+#[cfg(feature = "tokentrie")]
+use super::tokentrie::{QueueItem};
 use sparse16::{dense_to_sparse16, sparse16_to_dense};
 use y_walker::{FromEnd as _, YWalker, YWalkerRow};
 
@@ -24,9 +29,7 @@ pub(crate) struct XNode {
     // for all matrices, children are arrayed on the major axis
     c_can_trunc: [u16; RADIX],
     c_final_token_length: [u8; RADIX],
-    c_final_token_hash: [u64; RADIX],  // TODO: would it be more efficient to store the lexindex instead?
-    // c_final_token_lexindex: [u16; RADIX],
-    // c_prefix_lexindex: [[u16; MAX_TRUNCATION_POSSIBLE]; RADIX],
+    c_final_token_lexindex: [TokenLexIndex; RADIX],
     c_p: [Float; RADIX],
     c_p_old: [Float; RADIX],
     c_fp: [[Float; MAX_TRUNCATION_POSSIBLE]; RADIX],
@@ -34,8 +37,8 @@ pub(crate) struct XNode {
     c_tp0: [Float; RADIX],
     c_final_token_prob: [Float; RADIX],
     // TODO: #[cfg(feature = "tokentrie")]
-    c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
-    c_cond_l: [Float; RADIX],
+    pub(crate) c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
+    pub(crate) c_cond_l: [Float; RADIX],
     c_accumed_l_old: [Float; RADIX],
     pub(crate) c_z: [Float; RADIX],
     //
@@ -48,13 +51,17 @@ pub(crate) struct XNode {
 pub(crate) struct XBayes {
     pub(crate) nodes: rh::RHashMap<XNode>,
     pub(crate) full_predictions: rh::RHashMap<XPrediction>,
-    zero_order_predictions: rh::RHashMap<XPrediction>,
+    zero_order_predictions: Box<[Option<XPrediction>]>,
+    root_zero_order_prediction: XPrediction,
     pub(crate) pending_likelihood: LUpdate,
-    cum_likelihood: LUpdate,
+    pub(crate) cum_likelihood: LUpdate,
     pub(crate) pending_prior: PUpdate,
     unread_predictions: PUpdate,
     pub(crate) tokenizer: TinyLlamaWordTokenizer,
-
+    #[cfg(feature = "tokentrie")]
+    pub(super) queue: BinaryHeap<QueueItem>,
+    #[cfg(feature = "tokentrie")]
+    pub(super) queue_ancestor_map: rh::RHashMap<TokenLexIndex>,
 }
 
 
@@ -67,6 +74,7 @@ pub(crate) enum RecalcType {
     // N.B. you can't do both at the same time since checking threshold requires knowing the root's z which is not known until after uppropping an update
 }
 
+
 pub(crate) enum RecalcResult {
     Updated,
     Expanded { nodes_over_threshold: Vec<Hash> }
@@ -76,21 +84,32 @@ impl XBayes {
     pub(crate) fn new() -> Self {
         let mut nodes = rh::RHashMap::default();
         let full_predictions = rh::RHashMap::default();
-        let mut zero_order_predictions = rh::RHashMap::default();
+        let zero_order_predictions = std::iter::repeat_with(|| None)
+            .take(NUM_TOKENS)
+            .collect::<Box<[_]>>();
         let tokenizer = TinyLlamaWordTokenizer::from_tokenizer_json_str(TOKENIZER_JSON_STR);
-        //
-        XBayes::ensure_zero_order_prediction(&mut zero_order_predictions, &tokenizer, ROOT_HASH);
-        XBayes::ensure_node(&mut nodes, &zero_order_predictions, &tokenizer, &YWalker::root(ROOT_HASH));
+        let root_zero_order_prediction = XPrediction::create_prediction(
+            true,
+            INVALID_TOKEN_LEXINDEX,
+            None,
+            &tokenizer,
+        );
+        XBayes::ensure_node(&mut nodes, &zero_order_predictions, &root_zero_order_prediction, &tokenizer, &YWalker::root(ROOT_HASH));
         //
         Self {
             nodes,
             full_predictions,
             zero_order_predictions,
+            root_zero_order_prediction,
             pending_likelihood: LUpdate::new(),
             cum_likelihood: LUpdate::new(),
             pending_prior: PUpdate::new(),
             unread_predictions: PUpdate::new(),
             tokenizer: tokenizer,
+            #[cfg(feature = "tokentrie")]
+            queue: Self::root_queue(),
+            #[cfg(feature = "tokentrie")]
+            queue_ancestor_map: rh::RHashMap::default(),
         }
     }
 
@@ -107,56 +126,11 @@ impl XBayes {
         let n_hash = rh::append_right(p_hash, symbol.to_byte());
         walker.push(YWalkerRow::new(
             n_hash,
-            p_node.c_final_token_hash[slot],
+            p_node.c_final_token_lexindex[slot],
             symbol,
             p_node.c_tp[slot],
             p_node.c_tp0[slot],
         ));
-    }
-
-    fn set_tl_array(&self, node_hash: Hash, tl_array: &mut [Float], accumed_l: Float) {
-        struct Frame {
-            hash: Hash,
-            accumed_l: Float, // accumed_l at or above this node
-        }
-        let mut frames = vec![Frame {hash: node_hash, accumed_l}];
-        if !self.nodes.contains_key(&node_hash) {
-            tl_array.fill(accumed_l);
-            return;
-        }
-        // TODO: the caller should be responsible for knowing if it hit the clf (it can do this when it traverses A to B for accumed l)
-        unimplemented!();
-        let branch_clf = self.cum_likelihood.deref().contains_key(&node_hash);
-        if branch_clf {
-            tl_array.fill(accumed_l);
-            return;
-        }
-        let mut iters = 0;
-        while let Some(Frame { hash, accumed_l }) = frames.pop() {
-            if iters < 1000 { iters += 1; } else { panic!("set_tl_array: too many iterations"); }
-            let node = self.nodes.get(&hash).unwrap();
-            // handle our children
-            for child_slot in 0..RADIX {
-                let child_hash = rh::append_right(hash, Symbol::slot_to_byte(child_slot));
-                let child_is_clf = self.cum_likelihood.deref().contains_key(&child_hash);
-                if child_is_clf {
-                    assert!(self.tokenizer.proper_prefix_hashset.contains(&child_hash), "set_tl_array: child hash is not a proper prefix");
-                    let range = self.tokenizer.token_lex_range_for_prefix_hash(&child_hash);
-                    let subslice = &mut tl_array[range.0..range.1];
-                    subslice.fill(accumed_l + node.c_cond_l[child_slot]);
-                    continue;
-                }
-                if self.tokenizer.token_hashset.contains(&child_hash) {
-                    let lexindex = self.tokenizer.lex_index_for_token_hash(&child_hash);
-                    tl_array[lexindex] = accumed_l + node.c_a_tl[child_slot][0];
-                }
-                if !self.tokenizer.proper_prefix_hashset.contains(&child_hash) {
-                    continue;
-                }
-                assert!(self.nodes.contains_key(&child_hash), "set_tl_array: child hash is not in nodes");
-                frames.push(Frame { hash: child_hash, accumed_l: accumed_l + node.c_cond_l[child_slot]});
-            }
-        }
     }
 
     pub(crate) fn recalc_to_frontier(&mut self, recalc_type: RecalcType) -> RecalcResult {
@@ -194,6 +168,7 @@ impl XBayes {
         let nodes = &mut self.nodes;
         let full_predictions = &self.full_predictions;
         let zero_order_predictions = &mut self.zero_order_predictions;
+        let root_zero_order_prediction = &self.root_zero_order_prediction;
         let l_update = self.pending_likelihood.deref_mut();
         let cum_likelihood = &self.cum_likelihood;
         let unread_predictions = self.unread_predictions.deref_mut();
@@ -221,7 +196,7 @@ impl XBayes {
             symbol: Symbol::Start,
             depth: 0,
             target_hash: ROOT_HASH,
-            n_hit_l_update: !l_update.is_empty(),
+            n_hit_l_update: l_update.is_empty(),
             n_hit_p_update: root_pred_changed,
             n_a_pred_changed: if root_pred_changed { 1u16 } else { 0u16 },
             n_a_tp_changed: 0,
@@ -257,12 +232,14 @@ impl XBayes {
                 invalid_mtcdl_hashes.push(n_hash);
             }
             {
-                Self::ensure_zero_order_prediction(
-                    zero_order_predictions,
-                    tokenizer,
-                    *n_walker.a_final_token_hash().from_end(0),
-                );
-                Self::ensure_node(nodes, zero_order_predictions, tokenizer, &n_walker);
+                if n_hash != ROOT_HASH {
+                    Self::ensure_zero_order_prediction(
+                        zero_order_predictions,
+                        tokenizer,
+                        *n_walker.a_final_token_lexindex().from_end(0),
+                    );
+                }
+                Self::ensure_node(nodes, zero_order_predictions, root_zero_order_prediction, tokenizer, &n_walker);
             }
             if iters < 1000 { iters += 1; } else { panic!("apply_updates: too many iterations"); }
             let node = nodes.get_mut(&n_hash).unwrap();
@@ -313,9 +290,8 @@ impl XBayes {
                 if token_a_pred_changed {
                     let token_a_tp = n_walker.a_tp().from_end(ftl - 1);
                     let token_a_hash = n_walker.a_hash().from_end(ftl - 1);
-                    let final_token_hash = node.c_final_token_hash[slot];
-                    assert!(rh::extend_right(*token_a_hash, final_token_hash, ftl) == child_hash, "hash mismatch");
-                    let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_token_hash);
+                    let final_token_lexindex = node.c_final_token_lexindex[slot];
+                    assert!(rh::extend_right(*token_a_hash, rh::hash_string(tokenizer.token_at(final_token_lexindex)), ftl) == child_hash, "hash mismatch");
                     let final_token_prob = full_predictions
                         .get(&token_a_hash).unwrap()
                         .follower_prob_for_prefix[final_token_lexindex];
@@ -339,6 +315,7 @@ impl XBayes {
                     // let mut token_a_hash = n_hash; // leave in case we decide to revert later
                     let mut final_prefix_hash = child_byte as u64;
                     for i in 1..MAX_TOKEN_LENGTH { // indexing is from child's perspective
+                        if i > n_walker.len() { continue; }
                         if relevant_preds_changed & (1 << i) != 0 {
                             let new_fp = full_predictions
                                 .get(
@@ -514,36 +491,38 @@ impl XBayes {
     // N.B. it is slightly problematic for the walker to track mutable fields
 
     fn ensure_zero_order_prediction(
-        zero_order_predictions: &mut rh::RHashMap<XPrediction>,
+        zero_order_predictions: &mut [Option<XPrediction>],
         tokenizer: &TinyLlamaWordTokenizer,
-        final_token_hash: u64,
+        final_token_lexindex: TokenLexIndex,
     ) {
-        if zero_order_predictions.contains_key(&final_token_hash) {
+        if zero_order_predictions[final_token_lexindex].is_some() {
             return;
         }
         let prediction = XPrediction::create_prediction(
             true,
-            final_token_hash,
+            final_token_lexindex,
             None,
             tokenizer,
         );
-        zero_order_predictions.insert(final_token_hash, prediction);
+        zero_order_predictions[final_token_lexindex] = Some(prediction);
     }
 
     fn ensure_node(
         nodes: &mut rh::RHashMap<XNode>,
-        zero_order_predictions: &rh::RHashMap<XPrediction>,
+        zero_order_predictions: &[Option<XPrediction>],
+        root_zero_order_prediction: &XPrediction,
         tokenizer: &TinyLlamaWordTokenizer,
         walker: &YWalker,
     ) {
-        if nodes.contains_key(walker.a_hash().last().unwrap()) {
+        let n_hash = *walker.a_hash().last().unwrap();
+        if nodes.contains_key(&n_hash) {
             return;
         }
         let mut node = XNode {
             symbol: *walker.a_symbol().from_end(0),
             c_can_trunc: [0; RADIX], // ok
             c_final_token_length: [0; RADIX], // ok
-            c_final_token_hash: [u64::MAX; RADIX], // ok
+            c_final_token_lexindex: [INVALID_TOKEN_LEXINDEX; RADIX], // ok
             c_p: [Float::NAN; RADIX], // ok
             c_p_old: [Float::NAN; RADIX], // ok
             c_fp: [[Float::NAN; MAX_TRUNCATION_POSSIBLE]; RADIX], // ok
@@ -556,7 +535,7 @@ impl XBayes {
             c_z: [Float::NAN; RADIX], // ok
             c_a_pred_changed: [0; RADIX], // ok
             c_a_tp_changed: [0; RADIX], // ok
-            if_root_then_z: Float::NAN, // ok
+            if_root_then_z: if n_hash == ROOT_HASH { ZERO } else { Float::NAN }, // ok
         };
         //
         let available_prediction_depth = usize::min(MAX_TOKEN_LENGTH, walker.len() + 1);
@@ -567,17 +546,20 @@ impl XBayes {
             let mut p = Float::NEG_INFINITY;
             let mut found_canonical_ancestor = false;
             for i in 1..available_prediction_depth { // index is from child's perspective
-                let a_pred = zero_order_predictions
-                    .get(walker.a_final_token_hash().from_end(i-1))
-                    .unwrap();
+                let a_final_token_lexindex = *walker.a_final_token_lexindex().from_end(i-1);
+                let a_pred: &XPrediction = if a_final_token_lexindex == INVALID_TOKEN_LEXINDEX {
+                    root_zero_order_prediction
+                } else {
+                    zero_order_predictions[a_final_token_lexindex].as_ref().unwrap()
+                };
                 // Determine Canonical Token Ancestor
                 if tokenizer.token_hashset.contains(&final_chars_hash) {
-                    let new_token_lexindex = tokenizer.lex_index_for_token_hash(&final_chars_hash);
-                    let canonical_pair = a_pred.canonical_followers[new_token_lexindex];
+                    let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_chars_hash);
+                    let canonical_pair = a_pred.canonical_followers[final_token_lexindex];
                     if canonical_pair {
                         node.c_final_token_length[slot] = i as u8;
-                        node.c_final_token_hash[slot] = final_chars_hash;
-                        let final_token_prob = a_pred.follower_probs[new_token_lexindex];
+                        node.c_final_token_lexindex[slot] = final_token_lexindex;
+                        let final_token_prob = a_pred.follower_probs[final_token_lexindex];
                         let tp0 = walker.a_tp0().from_end(i-1) + final_token_prob;
                         node.c_final_token_prob[slot] = final_token_prob;
                         node.c_tp0[slot] = tp0;

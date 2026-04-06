@@ -5,6 +5,7 @@ use crate::trie::core::{XBayes, RecalcType, RecalcResult};
 use crate::trie::l_update::LUpdate;
 use crate::trie::prediction::XPrediction;
 use crate::rolling_hash as rh;
+use crate::trie::TokenLexIndex;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "python")]
@@ -31,13 +32,12 @@ impl BayesianSession {
         #[derive(Deserialize)]
         struct NHash {
             // by default, serde will ignore extra fields
-            hash: rh::Hash,
             l: f32,
         }
-        let n_by_string =
+        let l_by_string =
             serde_json::from_str::<HashMap<String, NHash>>(&likelihood_json).unwrap();
-        let l_by_hash = n_by_string.iter()
-            .map(|(_string, nhash)| (nhash.hash, Float::from(nhash.l)))
+        let l_by_hash = l_by_string.iter()
+            .map(|(s, nhash)| (rh::hash_string(&s), Float::from(nhash.l)))
             .collect::<rh::RHashMap<Float>>();
         let mut new_l_update = LUpdate {
             likelihoods: l_by_hash,
@@ -48,23 +48,32 @@ impl BayesianSession {
         self.trie.pending_likelihood = self.trie.pending_likelihood.merge(&new_l_update);
     }
 
+    #[cfg(feature = "tokentrie")]
+    pub fn next_requested_prior(&mut self) -> String {
+        let requested_prior = self.trie.next_requested_prior();
+        #[derive(Serialize)]
+        struct RequestedPrior {
+            full_string: String,
+            last_token_lexindex: TokenLexIndex,
+        }
+        let requested_prior = RequestedPrior {
+            full_string: requested_prior.full_string,
+            last_token_lexindex: requested_prior.last_token_lexindex,
+        };
+        serde_json::to_string(&requested_prior).unwrap()
+    }
+
     pub fn receive_prior_update(&mut self, prior_json: String) {
         #[derive(Deserialize)]
         struct Payload {
             full_string: String,
-            final_token_hash: rh::Hash,
+            final_token_lexindex: TokenLexIndex,
             follower_logits: Vec<f32>
         }
         let payload= serde_json::from_str::<Payload>(&prior_json).unwrap();
-        // hash the full string
-        let mut full_hash = 0u64;
-        for byte in payload.full_string.bytes() {
-            full_hash = rh::append_right(full_hash, byte)
-        }
-        //
         let new_prediction = XPrediction::create_prediction(
             false,
-            payload.final_token_hash,
+            payload.final_token_lexindex,
             Some(
                 payload
                     .follower_logits
@@ -76,6 +85,8 @@ impl BayesianSession {
             &self.trie.tokenizer
         );
         // insert prediction into the registry
+        // hash the full string
+        let full_hash = rh::hash_string(&payload.full_string);
         self.trie.full_predictions.insert(
             full_hash,
             new_prediction
@@ -137,7 +148,12 @@ impl BayesianSession {
 
     /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary), `^` (start); empty shows all nodes (root is always shown when filtered).
     pub fn debug_eprint_trie(&self, filter: &str) {
-        crate::trie::debug::eprint_trie(&self.trie, filter);
+        crate::trie::debug::eprint_trie(&self.trie, filter, None);
+    }
+
+    /// Print the trie to stderr, restricted to `hash_filter` after applying the symbol filter.
+    pub fn debug_eprint_trie_hash_filter(&self, filter: &str, hash_filter: &rh::RHashSet) {
+        crate::trie::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
     }
 }
 

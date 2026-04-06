@@ -1,4 +1,7 @@
 //! Pretty-print trie structure for development (linux `tree`-style lines).
+//!
+//! Filters are conjunctive: if both a symbol filter and a hash filter are supplied,
+//! a node must satisfy both to be shown.
 
 use std::collections::HashSet;
 
@@ -53,13 +56,24 @@ fn node_label(hash: Hash, node: &XNode) -> String {
 /// Print `trie` to stderr in a `tree`-like layout.
 ///
 /// * `filter`: see [`parse_symbol_filter`]. Empty / whitespace-only ⇒ show all nodes.
-/// * The **root** (`ROOT_HASH`) is always printed when it exists.
-pub(crate) fn eprint_trie(trie: &XBayes, filter: &str) {
+/// * `hash_filter`: when present, only nodes whose hashes are in the set are shown.
+/// * The **root** (`ROOT_HASH`) is always printed when it exists unless excluded by `hash_filter`.
+pub(crate) fn eprint_trie(trie: &XBayes, filter: &str, hash_filter: Option<&rh::RHashSet>) {
     let filter_set = parse_symbol_filter(filter);
-    eprint_subtree(&trie.nodes, ROOT_HASH, "", true, &filter_set);
+    eprint_subtree(&trie.nodes, ROOT_HASH, "", true, &filter_set, hash_filter);
 }
 
-fn should_show_node(hash: Hash, node: &XNode, filter_set: &Option<HashSet<Symbol>>) -> bool {
+fn should_show_node(
+    hash: Hash,
+    node: &XNode,
+    filter_set: &Option<HashSet<Symbol>>,
+    hash_filter: Option<&rh::RHashSet>,
+) -> bool {
+    if let Some(hash_filter) = hash_filter {
+        if !hash_filter.contains(&hash) {
+            return false;
+        }
+    }
     if filter_set.is_none() {
         return true;
     }
@@ -77,12 +91,13 @@ fn eprint_subtree(
     prefix: &str,
     is_last: bool,
     filter_set: &Option<HashSet<Symbol>>,
+    hash_filter: Option<&rh::RHashSet>,
 ) {
     let Some(node) = nodes.get(&hash) else {
         return;
     };
 
-    let visible = should_show_node(hash, node, filter_set);
+    let visible = should_show_node(hash, node, filter_set, hash_filter);
 
     if hash == ROOT_HASH {
         if visible {
@@ -106,6 +121,6 @@ fn eprint_subtree(
     let n = children.len();
     for (i, (_, child_hash)) in children.into_iter().enumerate() {
         let child_is_last = i + 1 == n;
-        eprint_subtree(nodes, child_hash, &child_prefix, child_is_last, filter_set);
+        eprint_subtree(nodes, child_hash, &child_prefix, child_is_last, filter_set, hash_filter);
     }
 }

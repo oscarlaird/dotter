@@ -1,7 +1,7 @@
 use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
 use crate::safe_float::Float;
 use super::{logaddexp};
-use crate::trie::ROOT_HASH;
+use crate::trie::{INVALID_TOKEN_LEXINDEX, TokenLexIndex};
 
 pub(crate) struct XPrediction {
     pub(crate) canonical_followers: Box<[bool]>,
@@ -13,7 +13,7 @@ pub(crate) struct XPrediction {
 impl XPrediction {
     pub(crate) fn create_prediction(
         is_zero_order: bool,
-        final_token_hash: u64,
+        final_token_lexindex: TokenLexIndex,
         follower_logits: Option<Box<[Float]>>,
         tokenizer: &TinyLlamaWordTokenizer,
     ) -> Self {
@@ -29,10 +29,9 @@ impl XPrediction {
             );
         }
 
-        let canonical_followers_array = if final_token_hash == ROOT_HASH {
+        let canonical_followers_array = if final_token_lexindex == INVALID_TOKEN_LEXINDEX {
             vec![true; tokenizer.tokens().len()]
         } else {
-            let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_token_hash);
             tokenizer.canonical_followers_for_lex_index(final_token_lexindex)
         };
         let canonical_counts_by_prefix =
