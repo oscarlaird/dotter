@@ -1,287 +1,190 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { colorFromLetter } from '../utils/colors';
 
-const BOX_WIDTH = 37;
-const BOX_WIDTH_CHILDREN_MULTIPLIER = 1.0;
-const MIN_BOX_HEIGHT = 6;
-const NODE_LABEL_FONT_SIZE = 28;
-
-type SnapshotSymbol =
-	| 'A'
-	| 'B'
-	| 'C'
-	| 'D'
-	| 'E'
-	| 'F'
-	| 'G'
-	| 'H'
-	| 'I'
-	| 'J'
-	| 'K'
-	| 'L'
-	| 'M'
-	| 'N'
-	| 'O'
-	| 'P'
-	| 'Q'
-	| 'R'
-	| 'S'
-	| 'T'
-	| 'U'
-	| 'V'
-	| 'W'
-	| 'X'
-	| 'Y'
-	| 'Z'
-	| 'Space'
-	| 'Stop'
-	| 'Start';
-
-export interface TrieSnapshotNode {
-	symbol: SnapshotSymbol;
+export interface ExpandedSnapshotNode {
 	z: number;
-	likelihood: number;
-	children: [SnapshotSymbol, number][];
+	hash: number;
 }
 
-export interface TrieSnapshot {
-	nodes: TrieSnapshotNode[];
-	root: number;
+export type ExpandedSnapshot = Record<string, ExpandedSnapshotNode>;
+export interface VisibleNodeTimer {
+	phase: number;
 }
+export type VisibleNodeTimerMap = Record<string, VisibleNodeTimer>;
 
 interface TrieSnapshotVisualizerProps {
-	snapshot: TrieSnapshot;
+	snapshot: ExpandedSnapshot;
+	timers: VisibleNodeTimerMap;
+	period: number;
 }
 
-interface VisualNode {
-	index: number;
-	symbol: SnapshotSymbol;
-	label: string;
-	z: number;
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-	parentIndex: number | null;
-	children: number[];
+interface SnapshotEntry {
+	fullString: string;
+	node: ExpandedSnapshotNode;
 }
 
-function symbolToLabel(symbol: SnapshotSymbol): string {
-	switch (symbol) {
-		case 'Space':
-			return ' ';
-		case 'Stop':
-			return '$';
-		case 'Start':
-			return '';
-		default:
-			return symbol.toLowerCase();
+const TIMER_RADIUS = 18;
+const TIMER_STROKE_WIDTH = 2;
+const TIMER_FONT_SIZE = 30;
+
+function barWidthPercent(z: number, maxZ: number): number {
+	return Math.max(3, Math.exp(z - maxZ) * 100);
+}
+
+function timerFraction(time: number, phase: number, period: number): number {
+	return ((time - phase + period) % period) / period;
+}
+
+function finalSymbol(fullString: string): string {
+	if (fullString === '^') {
+		return '^';
 	}
+	return fullString.at(-1) ?? '^';
 }
 
-function logaddexp(a: number, b: number): number {
-	if (a === -Infinity) return b;
-	if (b === -Infinity) return a;
-	if (a > b) return a + Math.log(1 + Math.exp(b - a));
-	return b + Math.log(1 + Math.exp(a - b));
+function timerDisplayText(symbol: string): string {
+	if (symbol === '_') {
+		return '_';
+	}
+	return symbol;
 }
 
-function buildLayout(
-	snapshot: TrieSnapshot,
-	canvasHeight: number,
-): Map<number, VisualNode> {
-	const layout = new Map<number, VisualNode>();
-
-	function visit(
-		nodeIndex: number,
-		parentIndex: number | null,
-		x: number,
-		y: number,
-		height: number,
-		width: number,
-	): void {
-		const node = snapshot.nodes[nodeIndex];
-		const childIndices = node.children.map(([, childIndex]) => childIndex);
-
-		layout.set(nodeIndex, {
-			index: nodeIndex,
-			symbol: node.symbol,
-			label: symbolToLabel(node.symbol),
-			z: node.z,
-			x,
-			y,
-			width,
-			height,
-			parentIndex,
-			children: childIndices,
-		});
-
-		if (childIndices.length === 0) {
-			return;
-		}
-
-		let totalChildrenZ = -Infinity;
-		for (const childIndex of childIndices) {
-			totalChildrenZ = logaddexp(totalChildrenZ, snapshot.nodes[childIndex].z);
-		}
-
-		const childWidth =
-			BOX_WIDTH * (1 + BOX_WIDTH_CHILDREN_MULTIPLIER * Math.log(childIndices.length));
-		let childTop = y;
-		for (const childIndex of childIndices) {
-			const childZ = snapshot.nodes[childIndex].z;
-			const childHeight =
-				totalChildrenZ === -Infinity
-					? height / childIndices.length
-					: Math.max(MIN_BOX_HEIGHT, height * Math.exp(childZ - totalChildrenZ));
-			visit(childIndex, nodeIndex, x + width, childTop, childHeight, childWidth);
-			childTop += childHeight;
-		}
+function timerColor(symbol: string): [number, number, number] {
+	if (symbol === '_') {
+		return colorFromLetter(' ');
 	}
-
-	visit(snapshot.root, null, 0, 0, canvasHeight, BOX_WIDTH * 1.5);
-	return layout;
+	if (symbol === '^') {
+		return [255, 255, 255];
+	}
+	return colorFromLetter(symbol);
 }
 
-function drawSnapshot(
-	context: CanvasRenderingContext2D,
-	layout: Map<number, VisualNode>,
-	canvasWidth: number,
-	canvasHeight: number,
-	devicePixelRatio: number,
-): void {
-	context.setTransform(1, 0, 0, 1, 0, 0);
-	context.clearRect(0, 0, canvasWidth, canvasHeight);
-	context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-
-	const nodes = [...layout.values()];
-
-	for (const node of nodes) {
-		const [r, g, b] = colorFromLetter(node.label);
-		context.beginPath();
-		context.rect(node.x + 3, node.y + 3, node.width - 6, Math.max(0, node.height - 6));
-		context.fillStyle = `rgba(${r}, ${g}, ${b}, 0.13)`;
-		context.fill();
-		context.closePath();
-	}
-
-	for (const node of nodes) {
-		if (node.parentIndex === null) {
-			continue;
-		}
-
-		const parent = layout.get(node.parentIndex);
-		if (!parent) {
-			continue;
-		}
-
-		const [r, g, b] = colorFromLetter(node.label || '.');
-		const stroke = `rgba(${Math.floor(r / 1.8)}, ${Math.floor(g / 1.8)}, ${Math.floor(b / 1.8)}, 1)`;
-
-		const startX = node.x + node.width;
-		const startY = node.y + node.height / 2;
-		const endX = parent.x + parent.width;
-		const endY = parent.y + parent.height / 2;
-		const midX = (startX + endX) / 2;
-
-		context.beginPath();
-		context.moveTo(startX, startY);
-		context.bezierCurveTo(midX, startY, midX, endY, endX, endY);
-		context.strokeStyle = stroke;
-		context.lineWidth = 2;
-		context.stroke();
-		context.closePath();
-	}
-
-	for (const node of nodes) {
-		if (!node.label) {
-			continue;
-		}
-
-		const [r, g, b] = colorFromLetter(node.label);
-		const textColor = `rgba(${r}, ${g}, ${b}, 1)`;
-		const cx = node.x + node.width - 15;
-		const cy = node.y + node.height / 2;
-
-		context.beginPath();
-		context.fillStyle = textColor;
-		if (node.label === '$') {
-			const squareSize = 17;
-			context.fillRect(cx - squareSize / 2, cy - squareSize / 2, squareSize, squareSize);
-		} else {
-			context.font = `${NODE_LABEL_FONT_SIZE}px verdana, helvetica, sans-serif`;
-			context.textAlign = 'center';
-			context.textBaseline = 'middle';
-			context.fillText(node.label, cx, cy);
-		}
-		context.closePath();
-	}
-}
-
-function TrieSnapshotVisualizer({ snapshot }: TrieSnapshotVisualizerProps) {
-	const canvasRef = useRef<HTMLCanvasElement>(null);
-	const [devicePixelRatio, setDevicePixelRatio] = useState(1);
-	const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisualizerProps) {
+	const [time, setTime] = useState(() => performance.now() / 1000);
 
 	useEffect(() => {
-		const canvas = canvasRef.current;
-		if (!canvas) {
-			return;
-		}
-
-		const updateCanvasSize = () => {
-			const rect = canvas.getBoundingClientRect();
-			const dpr = window.devicePixelRatio || 1;
-			const width = Math.round(rect.width);
-			const height = Math.round(rect.height);
-			const pixelWidth = width * dpr;
-			const pixelHeight = height * dpr;
-
-			setDevicePixelRatio(dpr);
-			setCanvasSize((current) =>
-				current.width === width && current.height === height ? current : { width, height },
-			);
-
-			if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-				canvas.width = pixelWidth;
-				canvas.height = pixelHeight;
-			}
-			canvas.style.width = `${width}px`;
-			canvas.style.height = `${height}px`;
+		let frame = 0;
+		const tick = () => {
+			setTime(performance.now() / 1000);
+			frame = requestAnimationFrame(tick);
 		};
-
-		updateCanvasSize();
-		const resizeObserver = new ResizeObserver(() => updateCanvasSize());
-		resizeObserver.observe(canvas);
-		window.addEventListener('resize', updateCanvasSize);
-		return () => {
-			resizeObserver.disconnect();
-			window.removeEventListener('resize', updateCanvasSize);
-		};
+		frame = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(frame);
 	}, []);
 
-	const layout = useMemo(() => {
-		if (canvasSize.height <= 0) {
-			return new Map<number, VisualNode>();
-		}
-		return buildLayout(snapshot, canvasSize.height);
-	}, [snapshot, canvasSize.height]);
+	const entries = useMemo(() => {
+		return Object.entries(snapshot)
+			.map(([fullString, node]) => ({ fullString, node }))
+			.sort((a, b) => b.node.z - a.node.z || a.fullString.localeCompare(b.fullString));
+	}, [snapshot]);
 
-	useEffect(() => {
-		const canvas = canvasRef.current;
-		if (!canvas) {
-			return;
-		}
-		const context = canvas.getContext('2d');
-		if (!context) {
-			return;
-		}
-		drawSnapshot(context, layout, canvas.width, canvas.height, devicePixelRatio);
-	}, [layout, devicePixelRatio]);
+	const maxZ = entries[0]?.node.z ?? 0;
 
 	return (
-		<div className="relative h-full w-full">
-			<canvas ref={canvasRef} className="h-full w-full bg-black" />
+		<div className="h-full overflow-auto bg-black p-4">
+			<div className="grid gap-3">
+				{entries.map((entry: SnapshotEntry) => (
+					<TimerRow
+						key={entry.fullString}
+						entry={entry}
+						timer={timers[entry.fullString]}
+						maxZ={maxZ}
+						time={time}
+						period={period}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+interface TimerRowProps {
+	entry: SnapshotEntry;
+	timer: VisibleNodeTimer | undefined;
+	maxZ: number;
+	time: number;
+	period: number;
+}
+
+function TimerRow({ entry, timer, maxZ, time, period }: TimerRowProps) {
+	const symbol = finalSymbol(entry.fullString);
+	const displayText = timerDisplayText(symbol);
+	const [r, g, b] = timerColor(symbol);
+	const timerFrac = timer ? timerFraction(time, timer.phase, period) : 0;
+	const circumference = 2 * Math.PI * TIMER_RADIUS;
+	const dashOffset = circumference * (1 - timerFrac);
+	const circleColor = `rgba(${r}, ${g}, ${b}, 1)`;
+	const arcColor = `rgba(${r}, ${g}, ${b}, ${timerFrac * 0.9 + 0.1})`;
+
+	return (
+		<div className="rounded-lg border border-white/10 bg-white/5 p-3">
+			<div className="mb-2 flex items-center gap-4">
+				<svg
+					width={TIMER_RADIUS * 2 + 10}
+					height={TIMER_RADIUS * 2 + 10}
+					viewBox={`0 0 ${TIMER_RADIUS * 2 + 10} ${TIMER_RADIUS * 2 + 10}`}
+					className="shrink-0 overflow-visible"
+				>
+					<circle
+						cx={TIMER_RADIUS + 5}
+						cy={TIMER_RADIUS + 5}
+						r={TIMER_RADIUS}
+						fill="none"
+						stroke="rgba(255,255,255,0.08)"
+						strokeWidth={TIMER_STROKE_WIDTH}
+					/>
+					<circle
+						cx={TIMER_RADIUS + 5}
+						cy={TIMER_RADIUS + 5}
+						r={TIMER_RADIUS}
+						fill="none"
+						stroke={arcColor}
+						strokeWidth={TIMER_STROKE_WIDTH}
+						strokeDasharray={circumference}
+						strokeDashoffset={dashOffset}
+						strokeLinecap="round"
+						transform={`rotate(-90 ${TIMER_RADIUS + 5} ${TIMER_RADIUS + 5})`}
+					/>
+					{displayText === '$' ? (
+						<rect
+							x={TIMER_RADIUS - 3}
+							y={TIMER_RADIUS - 3}
+							width={16}
+							height={16}
+							fill={circleColor}
+						/>
+					) : (
+						<text
+							x={TIMER_RADIUS + 5}
+							y={TIMER_RADIUS + 5}
+							fill={circleColor}
+							textAnchor="middle"
+							dominantBaseline="middle"
+							fontSize={TIMER_FONT_SIZE}
+							fontFamily="verdana, helvetica, sans-serif"
+						>
+							{displayText}
+						</text>
+					)}
+				</svg>
+				<div className="min-w-0 flex-1">
+					<div className="mb-2 flex items-center justify-between gap-4">
+						<code className="truncate text-sm text-cyan-200">{entry.fullString}</code>
+						<span className="shrink-0 text-xs text-gray-400">
+							z={entry.node.z.toFixed(3)}
+						</span>
+					</div>
+					<div className="h-2 overflow-hidden rounded bg-white/10">
+						<div
+							className="h-full rounded"
+							style={{
+								width: `${barWidthPercent(entry.node.z, maxZ)}%`,
+								backgroundColor: `rgba(${r}, ${g}, ${b}, 0.8)`,
+							}}
+						/>
+					</div>
+				</div>
+			</div>
 		</div>
 	);
 }

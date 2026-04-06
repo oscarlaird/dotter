@@ -135,6 +135,14 @@ impl XBayes {
 
     pub(crate) fn recalc_to_frontier(&mut self, recalc_type: RecalcType) -> RecalcResult {
         // assert that there are no pending updates if we are expanding
+        #[cfg(feature = "tokentrie")]
+        {
+            if matches!(recalc_type, RecalcType::Update)
+                && !self.pending_likelihood.deref().is_empty()
+            {
+                self.reset_queue();
+            }
+        }
         match recalc_type {
             RecalcType::Update => {},
             RecalcType::Expand { .. } => {
@@ -291,10 +299,10 @@ impl XBayes {
                     let token_a_tp = n_walker.a_tp().from_end(ftl - 1);
                     let token_a_hash = n_walker.a_hash().from_end(ftl - 1);
                     let final_token_lexindex = node.c_final_token_lexindex[slot];
-                    assert!(rh::extend_right(*token_a_hash, rh::hash_string(tokenizer.token_at(final_token_lexindex)), ftl) == child_hash, "hash mismatch");
+                    assert!(rh::extend_right(*token_a_hash, rh::hash_string(tokenizer.token_at(final_token_lexindex as usize)), ftl) == child_hash, "hash mismatch");
                     let final_token_prob = full_predictions
                         .get(&token_a_hash).unwrap()
-                        .follower_prob_for_prefix[final_token_lexindex];
+                        .follower_prob_for_prefix[final_token_lexindex as usize];
                     node.c_final_token_prob[slot] = final_token_prob;
                     node.c_tp[slot] = token_a_tp + final_token_prob;
                     node.c_a_tp_changed[slot] |= 1;
@@ -495,7 +503,7 @@ impl XBayes {
         tokenizer: &TinyLlamaWordTokenizer,
         final_token_lexindex: TokenLexIndex,
     ) {
-        if zero_order_predictions[final_token_lexindex].is_some() {
+        if zero_order_predictions[final_token_lexindex as usize].is_some() {
             return;
         }
         let prediction = XPrediction::create_prediction(
@@ -504,7 +512,7 @@ impl XBayes {
             None,
             tokenizer,
         );
-        zero_order_predictions[final_token_lexindex] = Some(prediction);
+        zero_order_predictions[final_token_lexindex as usize] = Some(prediction);
     }
 
     fn ensure_node(
@@ -547,19 +555,27 @@ impl XBayes {
             let mut found_canonical_ancestor = false;
             for i in 1..available_prediction_depth { // index is from child's perspective
                 let a_final_token_lexindex = *walker.a_final_token_lexindex().from_end(i-1);
+                if a_final_token_lexindex == 17233 && slot == 25 {
+                    // breakpoint
+                    println!("a_final_token_lexindex: {}", a_final_token_lexindex);
+                }
                 let a_pred: &XPrediction = if a_final_token_lexindex == INVALID_TOKEN_LEXINDEX {
                     root_zero_order_prediction
                 } else {
-                    zero_order_predictions[a_final_token_lexindex].as_ref().unwrap()
+                    zero_order_predictions[a_final_token_lexindex as usize].as_ref().unwrap()
                 };
                 // Determine Canonical Token Ancestor
                 if tokenizer.token_hashset.contains(&final_chars_hash) {
-                    let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_chars_hash);
-                    let canonical_pair = a_pred.canonical_followers[final_token_lexindex];
+                    let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_chars_hash) as TokenLexIndex;
+                    let canonical_pair = a_pred.canonical_followers[final_token_lexindex as usize];
+                    // print the sum of canonical pair
+                    let sum_canonical_pair: usize = a_pred.canonical_followers.iter().map(|&v| v as usize).sum();
+                    println!("sum of canonical pair: {}", sum_canonical_pair);
+                    //
                     if canonical_pair {
                         node.c_final_token_length[slot] = i as u8;
                         node.c_final_token_lexindex[slot] = final_token_lexindex;
-                        let final_token_prob = a_pred.follower_probs[final_token_lexindex];
+                        let final_token_prob = a_pred.follower_probs[final_token_lexindex as usize];
                         let tp0 = walker.a_tp0().from_end(i-1) + final_token_prob;
                         node.c_final_token_prob[slot] = final_token_prob;
                         node.c_tp0[slot] = tp0;

@@ -77,7 +77,7 @@ impl XBayes {
             let this_hash = match this_item.kind {
                 QueueItemKind::Root => ROOT_HASH,
                 QueueItemKind::Continuation { parent_hash, token_lexindex, .. } => {
-                    let token_str = self.tokenizer.token_at(token_lexindex);
+                    let token_str = self.tokenizer.token_at(token_lexindex as usize);
                     let token_hash = rh::hash_string(token_str);
                     let this_hash =rh::extend_right(parent_hash, token_hash, token_str.len());
                     self.queue_ancestor_map.insert(this_hash, token_lexindex);
@@ -92,7 +92,7 @@ impl XBayes {
                 let mut last_token_lexindex;
                 while cur_hash != ROOT_HASH {
                     last_token_lexindex = *self.queue_ancestor_map.get(&cur_hash).unwrap();
-                    let token_str = self.tokenizer.token_at(last_token_lexindex);
+                    let token_str = self.tokenizer.token_at(last_token_lexindex as usize);
                     let token_hash = rh::hash_string(token_str);
                     let rev_token_str = token_str.chars().rev().collect::<String>();
                     rev_str.push_str(&rev_token_str);
@@ -117,7 +117,7 @@ impl XBayes {
             let (accumed_l, hit_clf) = match this_item.kind {
                 QueueItemKind::Root => (ZERO, false),
                 QueueItemKind::Continuation { parent_hash, token_lexindex, accumed_l , hit_clf } => {
-                    let token_str = self.tokenizer.token_at(token_lexindex);
+                    let token_str = self.tokenizer.token_at(token_lexindex as usize);
                     let token_symbols = Symbol::string_to_vec(token_str);
                     self.traverse_and_count_l(parent_hash, &token_symbols[..], accumed_l, hit_clf)
                 }
@@ -220,9 +220,9 @@ impl XBayes {
         queue
     }
 
-    fn reset_queue(&mut self) {
-        // TODO: this needs to be called in the appropriate places
+    pub(super) fn reset_queue(&mut self) {
         self.queue = Self::root_queue();
+        self.queue_ancestor_map.clear();
     }
 }
 

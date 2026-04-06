@@ -34,6 +34,12 @@ required to apply updates efficiently and incrementally.
 The client and server each maintain their own local Bayesian session. These
 sessions are intended to converge by exchanging update events over a websocket.
 
+The cross-language API for `bayesian` is intentionally minimal: the frontend
+and backend call Rust methods whose inputs and outputs are JSON encoded as
+plain strings. This is a good FFI boundary here because the websocket protocol
+can forward those same strings unchanged, so the exact payload applied locally
+is also the payload applied remotely.
+
 ## Runtime Responsibilities
 
 ### Client Side
@@ -102,11 +108,23 @@ The propagation rule is symmetric:
 4. when a remote update is received, apply it to the local Bayesian session
 
 The API boundary between client and server is intentionally thin: websocket
-payloads are expected to mirror the update contracts defined by the Rust
-`bayesian` library (`TrieSnapshot` likelihood updates and prior-update payload
-fields). In practice, compatibility between environments depends on those Rust
-update types and semantics rather than independently designed frontend/backend
-DTOs.
+payloads are expected to carry the same JSON strings that are passed directly
+into the Rust `bayesian` session methods. In practice, compatibility between
+environments depends on those Rust update contracts and semantics rather than
+independently designed frontend/backend DTOs.
+
+Concretely, the flow is:
+
+1. produce an update locally as a JSON string
+2. pass that string into the local Rust `BayesianSession`
+3. forward that same string over the websocket
+4. when the remote side receives it, pass that same string into its own local
+   Rust `BayesianSession`
+
+This is a good design choice because remote updates are applied in exactly the
+same way as local updates. The frontend and backend are not translating between
+separate transport objects and FFI objects; they are forwarding the same
+serialized update payloads.
 
 This design ensures that each side can continue making progress independently
 while still converging toward the same Bayesian state.
@@ -117,7 +135,8 @@ The target architecture depends on the following invariants:
 
 - both client and server always maintain a local Bayesian session
 - every locally produced update is applied locally before or as it is emitted
-- every emitted update is serialized as a websocket event
+- every emitted update is serialized as a websocket event carrying the same
+  JSON string used at the local Rust FFI boundary
 - every received websocket update is applied to the local Bayesian session
 - the result of applying updates must be order-independent with respect to
   client/server delivery order

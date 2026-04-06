@@ -4,30 +4,33 @@
 export class BayesianSession {
     free(): void;
     [Symbol.dispose](): void;
-    apply_likelihood_update(snapshot_json: string): void;
-    apply_prior_update(prior_json: string): void;
+    apply_updates(): void;
+    expand_to_threshold(): string;
     lexicographic_tokens_json(): string;
     constructor();
+    next_requested_prior(): string;
+    receive_likelihood_update(likelihood_json: string): void;
+    receive_prior_update(prior_json: string): void;
     reset(): void;
-    snapshot_json(): string;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly main: (a: number, b: number) => number;
     readonly __wbg_bayesiansession_free: (a: number, b: number) => void;
-    readonly bayesiansession_apply_likelihood_update: (a: number, b: number, c: number) => void;
-    readonly bayesiansession_apply_prior_update: (a: number, b: number, c: number) => void;
+    readonly bayesiansession_apply_updates: (a: number) => void;
+    readonly bayesiansession_expand_to_threshold: (a: number) => [number, number];
     readonly bayesiansession_lexicographic_tokens_json: (a: number) => [number, number];
     readonly bayesiansession_new: () => number;
+    readonly bayesiansession_next_requested_prior: (a: number) => [number, number];
+    readonly bayesiansession_receive_likelihood_update: (a: number, b: number, c: number) => void;
+    readonly bayesiansession_receive_prior_update: (a: number, b: number, c: number) => void;
     readonly bayesiansession_reset: (a: number) => void;
-    readonly bayesiansession_snapshot_json: (a: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

@@ -10,14 +10,18 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "wasm")]
+use wasm_bindgen::prelude::*;
 
 #[cfg_attr(feature = "python", pyclass)]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
     pub(crate) trie: XBayes,
 }
 
 const THRESHOLD: f32 = -5.2983174; // precomputed value of (1.0/200.0).ln()
 
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
     pub fn new() -> Self {
@@ -147,11 +151,13 @@ impl BayesianSession {
     }
 
     /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary), `^` (start); empty shows all nodes (root is always shown when filtered).
+    #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie(&self, filter: &str) {
         crate::trie::debug::eprint_trie(&self.trie, filter, None);
     }
 
     /// Print the trie to stderr, restricted to `hash_filter` after applying the symbol filter.
+    #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie_hash_filter(&self, filter: &str, hash_filter: &rh::RHashSet) {
         crate::trie::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
     }
@@ -183,6 +189,12 @@ impl BayesianSession {
     #[pyo3(name = "apply_updates")]
     fn py_apply_updates(&mut self) {
         BayesianSession::apply_updates(self);
+    }
+
+    #[cfg(feature = "tokentrie")]
+    #[pyo3(name = "next_requested_prior")]
+    fn py_next_requested_prior(&mut self) -> String {
+        BayesianSession::next_requested_prior(self)
     }
 
     #[pyo3(name = "expand_to_threshold")]

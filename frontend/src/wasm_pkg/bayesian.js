@@ -1,3 +1,5 @@
+/* @ts-self-types="./bayesian.d.ts" */
+
 export class BayesianSession {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -9,21 +11,23 @@ export class BayesianSession {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_bayesiansession_free(ptr, 0);
     }
-    /**
-     * @param {string} snapshot_json
-     */
-    apply_likelihood_update(snapshot_json) {
-        const ptr0 = passStringToWasm0(snapshot_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.bayesiansession_apply_likelihood_update(this.__wbg_ptr, ptr0, len0);
+    apply_updates() {
+        wasm.bayesiansession_apply_updates(this.__wbg_ptr);
     }
     /**
-     * @param {string} prior_json
+     * @returns {string}
      */
-    apply_prior_update(prior_json) {
-        const ptr0 = passStringToWasm0(prior_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.bayesiansession_apply_prior_update(this.__wbg_ptr, ptr0, len0);
+    expand_to_threshold() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.bayesiansession_expand_to_threshold(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
      * @returns {string}
@@ -46,17 +50,14 @@ export class BayesianSession {
         BayesianSessionFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
-    reset() {
-        wasm.bayesiansession_reset(this.__wbg_ptr);
-    }
     /**
      * @returns {string}
      */
-    snapshot_json() {
+    next_requested_prior() {
         let deferred1_0;
         let deferred1_1;
         try {
-            const ret = wasm.bayesiansession_snapshot_json(this.__wbg_ptr);
+            const ret = wasm.bayesiansession_next_requested_prior(this.__wbg_ptr);
             deferred1_0 = ret[0];
             deferred1_1 = ret[1];
             return getStringFromWasm0(ret[0], ret[1]);
@@ -64,13 +65,32 @@ export class BayesianSession {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
+    /**
+     * @param {string} likelihood_json
+     */
+    receive_likelihood_update(likelihood_json) {
+        const ptr0 = passStringToWasm0(likelihood_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.bayesiansession_receive_likelihood_update(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * @param {string} prior_json
+     */
+    receive_prior_update(prior_json) {
+        const ptr0 = passStringToWasm0(prior_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.bayesiansession_receive_prior_update(this.__wbg_ptr, ptr0, len0);
+    }
+    reset() {
+        wasm.bayesiansession_reset(this.__wbg_ptr);
+    }
 }
 if (Symbol.dispose) BayesianSession.prototype[Symbol.dispose] = BayesianSession.prototype.free;
 
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_5549492daedad139: function(arg0, arg1) {
+        __wbg___wbindgen_throw_81fc77679af83bc6: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbindgen_init_externref_table: function() {
@@ -93,14 +113,6 @@ const BayesianSessionFinalization = (typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_bayesiansession_free(ptr >>> 0, 1));
 
-let cachedFloat64ArrayMemory0 = null;
-function getFloat64ArrayMemory0() {
-    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
-        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
-    }
-    return cachedFloat64ArrayMemory0;
-}
-
 function getStringFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return decodeText(ptr, len);
@@ -112,17 +124,6 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
-}
-
-function isLikeNone(x) {
-    return x === undefined || x === null;
-}
-
-function passArrayF64ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 8, 8) >>> 0;
-    getFloat64ArrayMemory0().set(arg, ptr / 8);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -195,7 +196,6 @@ let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
-    cachedFloat64ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

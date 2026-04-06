@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WASM Smoke</title>
+  </head>
+  <body>
+    <pre id="out">loading...</pre>
+    <script type="module">
+      import init, { BayesianSession } from "./src/wasm_pkg/bayesian.js";
+
+      const out = document.getElementById("out");
+
+      try {
+        await init();
+        const session = new BayesianSession();
+        const first = session.expand_to_threshold();
+        const second = session.expand_to_threshold();
+        out.textContent = JSON.stringify(
+          {
+            ok: true,
+            firstLength: first.length,
+            secondLength: second.length,
+          },
+          null,
+          2,
+        );
+      } catch (err) {
+        console.error("wasm smoke failed", err);
+        out.textContent = String(err);
+      }
+    </script>
+  </body>
+</html>

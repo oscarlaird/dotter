@@ -32,7 +32,7 @@ impl XPrediction {
         let canonical_followers_array = if final_token_lexindex == INVALID_TOKEN_LEXINDEX {
             vec![true; tokenizer.tokens().len()]
         } else {
-            tokenizer.canonical_followers_for_lex_index(final_token_lexindex)
+            tokenizer.canonical_followers_for_lex_index(final_token_lexindex as usize)
         };
         let canonical_counts_by_prefix =
             tokenizer.count_true_tokens_by_prefix::<NUM_PREFIXES>(&canonical_followers_array);

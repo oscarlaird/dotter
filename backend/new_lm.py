@@ -22,6 +22,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 EXPECTED_FILTERED_TOKEN_COUNT = 17_235
+HF_SPACE_MARKER = "▁"
+ROOT_MARKER = "^"
 PIDFILE_PATH = Path("/tmp/dotter_new_lm.pid")
 START_TS = time.monotonic()
 
@@ -31,11 +33,36 @@ def _log(msg: str) -> None:
     print(f"[new_lm +{elapsed:8.3f}s] {msg}", file=sys.stderr, flush=True)
 
 
+def _json_dumps(payload: object) -> str:
+    return json.dumps(payload, separators=(",", ":"))
+
+
 def _pick_device() -> str:
     # CUDA-only by design: never add CPU fallback here.
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for backend runtime; CPU fallback is forbidden.")
     return "cuda"
+
+
+def _initial_context_token_id(tokenizer: AutoTokenizer) -> int:
+    if tokenizer.bos_token_id is not None:
+        return int(tokenizer.bos_token_id)
+    if tokenizer.eos_token_id is not None:
+        return int(tokenizer.eos_token_id)
+    raise ValueError("tokenizer must expose either bos_token_id or eos_token_id")
+
+
+def _internal_token_to_hf_token(token: str) -> str:
+    return token.replace("_", HF_SPACE_MARKER)
+
+
+def _bayes_string_to_model_text(full_string: str) -> str:
+    if not full_string.startswith(ROOT_MARKER):
+        raise ValueError(f"expected requested prior to start with {ROOT_MARKER!r}: {full_string!r}")
+    surface = full_string.removeprefix(ROOT_MARKER)
+    if surface.startswith("_"):
+        surface = surface[1:]
+    return surface.replace("_", " ")
 
 
 def _kill_process(pid: int) -> None:
@@ -78,6 +105,12 @@ def _ensure_singleton_backend_process() -> None:
                 pass
 
     atexit.register(_cleanup_pidfile)
+
+
+@dataclass(frozen=True)
+class RequestedPrior:
+    full_string: str
+    last_token_lexindex: int
 
 
 @dataclass
@@ -168,97 +201,50 @@ class PriorModel:
         self.model.eval()
         _log("model.eval() complete")
         self.cache = PrefixCacheTrie()
-        _log("PrefixCacheTrie initialized")
+        self.initial_token_id = _initial_context_token_id(self.tokenizer)
 
-        self.clean_tokens = lexicographic_tokens
-        _log("building clean_ids mapping")
+        _log("building lex-index to tokenizer-id mapping")
         vocab = self.tokenizer.get_vocab()
         self.clean_ids = np.array(
-            [vocab[token] for token in self.clean_tokens],
+            [vocab[_internal_token_to_hf_token(token)] for token in lexicographic_tokens],
             dtype=np.int64,
         )
-        _log("clean_ids mapping complete")
+        _log("lex-index mapping complete")
         if len(self.clean_ids) != EXPECTED_FILTERED_TOKEN_COUNT:
             raise ValueError(
                 f"filtered token count mismatch: expected {EXPECTED_FILTERED_TOKEN_COUNT}, got {len(self.clean_ids)}"
             )
 
-        if self.tokenizer.eos_token_id is None:
-            raise ValueError("tokenizer eos_token_id is required for stop logit extraction")
-        self.stop_token_id = int(self.tokenizer.eos_token_id)
         _log("PriorModel init complete")
 
     def reset_cache(self) -> None:
         self.cache.reset()
 
-    def _encode(self, text: str) -> list[int]:
-        encoded = self.tokenizer(text, return_tensors="pt").input_ids[0].tolist()
-        if len(encoded) == 0:
-            raise ValueError("tokenizer produced an empty token sequence")
-        return [int(x) for x in encoded]
+    def _encode_context(self, model_text: str) -> list[int]:
+        encoded = self.tokenizer.encode(model_text, add_special_tokens=False)
+        if encoded:
+            return [int(x) for x in encoded]
+        return [self.initial_token_id]
 
-    def prior_update_for_string(
-        self,
-        full_string: str,
-    ) -> tuple[str | None, str, np.ndarray, float]:
-        token_ids = self._encode(full_string)
+    def prior_update_json_for_request(self, requested_prior_json: str) -> str:
+        requested_prior = RequestedPrior(**json.loads(requested_prior_json))
+        model_text = _bayes_string_to_model_text(requested_prior.full_string)
+        token_ids = self._encode_context(model_text)
         with torch.no_grad():
             last_logits = self.cache.infer_next_logits(token_ids, self.model, self.device)
 
         follower_logits = last_logits[self.clean_ids]
-        stop_logit = float(last_logits[self.stop_token_id])
-
-        # For now we let Rust infer canonical support from full string.
-        final_token = None
-        return final_token, full_string, follower_logits, stop_logit
-
-
-def _symbol_to_char(symbol: str) -> str:
-    if symbol == "Space":
-        return " "
-    if symbol == "Stop":
-        return "$"
-    if symbol == "Start":
-        return ""
-    if len(symbol) == 1 and "A" <= symbol <= "Z":
-        return symbol.lower()
-    return ""
-
-
-def top_snapshot_strings(snapshot_json: str, max_items: int) -> list[str]:
-    snapshot = json.loads(snapshot_json)
-    nodes: list[dict[str, Any]] = snapshot["nodes"]
-    root = int(snapshot["root"])
-    stack: list[tuple[int, str]] = [(root, "")]
-    scored: list[tuple[float, str]] = []
-
-    while stack:
-        node_index, prefix = stack.pop()
-        node = nodes[node_index]
-        symbol = _symbol_to_char(node["symbol"])
-        value = prefix + symbol
-        if "$" not in value and symbol != "":
-            scored.append((float(node["z"]), value))
-        for _child_symbol, child_idx in node["children"]:
-            stack.append((int(child_idx), value))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    out: list[str] = []
-    seen: set[str] = set()
-    for _, text in scored:
-        if text in seen:
-            continue
-        out.append(text)
-        seen.add(text)
-        if len(out) >= max_items:
-            break
-    return out
+        payload = {
+            "full_string": requested_prior.full_string,
+            "final_token_lexindex": requested_prior.last_token_lexindex,
+            "follower_logits": follower_logits.tolist(),
+        }
+        return _json_dumps(payload)
 
 
 class BackendRuntime:
     def __init__(self) -> None:
         _log("BackendRuntime init start")
-        self.prompt = ""
         self.session = bayesian.BayesianSession()
         _log("BayesianSession constructed")
         lexicographic_tokens = json.loads(self.session.lexicographic_tokens_json())
@@ -267,32 +253,41 @@ class BackendRuntime:
         self.lock = asyncio.Lock()
         _log("BackendRuntime init complete")
 
-    def reset(self, prompt: str = "") -> None:
-        self.prompt = prompt
+    def reset(self) -> None:
         self.session.reset()
         self.prior_model.reset_cache()
 
-    async def apply_likelihood_and_emit_priors(
+    async def reset_and_emit_prior(self, websocket: WebSocket) -> None:
+        async with self.lock:
+            self.reset()
+            requested_prior_json = self.session.next_requested_prior()
+            prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
+            self.session.receive_prior_update(prior_json)
+            self.session.apply_updates()
+        await websocket.send_text(_json_dumps({"type": "reset_ack"}))
+        await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
+
+    async def emit_next_prior(self, websocket: WebSocket) -> None:
+        async with self.lock:
+            requested_prior_json = self.session.next_requested_prior()
+            prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
+            self.session.receive_prior_update(prior_json)
+            self.session.apply_updates()
+        await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
+
+    async def apply_likelihood_and_emit_prior(
         self,
         websocket: WebSocket,
-        snapshot_json: str,
+        likelihood_json: str,
     ) -> None:
         async with self.lock:
-            self.session.apply_likelihood_update(snapshot_json)
-            if not self.prompt:
-                raise ValueError("reset prompt must be non-empty before likelihood updates")
-            final_token, full_string, follower_logits, stop_logit = (
-                self.prior_model.prior_update_for_string(self.prompt)
-            )
-            content = {
-                "final_token": final_token,
-                "full_string": full_string,
-                "follower_logits": follower_logits.tolist(),
-                "stop_logit": stop_logit,
-            }
-            self.session.apply_prior_update(json.dumps(content))
-            payload = {"type": "prior_update", "content": content}
-            await websocket.send_text(json.dumps(payload))
+            self.session.receive_likelihood_update(likelihood_json)
+            self.session.apply_updates()
+            requested_prior_json = self.session.next_requested_prior()
+            prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
+            self.session.receive_prior_update(prior_json)
+            self.session.apply_updates()
+        await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
 
 
 _ensure_singleton_backend_process()
@@ -313,27 +308,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
         msg_type = message.get("type")
         if msg_type == "reset":
-            prompt = str(message.get("content", {}).get("prompt", ""))
-            runtime.reset(prompt)
-            await websocket.send_text(json.dumps({"type": "reset_ack"}))
+            prompt = message.get("content", {}).get("prompt")
+            if prompt not in (None, ""):
+                _log("received legacy reset prompt; ignoring because priors are trie-driven")
+            await runtime.reset_and_emit_prior(websocket)
             continue
 
         if msg_type == "likelihood_update":
-            content = message.get("content", {})
-            snapshot_json = content.get("snapshot_json")
-            if not isinstance(snapshot_json, str):
-                raise TypeError("likelihood_update requires snapshot_json")
-            await runtime.apply_likelihood_and_emit_priors(websocket, snapshot_json)
+            likelihood_json = message.get("content_json")
+            if not isinstance(likelihood_json, str):
+                raise TypeError("likelihood_update requires content_json")
+            await runtime.apply_likelihood_and_emit_prior(websocket, likelihood_json)
             continue
 
         if msg_type == "ping":
             await websocket.send_text(
-                json.dumps({"type": "pong", "content": {"pingTime": message.get("pingTime")}})
+                _json_dumps({"type": "pong", "content": {"pingTime": message.get("pingTime")}})
             )
             continue
 
         await websocket.send_text(
-            json.dumps(
+            _json_dumps(
                 {
                     "type": "error",
                     "content": {"message": f"unknown message type: {msg_type}"},
