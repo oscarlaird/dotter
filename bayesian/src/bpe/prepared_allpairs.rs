@@ -102,7 +102,7 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
                 0
             };
             for entry in row {
-                if entry.priority_score < r_next {
+                if entry.priority_score <= r_next {
                     continue;
                 }
                 let idx = entry.right as usize * right_len + spine_idx;
