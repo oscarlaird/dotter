@@ -14,6 +14,19 @@ export class BayesianSession {
     reset(): void;
 }
 
+/**
+ * Dev-only: panics immediately so you can verify `initPanicHook` / `console_error_panic_hook`
+ * in the browser console. Frontend calls this when `?wasmPanic=1` (Vite dev only).
+ */
+export function debugPanicTest(): void;
+
+/**
+ * Install [`console_error_panic_hook`] so panics in the wasm32 build print to `console.error`
+ * with source location (and a useful traceback when debug symbols are present). Call once
+ * after wasm init (see `initPanicHook` in the wasm bindings).
+ */
+export function initPanicHook(): void;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -27,10 +40,12 @@ export interface InitOutput {
     readonly bayesiansession_receive_likelihood_update: (a: number, b: number, c: number) => void;
     readonly bayesiansession_receive_prior_update: (a: number, b: number, c: number) => void;
     readonly bayesiansession_reset: (a: number) => void;
-    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly initPanicHook: () => void;
+    readonly debugPanicTest: () => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_start: () => void;
 }
 

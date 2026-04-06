@@ -158,11 +158,13 @@ impl XBayes {
         let p_update_proper_ancestors = {
             // remove predictions beyond the trie
             // p_update.retain(|hash| self.nodes.contains_key(hash));  // don't do this because the trie is theoretically infinite; what matters is our relation to the clf
+            // TODO: we want to think about allowing the clf to be beyond the trie
             let mut res = rh::RHashSet::default();
             let mut frames: Vec<Hash> = p_update
                 .iter().cloned().collect::<Vec<_>>();
             while let Some(hash) = frames.pop() {
                 if res.contains(&hash) { continue; }
+                if !self.nodes.contains_key(&hash) { continue; } // ignore predictions beyond the trie
                 if self.cum_likelihood.deref().contains_key(&hash) { continue; } // ignore predictions beyond the clf
                 res.insert(hash);
                 if hash == ROOT_HASH { continue; }
@@ -181,6 +183,12 @@ impl XBayes {
         let cum_likelihood = &self.cum_likelihood;
         let unread_predictions = self.unread_predictions.deref_mut();
         let tokenizer = &self.tokenizer;
+        //
+        let root_const_likelihood = cum_likelihood.deref().contains_key(&ROOT_HASH) || cum_likelihood.deref().is_empty();
+        if root_const_likelihood && matches!(recalc_type, RecalcType::Update) {
+            return RecalcResult::Updated;
+        }
+        //
         struct Frame {
             symbol: Symbol,
             depth: u16,
@@ -250,6 +258,9 @@ impl XBayes {
                 Self::ensure_node(nodes, zero_order_predictions, root_zero_order_prediction, tokenizer, &n_walker);
             }
             if iters < 1000 { iters += 1; } else { panic!("apply_updates: too many iterations"); }
+            if iters > 500 { 
+                println!("iters: {}", iters);
+            }
             let node = nodes.get_mut(&n_hash).unwrap();
             for slot in 0..RADIX {
                 let child_symbol = Symbol::from_slot(slot);
@@ -453,6 +464,15 @@ impl XBayes {
             let mut mtcdl = [Float::NEG_INFINITY; MAX_TOKEN_LENGTH];
             let symbol;
             {
+                fn safe_max(a: Float, b: Float) -> Float {
+                    if a == Float::NEG_INFINITY {
+                        return b;
+                    }
+                    if b == Float::NEG_INFINITY {
+                        return a;
+                    }
+                    return a.max(b);
+                }
                 let node = nodes.get(&n_hash).unwrap();
                 symbol = node.symbol;
                 for slot in 0..RADIX {
@@ -461,10 +481,10 @@ impl XBayes {
                     let nz = c_can_trunc | 1;
                     let expanded_c_mtcdl = dense_to_sparse16( &c_mtcdl, nz, Float::NEG_INFINITY);
                     for i in 0..(MAX_TOKEN_LENGTH-1) {
-                        mtcdl[i] = mtcdl[i].max(expanded_c_mtcdl[i+1]);
+                        mtcdl[i] = safe_max(mtcdl[i], expanded_c_mtcdl[i+1]);
                     }
                     let c_ftl = node.c_final_token_length[slot] as usize;
-                    mtcdl[c_ftl - 1] = mtcdl[c_ftl - 1].max(expanded_c_mtcdl[0]);
+                    mtcdl[c_ftl - 1] = safe_max(mtcdl[c_ftl - 1], expanded_c_mtcdl[0]);
                 }
             }
             // since only child values are stored, we must store our own value on our parent
@@ -555,10 +575,6 @@ impl XBayes {
             let mut found_canonical_ancestor = false;
             for i in 1..available_prediction_depth { // index is from child's perspective
                 let a_final_token_lexindex = *walker.a_final_token_lexindex().from_end(i-1);
-                if a_final_token_lexindex == 17233 && slot == 25 {
-                    // breakpoint
-                    println!("a_final_token_lexindex: {}", a_final_token_lexindex);
-                }
                 let a_pred: &XPrediction = if a_final_token_lexindex == INVALID_TOKEN_LEXINDEX {
                     root_zero_order_prediction
                 } else {
@@ -568,10 +584,6 @@ impl XBayes {
                 if tokenizer.token_hashset.contains(&final_chars_hash) {
                     let final_token_lexindex = tokenizer.lex_index_for_token_hash(&final_chars_hash) as TokenLexIndex;
                     let canonical_pair = a_pred.canonical_followers[final_token_lexindex as usize];
-                    // print the sum of canonical pair
-                    let sum_canonical_pair: usize = a_pred.canonical_followers.iter().map(|&v| v as usize).sum();
-                    println!("sum of canonical pair: {}", sum_canonical_pair);
-                    //
                     if canonical_pair {
                         node.c_final_token_length[slot] = i as u8;
                         node.c_final_token_lexindex[slot] = final_token_lexindex;
@@ -602,6 +614,7 @@ impl XBayes {
                 final_chars_hash = rh::extend_right(walker.a_symbol().from_end(i-1).to_byte() as u64, final_chars_hash, i);
             }
             assert!(found_canonical_ancestor);
+            assert!(p.is_finite());
             node.c_a_tl[slot][0] = ZERO;
             node.c_p[slot] = p;
             node.c_z[slot] = ZERO + p; // accumed_l is 0.0

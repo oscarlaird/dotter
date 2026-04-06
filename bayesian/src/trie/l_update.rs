@@ -1,3 +1,4 @@
+use crate::trie::ROOT_HASH;
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
@@ -83,8 +84,8 @@ impl LUpdate {
         // TODO: this function needs to take account of empty likelihood updates
         struct Frame {
             hash: Hash,
-            likelihood: Float,
-            hit_count: u32,
+            likelihood: Float, // including us
+            hit_count: u32, // including us
         }
         // assume that all likelihood updates are already in complete prefix code form i.e. no node is the prefix of another
         for &l_trie in l_tries {
@@ -95,7 +96,7 @@ impl LUpdate {
         }
         let mut result = Self::new();
         let mut walkers = vec![Frame {
-            hash: 0,
+            hash: ROOT_HASH,
             likelihood: ZERO,
             hit_count: 0,
         }];

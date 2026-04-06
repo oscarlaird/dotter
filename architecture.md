@@ -56,6 +56,14 @@ For each likelihood update produced by the client:
 When the client receives an update event over the websocket, it applies that
 update to its local Bayesian session.
 
+The client embeds the `bayesian` crate as WebAssembly. After `initBayesianWasm()`
+the app calls `initPanicHook()` so Rust panics are forwarded to `console.error`
+via `console_error_panic_hook` (message and location; best results with a debug
+wasm build). From `frontend/`, rebuild the wasm package with `npm run
+build:wasm:dev` (debug symbols, unoptimized) or `npm run build:wasm` (optimized
+release). In Chrome DevTools, use **Sources** and pause on uncaught exceptions
+to inspect the **WASM** stack when a panic surfaces as a JS exception.
+
 ### Server Side
 
 The server-side code is written in Python. Its primary responsibility is to run

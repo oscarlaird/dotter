@@ -19,13 +19,16 @@ impl SafeFloat {
     pub(crate) const NEG_INFINITY: Self = Self(f32::NEG_INFINITY);
     #[inline]
     pub(crate) fn new(value: f32) -> Self {
-        assert!(!value.is_nan(), "SafeFloat::new received NaN");
+        assert!(
+            value.is_finite() || value == f32::NEG_INFINITY,
+            "SafeFloat::new received unsupported non-finite value"
+        );
         Self(value)
     }
 
     #[inline]
     fn assert_valid_input(self, op: &'static str) {
-        assert!(!self.0.is_nan(), "SafeFloat::{op} received NaN input");
+        assert!(self.0.is_finite(), "SafeFloat::{op} received non-finite input");
     }
 
     #[inline]
@@ -35,8 +38,16 @@ impl SafeFloat {
     }
 
     #[inline]
+    fn assert_valid_total_cmp_input(self) {
+        assert!(
+            self.0.is_finite() || self.0 == f32::NEG_INFINITY,
+            "SafeFloat::total_cmp received unsupported non-finite input"
+        );
+    }
+
+    #[inline]
     fn from_op(value: f32, op: &'static str) -> Self {
-        assert!(!value.is_nan(), "SafeFloat::{op} produced NaN");
+        assert!(value.is_finite(), "SafeFloat::{op} produced non-finite value");
         Self(value)
     }
 
@@ -66,7 +77,8 @@ impl SafeFloat {
 
     #[inline]
     pub(crate) fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.assert_valid_inputs(*other, "total_cmp");
+        self.assert_valid_total_cmp_input();
+        other.assert_valid_total_cmp_input();
         self.0.total_cmp(&other.0)
     }
 

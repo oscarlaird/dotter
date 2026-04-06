@@ -87,11 +87,50 @@ export class BayesianSession {
 }
 if (Symbol.dispose) BayesianSession.prototype[Symbol.dispose] = BayesianSession.prototype.free;
 
+/**
+ * Dev-only: panics immediately so you can verify `initPanicHook` / `console_error_panic_hook`
+ * in the browser console. Frontend calls this when `?wasmPanic=1` (Vite dev only).
+ */
+export function debugPanicTest() {
+    wasm.debugPanicTest();
+}
+
+/**
+ * Install [`console_error_panic_hook`] so panics in the wasm32 build print to `console.error`
+ * with source location (and a useful traceback when debug symbols are present). Call once
+ * after wasm init (see `initPanicHook` in the wasm bindings).
+ */
+export function initPanicHook() {
+    wasm.initPanicHook();
+}
+
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
         __wbg___wbindgen_throw_81fc77679af83bc6: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_error_a6fa202b58aa1cd3: function(arg0, arg1) {
+            let deferred0_0;
+            let deferred0_1;
+            try {
+                deferred0_0 = arg0;
+                deferred0_1 = arg1;
+                console.error(getStringFromWasm0(arg0, arg1));
+            } finally {
+                wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
+            }
+        },
+        __wbg_new_227d7c05414eb861: function() {
+            const ret = new Error();
+            return ret;
+        },
+        __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
+            const ret = arg1.stack;
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
@@ -112,6 +151,14 @@ function __wbg_get_imports() {
 const BayesianSessionFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_bayesiansession_free(ptr >>> 0, 1));
+
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
+}
 
 function getStringFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -196,6 +243,7 @@ let wasmModule, wasm;
 function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
+    cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

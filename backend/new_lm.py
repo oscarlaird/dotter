@@ -26,6 +26,7 @@ HF_SPACE_MARKER = "▁"
 ROOT_MARKER = "^"
 PIDFILE_PATH = Path("/tmp/dotter_new_lm.pid")
 START_TS = time.monotonic()
+PRIORS_PER_LIKELIHOOD_CYCLE = 5
 
 
 def _log(msg: str) -> None:
@@ -257,22 +258,23 @@ class BackendRuntime:
         self.session.reset()
         self.prior_model.reset_cache()
 
+    def _advance_one_prior(self) -> str:
+        requested_prior_json = self.session.next_requested_prior()
+        prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
+        self.session.receive_prior_update(prior_json)
+        self.session.apply_updates()
+        return prior_json
+
     async def reset_and_emit_prior(self, websocket: WebSocket) -> None:
         async with self.lock:
             self.reset()
-            requested_prior_json = self.session.next_requested_prior()
-            prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
-            self.session.receive_prior_update(prior_json)
-            self.session.apply_updates()
+            prior_json = self._advance_one_prior()
         await websocket.send_text(_json_dumps({"type": "reset_ack"}))
         await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
 
     async def emit_next_prior(self, websocket: WebSocket) -> None:
         async with self.lock:
-            requested_prior_json = self.session.next_requested_prior()
-            prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
-            self.session.receive_prior_update(prior_json)
-            self.session.apply_updates()
+            prior_json = self._advance_one_prior()
         await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
 
     async def apply_likelihood_and_emit_prior(
@@ -283,11 +285,9 @@ class BackendRuntime:
         async with self.lock:
             self.session.receive_likelihood_update(likelihood_json)
             self.session.apply_updates()
-            requested_prior_json = self.session.next_requested_prior()
-            prior_json = self.prior_model.prior_update_json_for_request(requested_prior_json)
-            self.session.receive_prior_update(prior_json)
-            self.session.apply_updates()
-        await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
+            prior_jsons = [self._advance_one_prior() for _ in range(PRIORS_PER_LIKELIHOOD_CYCLE)]
+        for prior_json in prior_jsons:
+            await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
 
 
 _ensure_singleton_backend_process()

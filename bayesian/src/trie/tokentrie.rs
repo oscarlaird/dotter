@@ -113,6 +113,7 @@ impl XBayes {
             self.queue.pop();
             // PRIOR
             let cond_prior = &this_pred.follower_probs;
+            let canonical_followers = &this_pred.canonical_followers;
             // determine how much likelihood was accumulated from our parent to us
             let (accumed_l, hit_clf) = match this_item.kind {
                 QueueItemKind::Root => (ZERO, false),
@@ -132,7 +133,11 @@ impl XBayes {
             // POSTERIOR (upper bound)
             let mut cond_posterior_ub = vec![Float::NAN; NUM_TOKENS].into_boxed_slice();
             for i in 0..NUM_TOKENS {
-                cond_posterior_ub[i] = tl_array[i] + cond_prior[i];
+                cond_posterior_ub[i] = if canonical_followers[i] {
+                    tl_array[i] + cond_prior[i]
+                } else {
+                    Float::NEG_INFINITY
+                };
             }
             let mut top_ix: Vec<usize> = (0..NUM_TOKENS).collect();
             top_ix.select_nth_unstable_by(MAX_CONTINUATIONS-1, |&i, &j| {

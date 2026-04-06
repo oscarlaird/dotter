@@ -19,8 +19,6 @@ pub struct BayesianSession {
     pub(crate) trie: XBayes,
 }
 
-const THRESHOLD: f32 = -5.2983174; // precomputed value of (1.0/200.0).ln()
-
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
@@ -103,10 +101,18 @@ impl BayesianSession {
     }
 
     pub fn expand_to_threshold(&mut self) -> String {
+        if !self.trie.pending_prior.deref().is_empty()
+            || !self.trie.pending_likelihood.deref().is_empty()
+        {
+            self.apply_updates();
+        }
+
         let nodes_list = match self.trie.recalc_to_frontier(
-            RecalcType::Expand { threshold: Float::from(THRESHOLD) },
+            RecalcType::Expand { threshold: Float::from(super::TRIE_EXPANSION_THRESHOLD as f32) },
         ) {
-            RecalcResult::Updated => unreachable!(),
+            RecalcResult::Updated => {
+                panic!("expand_to_threshold unexpectedly returned Updated after applying pending updates")
+            }
             RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
         };
         // node list is in topological order
@@ -127,7 +133,7 @@ impl BayesianSession {
                 // because nodes_list is in topological order
                 let p_string = snapshot_by_hash.get(&p_hash).unwrap().string.clone();
                 let p_node = self.trie.nodes.get(&p_hash).unwrap();
-                let s = p_string + &node.symbol.to_byte().to_string();
+                let s = p_string + &(node.symbol.to_byte() as char).to_string();
                 let z = p_node.c_z[node.symbol.to_slot()];
                 NString { string: s, z }
             };

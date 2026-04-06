@@ -8,8 +8,8 @@ use crate::symbol::Symbol;
 pub(crate) const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte());
 pub(crate) const ROOT_STRING: &str = "^";
 
-/// `ln(1/200)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
-pub const TRIE_EXPANSION_THRESHOLD: f64 = -5.2983173665480363;
+/// `ln(2/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
+pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.912023005428146;
 
 /// Maximum node visits per `recalc_to_frontier_and_back` traversal.
 pub const TRIE_MAX_VISITS: i32 = 200;

@@ -1,6 +1,7 @@
 //! Trie tests that need `pub(crate)` APIs (`Trie`, `Prediction`, `SnapshotWalker`, …).
 //!
 //! For tests that only use the public `bayesian` surface, prefer `bayesian/tests/` at the crate root.
+#[cfg(not(feature = "wasm"))]
 use crate::trie::ROOT_HASH;
 use crate::trie::INVALID_TOKEN_LEXINDEX;
 use crate::trie::TokenLexIndex;
@@ -19,7 +20,45 @@ fn expanded_hashes(snapshot_json: String) -> crate::rolling_hash::RHashSet {
         .collect()
 }
 
+fn snapshot_strings(snapshot_json: &str) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct SnapshotNode {
+        hash: crate::rolling_hash::Hash,
+    }
 
+    let mut keys = serde_json::from_str::<std::collections::HashMap<String, SnapshotNode>>(snapshot_json)
+        .unwrap()
+        .into_keys()
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys
+}
+
+#[derive(Deserialize)]
+struct RequestedPrior {
+    full_string: String,
+    last_token_lexindex: TokenLexIndex,
+}
+
+#[derive(Serialize)]
+struct PriorPayload {
+    full_string: String,
+    final_token_lexindex: TokenLexIndex,
+    follower_logits: Vec<f32>,
+}
+
+fn zero_prior_payload(session: &crate::BayesianSession, request_json: String) -> String {
+    let request: RequestedPrior = serde_json::from_str(&request_json).unwrap();
+    serde_json::to_string(&PriorPayload {
+        full_string: request.full_string,
+        final_token_lexindex: request.last_token_lexindex,
+        follower_logits: vec![0.0; session.trie.tokenizer.tokens().len()],
+    })
+    .unwrap()
+}
+
+
+#[cfg(not(feature = "wasm"))]
 #[test]
 fn trie_exploratory_trace() {
     println!("ROOT_HASH: {}", ROOT_HASH);
@@ -111,6 +150,49 @@ fn repro_root_uniform_prior_apply() {
 }
 
 #[test]
+#[ignore = "repro for root prior apply panic with skewed logits"]
+fn repro_root_skewed_prior_apply() {
+    #[derive(Deserialize)]
+    struct RequestedPrior {
+        full_string: String,
+        last_token_lexindex: TokenLexIndex,
+    }
+
+    #[derive(Serialize)]
+    struct Payload {
+        full_string: String,
+        final_token_lexindex: TokenLexIndex,
+        follower_logits: Vec<f32>,
+    }
+
+    let mut session = crate::BayesianSession::new();
+    let request: RequestedPrior = serde_json::from_str(&session.next_requested_prior()).unwrap();
+    assert_eq!(request.full_string, "^");
+    assert_eq!(request.last_token_lexindex, INVALID_TOKEN_LEXINDEX);
+
+    let mut logits = vec![-20.0_f32; crate::bpe::NUM_TOKENS];
+    let set_logit = |logits: &mut [f32], token: &str, logit: f32| {
+        let token_hash = crate::rolling_hash::hash_string(token);
+        let token_index = session.trie.tokenizer.lex_index_for_token_hash(&token_hash);
+        logits[token_index] = logit;
+    };
+    set_logit(&mut logits, "a", 0.0);
+    set_logit(&mut logits, "aa", -0.5);
+    set_logit(&mut logits, "_the", -1.0);
+    set_logit(&mut logits, "z", -1.5);
+    set_logit(&mut logits, "zz", -2.0);
+
+    let payload = Payload {
+        full_string: request.full_string,
+        final_token_lexindex: request.last_token_lexindex,
+        follower_logits: logits,
+    };
+
+    session.receive_prior_update(serde_json::to_string(&payload).unwrap());
+    session.apply_updates();
+}
+
+#[test]
 fn probe_z_to_zz_canonical_follow() {
     let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
         crate::bpe::TOKENIZER_JSON_STR,
@@ -192,7 +274,7 @@ fn probe_repeated_letter_triples_table() {
     let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
         crate::bpe::TOKENIZER_JSON_STR,
     );
-    println!("letter,a is token,aa is token,aaa is token,a->aa canonical,aa->a canonical");
+    println!("letter,a is token,aa is token,aaa is token,a->aa canonical (prepared),aa->a canonical (prepared)");
     for byte in b'a'..=b'z' {
         let c = (byte as char).to_string();
         let aa = format!("{c}{c}");
@@ -200,9 +282,115 @@ fn probe_repeated_letter_triples_table() {
         let a_is_token = tok.lex_index(&c).is_some();
         let aa_is_token = tok.lex_index(&aa).is_some();
         let aaa_is_token = tok.lex_index(&aaa).is_some();
-        let a_to_aa = aa_is_token && tok.can_canonically_follow(&c, &aa);
-        let aa_to_a = aa_is_token && tok.can_canonically_follow(&aa, &c);
+        let a_to_aa = if a_is_token && aa_is_token {
+            let aa_ix = tok.lex_index(&aa).unwrap();
+            tok.canonical_followers(&c)[aa_ix]
+        } else {
+            false
+        };
+        let aa_to_a = if a_is_token && aa_is_token {
+            let a_ix = tok.lex_index(&c).unwrap();
+            tok.canonical_followers(&aa)[a_ix]
+        } else {
+            false
+        };
         println!("{c},{a_is_token},{aa_is_token},{aaa_is_token},{a_to_aa},{aa_to_a}");
     }
+}
+
+#[test]
+#[ignore = "repro for repeated local likelihood-only apply_updates panic"]
+fn repro_repeated_local_likelihood_updates() {
+    let mut session = crate::BayesianSession::new();
+    let mut snapshot_json = session.expand_to_threshold();
+
+    for _ in 0..2 {
+        let likelihood_json = serde_json::json!(
+            snapshot_strings(&snapshot_json)
+                .into_iter()
+                .map(|key| (key, serde_json::json!({ "l": -0.1_f32 })))
+                .collect::<std::collections::HashMap<_, _>>()
+        )
+        .to_string();
+
+        session.receive_likelihood_update(likelihood_json);
+        session.apply_updates();
+        snapshot_json = session.expand_to_threshold();
+    }
+}
+
+#[test]
+#[ignore = "repro for backend-style five-prior cycle panic"]
+fn repro_backend_style_five_prior_cycle() {
+    let mut session = crate::BayesianSession::new();
+
+    let initial_request_json = session.next_requested_prior();
+    let initial_prior_json = zero_prior_payload(&session, initial_request_json);
+    session.receive_prior_update(initial_prior_json);
+    session.apply_updates();
+
+    let snapshot_json = session.expand_to_threshold();
+    let likelihood_json = serde_json::json!(
+        snapshot_strings(&snapshot_json)
+            .into_iter()
+            .map(|key| (key, serde_json::json!({ "l": -0.1_f32 })))
+            .collect::<std::collections::HashMap<_, _>>()
+    )
+    .to_string();
+
+    session.receive_likelihood_update(likelihood_json);
+    session.apply_updates();
+
+    for _ in 0..5 {
+        let request_json = session.next_requested_prior();
+        let prior_json = zero_prior_payload(&session, request_json);
+        session.receive_prior_update(prior_json);
+        session.apply_updates();
+    }
+}
+
+/// Replay of `testdata/frontend_prior_panic/` with the same ordering as V3: after each successful
+/// `apply_updates()`, call `expand_to_threshold()` (and start with `reset` + expand like the page).
+///
+/// This is the canonical Rust replay of the captured WebSocket JSON. On the host target it
+/// **passes**; the browser `RuntimeError: unreachable` from `apply_updates` after a prior is not
+/// reproduced here yet. Use it as a regression fixture and extend it once a host panic is found.
+#[test]
+fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
+    let mut session = crate::BayesianSession::new();
+    session.reset();
+    let _ = session.expand_to_threshold();
+
+    session.receive_prior_update(
+        include_str!("../../testdata/frontend_prior_panic/root_prior.json")
+            .trim()
+            .to_string(),
+    );
+    session.apply_updates();
+    let _ = session.expand_to_threshold();
+
+    session.receive_likelihood_update(
+        include_str!("../../testdata/frontend_prior_panic/likelihood.json")
+            .trim()
+            .to_string(),
+    );
+    session.apply_updates();
+    let _ = session.expand_to_threshold();
+
+    session.receive_prior_update(
+        include_str!("../../testdata/frontend_prior_panic/prior_1.json")
+            .trim()
+            .to_string(),
+    );
+    session.apply_updates();
+    let _ = session.expand_to_threshold();
+
+    session.receive_prior_update(
+        include_str!("../../testdata/frontend_prior_panic/prior_2.json")
+            .trim()
+            .to_string(),
+    );
+    session.apply_updates();
+    let _ = session.expand_to_threshold();
 }
 

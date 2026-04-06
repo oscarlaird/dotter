@@ -37,13 +37,14 @@ function CalibrationSettings({
 		};
 
 	return (
-		<div className="flex flex-col border border-gray-300 rounded-md bg-white p-1.5 gap-1.5">
-			<div className="flex items-center gap-1.5">
-				<label className="font-bold text-s">Auto Calibration</label>
+		<div className="flex flex-col gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-white">
+			<div className="flex items-center gap-2">
+				<label className="text-sm font-semibold text-gray-100">Auto Calibration</label>
 				<input
 					type="checkbox"
 					checked={useAutomaticCalibration}
 					onChange={(e) => setUseAutomaticCalibration(e.target.checked)}
+					className="h-4 w-4 accent-blue-500"
 				/>
 			</div>
 
@@ -96,8 +97,8 @@ interface SliderRowProps {
 
 function SliderRow({ label, min, max, step, value, onChange }: SliderRowProps) {
 	return (
-		<div className="flex flex-col gap-0.5">
-			<label className="font-bold text-s">{label}</label>
+		<div className="flex flex-col gap-1 rounded-md border border-white/8 bg-black/20 p-2">
+			<label className="text-sm font-medium text-gray-200">{label}</label>
 			<input
 				type="range"
 				min={min}
@@ -105,7 +106,7 @@ function SliderRow({ label, min, max, step, value, onChange }: SliderRowProps) {
 				step={step}
 				value={value}
 				onChange={onChange}
-				className="w-full"
+				className="w-full accent-blue-500"
 			/>
 		</div>
 	);

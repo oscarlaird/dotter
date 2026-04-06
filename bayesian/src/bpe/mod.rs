@@ -467,7 +467,7 @@ impl BpeMerges {
                 continue;
             }
 
-            unreachable!("best score must come from one of the three candidate events");
+            panic!("best score must come from one of the three candidate events");
         }
     }
 
