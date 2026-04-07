@@ -1,7 +1,0 @@
-name = "lean_hello"
-version = "0.1.0"
-defaultTargets = ["lean_hello_bin"]
-
-[[lean_exe]]
-name = "lean_hello_bin"
-root = "Main"

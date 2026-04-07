@@ -5,10 +5,17 @@ defaultTargets = ["trieproof"]
 [[require]]
 name = "mathlib"
 git = "https://github.com/leanprover-community/mathlib4.git"
-rev = "v4.28.0"
+rev = "v4.28.0-rc1"
+
+[[require]]
+name = "aeneas"
+path = "/home/oscar/.local/share/aeneas-verif/aeneas/backends/lean"
 
 [[lean_lib]]
 name = "Trie"
+
+[[lean_lib]]
+name = "RollingHashKernel"
 
 [[lean_lib]]
 name = "Playground"
