@@ -6,6 +6,7 @@ use crate::symbol::Symbol;
 
 /// Rolling hash of the trie root context (only the start symbol `^`).
 pub(crate) const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte());
+pub(crate) const INVALID_HASH: rh::Hash = rh::Hash::MAX;
 pub(crate) const ROOT_STRING: &str = "^";
 
 /// `ln(2/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.

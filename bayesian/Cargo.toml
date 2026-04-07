@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["tokentrie"]
+default = ["tokentrie", "proof"]
 python = ["dep:pyo3"]
 wasm = ["dep:wasm-bindgen", "dep:web-sys", "dep:console_error_panic_hook"]
 # stderr tracing for `trie_debug!` / `trie::debug::log` on non-wasm targets
 trie-trace = []
 tokentrie = []
+proof = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]

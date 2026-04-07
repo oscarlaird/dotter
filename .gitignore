@@ -25,6 +25,7 @@ frontend/static/trie_worker_rust
 
 # Lean / Lake
 **/.lake/
+formal/proof/TrieMerge/
 **/lake-manifest.json
 **/*.olean
 **/*.olean.hash
@@ -81,4 +82,5 @@ poetry.lock
 # Local generated project outputs
 demos/lean_python_demo/build/
 demos/rust_aeneas_demo/lean_verify/generated/
+demos/
 rust_out

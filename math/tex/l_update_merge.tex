@@ -1,0 +1,206 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{amssymb}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+
+\newtheorem{definition}{Definition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{theorem}{Theorem}
+
+\newcommand{\pref}{\preceq}
+
+\title{Likelihood-Update Merge}
+\author{Oscar Laird}
+\date{April 2026}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+
+\section{Definitions}
+
+Fix an alphabet $\Sigma$ with a distinguished start symbol $^\wedge$.
+Write $\Sigma^\star$ for the finite strings over $\Sigma$, and write
+$u \pref x$ when $u$ is a prefix of $x$.
+
+\begin{definition}[Rooted likelihood update]
+A \emph{rooted likelihood update} $U$ consists of:
+\begin{itemize}
+\item a finite set $\mathrm{nodes}(U) \subseteq \Sigma^\star$,
+\item a weight $\ell_U(n) \in \mathbb{R}$ for each $n \in \mathrm{nodes}(U)$,
+\item the requirement that $^\wedge \in \mathrm{nodes}(U)$,
+\item the requirement that $\mathrm{nodes}(U)$ is prefix-closed.
+\end{itemize}
+\end{definition}
+
+The Rust implementation stores an explicit leaf bit.
+Mathematically, this bit is redundant: a present node is a leaf exactly when it
+has no present children.
+
+\begin{definition}[Truncation]
+Let $U$ be a rooted likelihood update and let $x \in \Sigma^\star$ extend the
+start symbol. Define
+\[
+\tau_U(x) := \max\nolimits_{\pref}\{n \in \mathrm{nodes}(U) : n \pref x\},
+\]
+the longest present prefix of $x$ in $U$.
+This is well defined because $^\wedge \in \mathrm{nodes}(U)$.
+\end{definition}
+
+\begin{definition}[Lookup through truncation]
+For a rooted likelihood update $U$ and a string $x$, define
+\[
+L_U(x) := \ell_U(\tau_U(x)).
+\]
+\end{definition}
+
+\begin{definition}[Semantic merged lookup]
+Given rooted likelihood updates $U_1,\dots,U_k$, define their semantic merged
+lookup by
+\[
+L^\ast(x) := \sum_{i=1}^k L_{U_i}(x).
+\]
+\end{definition}
+
+This function $L^\ast$ is the mathematical specification of the merge.
+The formal task is to show that the constructed merged update realizes this
+specification.
+
+\section{Construction}
+
+For each string $x \in \Sigma^\star$, define
+\[
+h(x) := \text{the longest among } \tau_{U_1}(x),\dots,\tau_{U_k}(x).
+\]
+Since each $\tau_{U_i}(x)$ is a prefix of $x$, this longest string is well
+defined.
+
+We define the merged rooted likelihood update $M$ as follows.
+
+\begin{definition}[Merged node set]
+A string $n$ belongs to $\mathrm{nodes}(M)$ if and only if there exists a string
+$x$ such that
+\[
+n \pref h(x)
+\]
+and such that $n \in \mathrm{nodes}(U_i)$ for at least one index $i$.
+\end{definition}
+
+\begin{definition}[Merged weights]
+For each $n \in \mathrm{nodes}(M)$, define
+\[
+\ell_M(n) := \sum_{i=1}^k \ell_{U_i}(\tau_{U_i}(n)).
+\]
+\end{definition}
+
+Thus the weight at a merged node is defined directly from the input updates:
+each update contributes the weight of its own truncation point on the branch
+leading to $n$.
+
+The merge routine \texttt{merge\_many} is intended to compute exactly this
+mathematical object.
+
+\section{Correctness}
+
+\begin{lemma}[Location of the merged truncation point]
+Fix $x \in \Sigma^\star$.
+For each $i$, let $\tau_i := \tau_{U_i}(x)$.
+Then $\tau_M(x)$ is the longest among the strings
+$\tau_1,\dots,\tau_k$.
+\end{lemma}
+
+\begin{proof}
+Each $\tau_i$ is a prefix of $x$, so the strings $\tau_1,\dots,\tau_k$ are
+totally ordered by the prefix relation, equivalently by length.
+
+Fix a prefix $n \pref x$.
+The update $U_i$ has already stopped by the time the traversal reaches $n$ if
+and only if $\tau_i \pref n$.
+Therefore all updates have stopped by the time the traversal reaches $n$ if and
+only if every $\tau_i \pref n$.
+
+The merged truncation point is the first prefix of $x$ with that property.
+Since the $\tau_i$ are linearly ordered, that first such prefix is exactly the
+longest among $\tau_1,\dots,\tau_k$.
+\end{proof}
+
+\begin{lemma}[Value at the merged truncation point]
+Fix $x \in \Sigma^\star$ and let $h := \tau_M(x)$.
+Then
+\[
+\ell_M(h) = \sum_{i=1}^k \ell_{U_i}(\tau_{U_i}(x)).
+\]
+\end{lemma}
+
+\begin{proof}
+Partition the index set $\{1,\dots,k\}$ into
+\[
+I_{=}:=\{i : \tau_{U_i}(x)=h\}
+\quad\text{and}\quad
+I_{<}:=\{i : \tau_{U_i}(x)\prec h\}.
+\]
+
+If $i \in I_{=}$, then $U_i$ contains the node $h$, so its contribution appears
+as the summand $\ell_{U_i}(\tau_{U_i}(x)) = \ell_{U_i}(h)$.
+
+If $i \in I_{<}$, then $U_i$ stopped strictly above $h$.
+Its contribution at $h$ is still the summand
+$\ell_{U_i}(\tau_{U_i}(x))$, now coming from a strict ancestor of $h$.
+
+These two classes are disjoint and exhaustive, and each index contributes
+exactly once.
+Summing the direct and carried contributions yields
+\[
+\ell_M(h)=\sum_{i=1}^k \ell_{U_i}(\tau_{U_i}(x)).
+\]
+\end{proof}
+
+\begin{theorem}[Constructed merge realizes the specification]
+For every string $x \in \Sigma^\star$,
+\[
+L_M(x) = L^\ast(x).
+\]
+Equivalently,
+\[
+L_M(x) = \sum_{i=1}^k L_{U_i}(x).
+\]
+\end{theorem}
+
+\begin{proof}
+By definition of lookup through truncation,
+\[
+L_M(x) = \ell_M(\tau_M(x)).
+\]
+Apply the previous lemma with $h = \tau_M(x)$ to obtain
+\[
+L_M(x) = \sum_{i=1}^k \ell_{U_i}(\tau_{U_i}(x)).
+\]
+Finally rewrite each summand as $L_{U_i}(x)$.
+\end{proof}
+
+\section{Implementation correspondence}
+
+The preceding theorem is the mathematical statement.
+The Rust routine \texttt{merge\_many} is intended to compute the update $M$ just
+analyzed.
+Its running quantities match the two terms in the proof:
+\begin{itemize}
+\item \texttt{n\_direct\_l} accumulates the direct contributions;
+\item \texttt{n\_proper\_truncated\_l} accumulates the carried contributions;
+\item \texttt{n\_edge\_hit\_count == len} expresses that every input update has
+stopped on the current branch.
+\end{itemize}
+
+\section{Next formal step}
+
+This exact theorem is the right first target for Lean.
+The later floating-point theorem should be stated separately: first define the
+exact real-valued merge semantics, then compare the \texttt{f32} implementation
+against that exact target with an explicit rounding-error bound.
+
+\end{document}
