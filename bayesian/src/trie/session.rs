@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use crate::safe_float::{Float, into_f32};
+use crate::symbol::Symbol;
 use crate::trie::core::{XBayes, RecalcType, RecalcResult};
-use crate::trie::l_update::LUpdate;
+use crate::trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
 use crate::trie::prediction::XPrediction;
 use crate::rolling_hash as rh;
 use crate::trie::TokenLexIndex;
@@ -34,20 +35,29 @@ impl BayesianSession {
         #[derive(Deserialize)]
         struct NHash {
             // by default, serde will ignore extra fields
-            l: f32,
+            #[serde(alias = "l")]
+            likelihood: f32,
+            /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `^`).
+            #[serde(default)]
+            symbol: Option<Symbol>,
         }
         let l_by_string =
             serde_json::from_str::<HashMap<String, NHash>>(&likelihood_json).unwrap();
-        let l_by_hash = l_by_string.iter()
-            .map(|(s, nhash)| (rh::hash_string(&s), Float::from(nhash.l)))
-            .collect::<rh::RHashMap<Float>>();
-        let mut new_l_update = LUpdate {
-            likelihoods: l_by_hash,
-            cpc_form: false,
-        };
-        new_l_update.to_cpc_form();
+        let mut new_l_update = l_by_string.iter()
+            .map(|(s, nhash)| (rh::hash_string(&s), 
+                XLUpdateEntry {
+                    likelihood: Float::from(nhash.likelihood),
+                    symbol: nhash.symbol.unwrap_or_else(|| {
+                        let b = *s.as_bytes().last().unwrap();
+                        Symbol::from_byte(b).unwrap()
+                    }),
+                    is_leaf: false,
+                }))
+            .collect::<XLUpdate>();
+        set_leaf_indicators(&mut new_l_update);
         //
-        self.trie.pending_likelihood = self.trie.pending_likelihood.merge(&new_l_update);
+        self.trie.pending_likelihood =
+            merge_xl_pair(&self.trie.pending_likelihood, &new_l_update);
     }
 
     #[cfg(feature = "tokentrie")]
@@ -102,7 +112,7 @@ impl BayesianSession {
 
     pub fn expand_to_threshold(&mut self) -> String {
         if !self.trie.pending_prior.deref().is_empty()
-            || !self.trie.pending_likelihood.deref().is_empty()
+            || !self.trie.pending_likelihood.is_empty()
         {
             self.apply_updates();
         }
@@ -119,14 +129,16 @@ impl BayesianSession {
         struct NString {
             string: String,
             z: Float,
+            symbol: Symbol,
         }
         let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
         for n_hash in nodes_list {
             let node = self.trie.nodes.get(&n_hash).unwrap();
+            let symbol = node.symbol;
             let n = if n_hash == super::ROOT_HASH {
                 let s = super::ROOT_STRING.to_string();
                 let z = node.if_root_then_z;
-                NString { string: s, z }
+                NString { string: s, z, symbol }
             } else {
                 let p_hash = rh::pop_right(n_hash, node.symbol.to_byte());
                 // p_hash is guaranteed to be in the snapshot_by_hash
@@ -135,7 +147,7 @@ impl BayesianSession {
                 let p_node = self.trie.nodes.get(&p_hash).unwrap();
                 let s = p_string + &(node.symbol.to_byte() as char).to_string();
                 let z = p_node.c_z[node.symbol.to_slot()];
-                NString { string: s, z }
+                NString { string: s, z, symbol }
             };
             snapshot_by_hash.insert(n_hash, n);
         }
@@ -143,10 +155,16 @@ impl BayesianSession {
         #[derive(Serialize)]
         struct NHash {
             z: f32,
+            symbol: Symbol,
             hash: rh::Hash,
         }
         let snapshot_by_string = snapshot_by_hash.into_iter()
-            .map(|(hash, n_string)| (n_string.string, NHash { z: into_f32(n_string.z), hash }))
+            .map(|(hash, n_string)| (n_string.string,
+                NHash {
+                    z: into_f32(n_string.z),
+                    symbol: n_string.symbol,
+                    hash
+                }))
             .collect::<HashMap<String, NHash>>();
         let snapshot_json = serde_json::to_string(&snapshot_by_string).unwrap();
         snapshot_json

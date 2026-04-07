@@ -53,7 +53,7 @@ impl XBayes {
             };
             accumed_l += cur_node.c_cond_l[symbol.to_slot()];
             cur_hash = rh::append_right(cur_hash, symbol.to_byte());
-            hit_clf = hit_clf || self.cum_likelihood.deref().contains_key(&cur_hash);
+            hit_clf = hit_clf || self.cum_likelihood.contains_key(&cur_hash);
         }
         (accumed_l, hit_clf)
     }
@@ -199,7 +199,7 @@ impl XBayes {
                 if !self.tokenizer.proper_prefix_hashset.contains(&child_suffix_hash) {
                     continue;
                 }
-                let child_is_clf = self.cum_likelihood.deref().contains_key(&child_full_hash);
+                let child_is_clf = self.cum_likelihood.contains_key(&child_full_hash);
                 if child_is_clf {
                     let range = self.tokenizer.token_lex_range_for_prefix_hash(&child_suffix_hash);
                     let subslice = &mut tl_array[range.0..range.1];

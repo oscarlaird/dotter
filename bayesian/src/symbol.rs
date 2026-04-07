@@ -1,4 +1,7 @@
-use serde::{Deserialize, Serialize};
+use std::fmt;
+
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Number of symbols in the fixed trie alphabet.
 pub const RADIX: usize = 27;
@@ -8,7 +11,7 @@ pub type RadixBitmap = u32;
 /// Default trie alphabet: `a`–`z`, `_` (word boundary), `^` (slot order matches this slice).
 pub const DEFAULT_ALPHABET: [u8; N_SYMBOLS] = *b"abcdefghijklmnopqrstuvwxyz_^";
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(u8)]
 pub enum Symbol {
     A = 0,
@@ -256,5 +259,43 @@ impl Symbol {
 
     pub fn string_to_vec(text: &str) -> Vec<Self> {
         text.bytes().filter_map(Self::from_byte).collect()
+    }
+}
+
+/// JSON / serde: one character per [`Symbol`], matching [`Self::to_byte`] (`a`–`z`, `_`, `^`).
+impl Serialize for Symbol {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_char((*self).to_byte() as char)
+    }
+}
+
+struct SymbolStrVisitor;
+
+impl<'de> Visitor<'de> for SymbolStrVisitor {
+    type Value = Symbol;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a single-character trie alphabet symbol (a-z, _, ^)")
+    }
+
+    fn visit_str<E: de::Error>(self, s: &str) -> Result<Symbol, E> {
+        let mut it = s.chars();
+        let c = it
+            .next()
+            .ok_or_else(|| E::custom("empty symbol string"))?;
+        if it.next().is_some() {
+            return Err(E::custom("symbol string must be exactly one character"));
+        }
+        let code = u32::from(c);
+        if code > 127 {
+            return Err(E::custom("non-ASCII symbol"));
+        }
+        Symbol::from_byte(code as u8).ok_or_else(|| E::custom("invalid trie symbol byte"))
+    }
+}
+
+impl<'de> Deserialize<'de> for Symbol {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(SymbolStrVisitor)
     }
 }

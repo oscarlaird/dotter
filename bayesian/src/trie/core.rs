@@ -15,7 +15,7 @@ mod y_walker;
 use super::{
     MAX_TOKEN_LENGTH, ROOT_HASH, logaddexp,
 };
-use super::l_update::LUpdate;
+use super::l_update::{merge_xl_pair, new_xlupdate, XLUpdate};
 use super::p_update::PUpdate;
 #[cfg(feature = "tokentrie")]
 use super::tokentrie::{QueueItem};
@@ -53,8 +53,8 @@ pub(crate) struct XBayes {
     pub(crate) full_predictions: rh::RHashMap<XPrediction>,
     zero_order_predictions: Box<[Option<XPrediction>]>,
     root_zero_order_prediction: XPrediction,
-    pub(crate) pending_likelihood: LUpdate,
-    pub(crate) cum_likelihood: LUpdate,
+    pub(crate) pending_likelihood: XLUpdate,
+    pub(crate) cum_likelihood: XLUpdate,
     pub(crate) pending_prior: PUpdate,
     unread_predictions: PUpdate,
     pub(crate) tokenizer: TinyLlamaWordTokenizer,
@@ -96,15 +96,16 @@ impl XBayes {
         );
         XBayes::ensure_node(&mut nodes, &zero_order_predictions, &root_zero_order_prediction, &tokenizer, &YWalker::root(ROOT_HASH));
         //
+        //
         Self {
             nodes,
             full_predictions,
             zero_order_predictions,
             root_zero_order_prediction,
-            pending_likelihood: LUpdate::new(),
-            cum_likelihood: LUpdate::new(),
-            pending_prior: PUpdate::new(),
-            unread_predictions: PUpdate::new(),
+            pending_likelihood: new_xlupdate(),
+            cum_likelihood: new_xlupdate(),
+            pending_prior: PUpdate::default(),
+            unread_predictions: PUpdate::default(),
             tokenizer: tokenizer,
             #[cfg(feature = "tokentrie")]
             queue: Self::root_queue(),
@@ -138,7 +139,7 @@ impl XBayes {
         #[cfg(feature = "tokentrie")]
         {
             if matches!(recalc_type, RecalcType::Update)
-                && !self.pending_likelihood.deref().is_empty()
+                && !self.pending_likelihood.is_empty()
             {
                 self.reset_queue();
             }
@@ -146,45 +147,42 @@ impl XBayes {
         match recalc_type {
             RecalcType::Update => {},
             RecalcType::Expand { .. } => {
-                assert!(self.pending_prior.deref().is_empty());
-                assert!(self.pending_likelihood.deref().is_empty());
+                assert!(self.pending_prior.is_empty());
+                assert!(self.pending_likelihood.is_empty());
             }
         }
-        let p_update = self.pending_prior.deref_mut();
-        self.cum_likelihood = self.cum_likelihood.merge(&self.pending_likelihood);
-        // mark all the nodes, for which there is a prior update ahead of us, but behind the clf
-        // this indicator set is valid for nodes inside the clf, 
-        // but may contain meaningless entries beyond the clf
-        let p_update_proper_ancestors = {
-            // remove predictions beyond the trie
-            // p_update.retain(|hash| self.nodes.contains_key(hash));  // don't do this because the trie is theoretically infinite; what matters is our relation to the clf
-            // TODO: we want to think about allowing the clf to be beyond the trie
+        self.cum_likelihood = merge_xl_pair(&self.cum_likelihood, &self.pending_likelihood);
+        // mark all the nodes, for which there is a prior update at or ahead of us, but strictly behind the clf
+        let prior_update_ancestors = {
             let mut res = rh::RHashSet::default();
-            let mut frames: Vec<Hash> = p_update
-                .iter().cloned().collect::<Vec<_>>();
+            let mut frames: Vec<Hash> = self.pending_prior
+                .iter()
+                .filter_map(|&hash| {
+                    let is_interior_of_clf = self.cum_likelihood.get(&hash).map(|entry| !entry.is_leaf).unwrap_or(false);
+                    if is_interior_of_clf { Some(hash) } else { None }
+                })
+                .collect::<Vec<_>>();
             while let Some(hash) = frames.pop() {
                 if res.contains(&hash) { continue; }
-                if !self.nodes.contains_key(&hash) { continue; } // ignore predictions beyond the trie
-                if self.cum_likelihood.deref().contains_key(&hash) { continue; } // ignore predictions beyond the clf
                 res.insert(hash);
                 if hash == ROOT_HASH { continue; }
-                let symbol = self.nodes.get(&hash).unwrap().symbol;
+                let symbol = self.cum_likelihood.get(&hash).unwrap().symbol;
                 let parent_hash = rh::pop_right(hash, symbol.to_byte());
                 frames.push(parent_hash);
             }
             res
         };
-        self.unread_predictions.deref_mut().extend(p_update.drain());
+        self.unread_predictions.extend(self.pending_prior.drain());
         let nodes = &mut self.nodes;
         let full_predictions = &self.full_predictions;
         let zero_order_predictions = &mut self.zero_order_predictions;
         let root_zero_order_prediction = &self.root_zero_order_prediction;
-        let l_update = self.pending_likelihood.deref_mut();
+        let pending_likelihood = &mut self.pending_likelihood;
         let cum_likelihood = &self.cum_likelihood;
-        let unread_predictions = self.unread_predictions.deref_mut();
+        let unread_predictions = &mut self.unread_predictions;
         let tokenizer = &self.tokenizer;
         //
-        let root_const_likelihood = cum_likelihood.deref().contains_key(&ROOT_HASH) || cum_likelihood.deref().is_empty();
+        let root_const_likelihood = cum_likelihood.len() == 1;
         if root_const_likelihood && matches!(recalc_type, RecalcType::Update) {
             return RecalcResult::Updated;
         }
@@ -193,8 +191,8 @@ impl XBayes {
             symbol: Symbol,
             depth: u16,
             target_hash: Hash,
-            n_hit_l_update: bool,  // (inclusive of n)
-            n_hit_p_update: bool,  // (inclusive of n)
+            n_hit_l_update_edge: bool,  // (inclusive of n)
+            n_hit_prior_update: bool,  // (inclusive of n)
             n_a_pred_changed: AncestorsBitmap,
             n_a_tp_changed: AncestorsBitmap,
             n_accumed_l: Float, // (inclusive of n)
@@ -212,8 +210,8 @@ impl XBayes {
             symbol: Symbol::Start,
             depth: 0,
             target_hash: ROOT_HASH,
-            n_hit_l_update: l_update.is_empty(),
-            n_hit_p_update: root_pred_changed,
+            n_hit_l_update_edge: pending_likelihood.get(&ROOT_HASH).unwrap().is_leaf,
+            n_hit_prior_update: root_pred_changed,
             n_a_pred_changed: if root_pred_changed { 1u16 } else { 0u16 },
             n_a_tp_changed: 0,
             n_accumed_l: ZERO, // WLOG we don't allow the root to have cond_l
@@ -228,8 +226,8 @@ impl XBayes {
             symbol,
             depth,
             target_hash,  // TODO: this can be removed since for now it is just for verification
-            n_hit_l_update,
-            n_hit_p_update,
+            n_hit_l_update_edge,
+            n_hit_prior_update,
             n_a_pred_changed,
             n_a_tp_changed,
             n_accumed_l,
@@ -258,22 +256,19 @@ impl XBayes {
                 Self::ensure_node(nodes, zero_order_predictions, root_zero_order_prediction, tokenizer, &n_walker);
             }
             if iters < 1000 { iters += 1; } else { panic!("apply_updates: too many iterations"); }
-            if iters > 500 { 
-                println!("iters: {}", iters);
-            }
             let node = nodes.get_mut(&n_hash).unwrap();
             for slot in 0..RADIX {
                 let child_symbol = Symbol::from_slot(slot);
                 let child_byte = Symbol::slot_to_byte(slot);
                 let child_hash = rh::append_right(n_hash, child_byte);
                 // apply likelihood update
-                let mut c_hit_l_update = n_hit_l_update;
-                if let Some(l) = l_update.remove(&child_hash) {
-                    node.c_cond_l[slot] += l;
-                    c_hit_l_update = true;
+                let mut c_hit_l_update_edge = n_hit_l_update_edge;
+                if let Some(entry) = pending_likelihood.remove(&child_hash) {
+                    node.c_cond_l[slot] += entry.likelihood;
+                    c_hit_l_update_edge = true;
                 } 
                 // apply prior update
-                let mut c_hit_p_update = n_hit_p_update;
+                let mut c_hit_p_update = n_hit_prior_update;
                 if unread_predictions.remove(&child_hash) {
                     node.c_a_pred_changed[slot] |= 1; // walker will see this when it leaves this node
                     c_hit_p_update = true;
@@ -283,10 +278,10 @@ impl XBayes {
                     c_hit_p_update = false; // hit_p_update is cleansed by space
                 }
                 // determine mtcdl validity
-                let valid_mtcdl = c_hit_l_update; // TODO: how does not pushing likelihood affect mtcdl?
+                let valid_mtcdl = c_hit_l_update_edge; // TODO: how does not pushing likelihood affect mtcdl?
                 // determine children's validity
                 // - valid = const_likelihood || no_reweighting
-                let const_likelihood = cum_likelihood.deref().contains_key(&child_hash);
+                let const_likelihood = cum_likelihood.contains_key(&child_hash);
                 // TODO: writing this code made me realize we need to add a subtlety
                 // to the .tex file
                 // For no-reweighting, 
@@ -296,8 +291,8 @@ impl XBayes {
                 // - if there is a prior update ahead of us, and after the cum likelihood frontier, we don't care
                 //   - (if there is a prior update beyond the trie, this is beyond the clf and so we don't care) WRONG!: the trie is infinite, the clf is all that matters
                 let no_reweighting =
-                    n_hit_l_update  // this update hasn't rebalanced l beyond here
-                    && !p_update_proper_ancestors.contains(&child_hash) // and no p_updates are ahead of us which are behind the clf
+                    n_hit_l_update_edge  // this update hasn't rebalanced l beyond here
+                    && !prior_update_ancestors.contains(&child_hash) // and no p_updates are ahead of us which are behind the clf
                     && !c_hit_p_update; // no p_updates behind (or else cleansed by space) // TODO: consider a better heuristic than space
                 let valid_z = const_likelihood || no_reweighting;
                 // recalculate prior
@@ -412,8 +407,8 @@ impl XBayes {
                         symbol: child_symbol,
                         depth: depth + 1,
                         target_hash: child_hash,
-                        n_hit_l_update: c_hit_l_update,
-                        n_hit_p_update: c_hit_p_update,
+                        n_hit_l_update_edge: c_hit_l_update_edge,
+                        n_hit_prior_update: c_hit_p_update,
                         n_a_pred_changed: node.c_a_pred_changed[slot],
                         n_a_tp_changed: node.c_a_tp_changed[slot],
                         n_accumed_l: accumed_l_new,
@@ -428,7 +423,7 @@ impl XBayes {
                 }
             }
         }
-        assert!(self.pending_likelihood.deref().is_empty()); // ensure we consumed all likelihood updates
+        assert!(self.pending_likelihood.is_empty()); // ensure we consumed all likelihood updates
         // up-prop z 
         while let Some(n_hash) = invalid_z_hashes.pop() {
             // we are proceeding in reverse-topological order
