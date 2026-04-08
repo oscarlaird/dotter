@@ -36,6 +36,15 @@ export class BayesianSession {
         }
     }
     /**
+     * @returns {number}
+     */
+    expansion_threshold() {
+        if (this.__wbg_ptr == 0) throw new Error('Attempt to use a moved value');
+        _assertNum(this.__wbg_ptr);
+        const ret = wasm.bayesiansession_expansion_threshold(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * @returns {string}
      */
     lexicographic_tokens_json() {

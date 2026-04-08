@@ -26,7 +26,3 @@ web-sys = { version = "0.3", optional = true, features = ["console"] }
 [[bin]]
 name = "bayesian"
 path = "src/main.rs"
-
-[[bin]]
-name = "hybrid_spine_bench"
-path = "src/bin/hybrid_spine_bench.rs"

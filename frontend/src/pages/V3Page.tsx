@@ -47,9 +47,17 @@ function randomTimersForSnapshot(
 	model: LikelihoodModel,
 	existingTimers: VisibleNodeTimerMap,
 	resetAll: boolean,
+	expansionThreshold: number,
 ): VisibleNodeTimerMap {
 	const nextTimers: VisibleNodeTimerMap = {};
+	const rootZ = snapshot['^']?.z;
 	for (const fullString of Object.keys(snapshot)) {
+		if (
+			rootZ === undefined ||
+			snapshot[fullString].z - rootZ <= expansionThreshold
+		) {
+			continue;
+		}
 		if (!resetAll && existingTimers[fullString]) {
 			nextTimers[fullString] = existingTimers[fullString];
 			continue;
@@ -116,8 +124,12 @@ function V3Page() {
 	const sessionOpInFlightRef = useRef(false);
 	const sessionTrappedRef = useRef(false);
 	const sessionTrapMessageRef = useRef<string | null>(null);
+	const expansionThresholdRef = useRef<number>(Number.NEGATIVE_INFINITY);
 	const [colorMode, setColorMode] = useState<'light' | 'dark'>(readStoredColorMode);
 	const [showBoxes, setShowBoxes] = useState(true);
+	const [showDebugStats, setShowDebugStats] = useState(false);
+	const [showAll, setShowAll] = useState(false);
+	const [expansionThreshold, setExpansionThreshold] = useState<number>(Number.NEGATIVE_INFINITY);
 
 	useEffect(() => {
 		try {
@@ -139,6 +151,7 @@ function V3Page() {
 				likelihoodModelRef.current,
 				currentTimers,
 				resetAllTimers,
+				expansionThresholdRef.current,
 			),
 		);
 	}, []);
@@ -212,6 +225,9 @@ function V3Page() {
 			if (sessionTrappedRef.current || !sessionRef.current) {
 				try {
 					sessionRef.current = new BayesianSession();
+					const threshold = sessionRef.current.expansion_threshold();
+					expansionThresholdRef.current = threshold;
+					setExpansionThreshold(threshold);
 					sessionTrappedRef.current = false;
 					sessionTrapMessageRef.current = null;
 				} catch (err) {
@@ -266,9 +282,16 @@ function V3Page() {
 							if (!sessionRef.current) {
 								try {
 									sessionRef.current = new BayesianSession();
+									const threshold = sessionRef.current.expansion_threshold();
+									expansionThresholdRef.current = threshold;
+									setExpansionThreshold(threshold);
 								} catch (err) {
 									throw new Error(formatStepError('BayesianSession constructor failed', err));
 								}
+							} else {
+								const threshold = sessionRef.current.expansion_threshold();
+								expansionThresholdRef.current = threshold;
+								setExpansionThreshold(threshold);
 							}
 							try {
 								await refreshSnapshot(true);
@@ -443,9 +466,8 @@ function V3Page() {
 						? event.timeStamp / 1000
 						: performance.now() / 1000;
 				const likelihoodPayload: Record<string, { l: number }> = {};
-				for (const fullString of Object.keys(snapshot)) {
-					const timer = timers[fullString];
-					if (!timer) {
+				for (const [fullString, timer] of Object.entries(timers)) {
+					if (!(fullString in snapshot)) {
 						continue;
 					}
 					likelihoodPayload[fullString] = {
@@ -529,6 +551,24 @@ function V3Page() {
 							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
 								<input
 									type="checkbox"
+									checked={showAll}
+									onChange={(e) => setShowAll(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
+								/>
+								Show all
+							</label>
+							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
+								<input
+									type="checkbox"
+									checked={showDebugStats}
+									onChange={(e) => setShowDebugStats(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
+								/>
+								Debug
+							</label>
+							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
+								<input
+									type="checkbox"
 									checked={showBoxes}
 									onChange={(e) => setShowBoxes(e.target.checked)}
 									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
@@ -583,8 +623,11 @@ function V3Page() {
 								snapshot={snapshot}
 								timers={timers}
 								period={likelihoodModel.period}
+								expansionThreshold={expansionThreshold}
+								showAll={showAll}
 								lightBackground={colorMode === 'light'}
 								showBoxes={showBoxes}
+								showDebugStats={showDebugStats}
 							/>
 						) : !error ? (
 							<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-slate-500 dark:text-gray-400">

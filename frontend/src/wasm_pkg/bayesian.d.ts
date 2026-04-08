@@ -6,6 +6,7 @@ export class BayesianSession {
     [Symbol.dispose](): void;
     apply_updates(): void;
     expand_to_threshold(): string;
+    expansion_threshold(): number;
     lexicographic_tokens_json(): string;
     constructor();
     next_requested_prior(): string;
@@ -34,6 +35,7 @@ export interface InitOutput {
     readonly __wbg_bayesiansession_free: (a: number, b: number) => void;
     readonly bayesiansession_apply_updates: (a: number) => void;
     readonly bayesiansession_expand_to_threshold: (a: number) => [number, number];
+    readonly bayesiansession_expansion_threshold: (a: number) => number;
     readonly bayesiansession_lexicographic_tokens_json: (a: number) => [number, number];
     readonly bayesiansession_new: () => number;
     readonly bayesiansession_next_requested_prior: (a: number) => [number, number];

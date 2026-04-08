@@ -208,99 +208,6 @@ fn probe_z_to_zz_canonical_follow() {
 }
 
 #[test]
-fn probe_zzz_tokenization() {
-    let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
-        crate::bpe::TOKENIZER_JSON_STR,
-    );
-    let pieces = tok.tokenize_string_with_lex_indices("zzz");
-    println!("zzz tokenization: {:?}", pieces);
-}
-
-#[test]
-fn probe_zz_to_z_canonical_follow() {
-    let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
-        crate::bpe::TOKENIZER_JSON_STR,
-    );
-    let z = tok.lex_index("z").unwrap();
-    let zz = tok.lex_index("zz").unwrap();
-    println!("zz -> z canonical: {}", tok.canonical_followers("zz")[z.as_usize()]);
-    println!("can_canonically_follow(\"zz\", \"z\"): {}", tok.can_canonically_follow("zz", "z"));
-    println!("zz lex index: {:?}", zz);
-    println!("z lex index: {:?}", z);
-}
-
-#[test]
-fn probe_z_to_zz_can_canonically_follow() {
-    let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
-        crate::bpe::TOKENIZER_JSON_STR,
-    );
-    println!("can_canonically_follow(\"z\", \"zz\"): {}", tok.can_canonically_follow("z", "zz"));
-}
-
-#[test]
-fn probe_zz_right_spine() {
-    let merges = crate::bpe::BpeMerges::from_tokenizer_json_str(crate::bpe::TOKENIZER_JSON_STR);
-    let right = merges.right_spine("zz").unwrap();
-    let z_right = merges.right_spine("z").unwrap();
-    println!("right_spine(\"zz\"): {:?}", right);
-    println!("right_spine(\"z\"): {:?}", z_right);
-}
-
-#[test]
-fn probe_repeated_letter_triples_canonical_direction() {
-    let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
-        crate::bpe::TOKENIZER_JSON_STR,
-    );
-    for byte in b'a'..=b'z' {
-        let c = (byte as char).to_string();
-        let aa = format!("{c}{c}");
-        let aaa = format!("{c}{c}{c}");
-        if tok.lex_index(&aa).is_none() {
-            println!("{aaa}: aa missing");
-            continue;
-        }
-        let aa_then_a = tok.can_canonically_follow(&aa, &c);
-        let a_then_aa = tok.can_canonically_follow(&c, &aa);
-        let classification = match (aa_then_a, a_then_aa) {
-            (true, false) => "aa->a",
-            (false, true) => "a->aa",
-            (false, false) => "neither",
-            (true, true) => "both",
-        };
-        println!("{aaa}: {classification}");
-    }
-}
-
-#[test]
-fn probe_repeated_letter_triples_table() {
-    let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
-        crate::bpe::TOKENIZER_JSON_STR,
-    );
-    println!("letter,a is token,aa is token,aaa is token,a->aa canonical (prepared),aa->a canonical (prepared)");
-    for byte in b'a'..=b'z' {
-        let c = (byte as char).to_string();
-        let aa = format!("{c}{c}");
-        let aaa = format!("{c}{c}{c}");
-        let a_is_token = tok.lex_index(&c).is_some();
-        let aa_is_token = tok.lex_index(&aa).is_some();
-        let aaa_is_token = tok.lex_index(&aaa).is_some();
-        let a_to_aa = if a_is_token && aa_is_token {
-            let aa_ix = tok.lex_index(&aa).unwrap();
-            tok.canonical_followers(&c)[aa_ix.as_usize()]
-        } else {
-            false
-        };
-        let aa_to_a = if a_is_token && aa_is_token {
-            let a_ix = tok.lex_index(&c).unwrap();
-            tok.canonical_followers(&aa)[a_ix.as_usize()]
-        } else {
-            false
-        };
-        println!("{c},{a_is_token},{aa_is_token},{aaa_is_token},{a_to_aa},{aa_to_a}");
-    }
-}
-
-#[test]
 #[ignore = "repro for repeated local likelihood-only apply_updates panic"]
 fn repro_repeated_local_likelihood_updates() {
     let mut session = crate::BayesianSession::new();
@@ -397,13 +304,13 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
 }
 
 /// One root prior from `testdata/root_lm_prior.json` (no likelihood); then what `z` does
-/// `expand_to_threshold` associate with `^_` and `^__`? Same numbers as `parent.c_z[slot]`
-/// on the root / `^_` node for the `Space` child (`session.rs` snapshot rule).
+/// `expand_to_threshold` associate with `^_` and `^_a`? Same numbers as `parent.c_z[slot]`
+/// on the root / `^_` node for the `Space` / `A` child (`session.rs` snapshot rule).
 ///
 /// Regenerate the fixture with `backend/export_root_prior_for_tests.py` if needed.
 #[cfg(not(feature = "wasm"))]
 #[test]
-fn trie_explore_z_under_after_root_lm_prior_fixture() {
+fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
     use crate::rolling_hash as rh;
     use crate::safe_float::into_f32;
     use crate::symbol::Symbol;
@@ -427,7 +334,7 @@ fn trie_explore_z_under_after_root_lm_prior_fixture() {
         serde_json::from_str(&snapshot_json).unwrap();
 
     let h_under = rh::append_right(ROOT_HASH, Symbol::Space.to_byte());
-    let h_under_under = rh::append_right(h_under, Symbol::Space.to_byte());
+    let h_under_a = rh::append_right(h_under, Symbol::A.to_byte());
     let root = session.trie.nodes.get(&ROOT_HASH).unwrap();
     let under = session.trie.nodes.get(&h_under).unwrap();
 
@@ -438,12 +345,12 @@ fn trie_explore_z_under_after_root_lm_prior_fixture() {
     );
     println!(
         "{}",
-        crate::trie::core::debug::format_node_slot_dump(under, "^_", Symbol::Space)
+        crate::trie::core::debug::format_node_slot_dump(under, "^_", Symbol::A)
     );
 
     for (path, parent_hash, slot) in [
         ("^_", ROOT_HASH, Symbol::Space.to_slot()),
-        ("^__", h_under, Symbol::Space.to_slot()),
+        ("^_a", h_under, Symbol::A.to_slot()),
     ] {
         let entry = snapshot
             .get(path)
@@ -451,7 +358,7 @@ fn trie_explore_z_under_after_root_lm_prior_fixture() {
         let expect_hash = if path == "^_" {
             h_under
         } else {
-            h_under_under
+            h_under_a
         };
         if entry.hash != expect_hash {
             panic!(
@@ -473,8 +380,8 @@ fn trie_explore_z_under_after_root_lm_prior_fixture() {
     }
 
     println!(
-        "^__ node present in trie: {}",
-        session.trie.nodes.contains_key(&h_under_under)
+        "^_a node present in trie: {}",
+        session.trie.nodes.contains_key(&h_under_a)
     );
 }
 

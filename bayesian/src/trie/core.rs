@@ -70,6 +70,13 @@ pub(crate) struct XBayes {
 type ContextWindowSize = u8;
 type AncestorsBitmap = u16;
 
+impl XNode {
+    pub(crate) fn edge_snapshot_fields(&self, symbol: Symbol) -> (Float, Float, Float, Float) {
+        let slot = symbol.to_slot();
+        (self.c_z[slot], self.c_p[slot], self.c_tp[slot], self.c_tp0[slot])
+    }
+}
+
 pub(crate) enum RecalcType {
     Update,
     Expand { threshold: Float },
