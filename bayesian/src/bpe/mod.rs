@@ -16,10 +16,8 @@ pub mod prepared_allpairs;
 mod tokenizer_config;
 mod word_tokenizer;
 
-pub use self::tokenizer_config::{
-    NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_PATH, TOKENIZER_JSON_STR,
-};
-pub use self::word_tokenizer::{TinyLlamaPreparedFirstAllPairs, TinyLlamaWordTokenizer};
+pub use self::tokenizer_config::{NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_STR};
+pub use self::word_tokenizer::TinyLlamaWordTokenizer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -28,7 +26,7 @@ pub struct TokenLexIndex(u16);
 impl TokenLexIndex {
     pub const INVALID: Self = Self(u16::MAX);
 
-    pub const fn from_u16(raw: u16) -> Self {
+    pub(crate) const fn from_u16(raw: u16) -> Self {
         Self(raw)
     }
 
@@ -46,7 +44,7 @@ impl TokenLexIndex {
 pub struct PrefixLexIndex(u16);
 
 impl PrefixLexIndex {
-    pub const fn from_u16(raw: u16) -> Self {
+    pub(crate) const fn from_u16(raw: u16) -> Self {
         Self(raw)
     }
 
@@ -60,13 +58,13 @@ impl PrefixLexIndex {
 }
 
 /// Hugging Face / SentencePiece surface form in `tokenizer.json` only (not used after load).
-pub const HF_SPACE_MARKER: char = '\u{2581}';
+pub(crate) const HF_SPACE_MARKER: char = '\u{2581}';
 
 /// Word-boundary / “space” marker in all internally stored BPE strings (`lex_tokens`, merges, etc.).
-pub const SPACESYMBOL: char = '_';
+pub(crate) const SPACESYMBOL: char = '_';
 
 /// Map `tokenizer.json` token strings to internal form: every `HF_SPACE_MARKER` → `SPACESYMBOL`.
-pub fn hf_token_to_internal(s: &str) -> String {
+pub(crate) fn hf_token_to_internal(s: &str) -> String {
     if !s.contains(HF_SPACE_MARKER) {
         return s.to_string();
     }
@@ -82,11 +80,11 @@ pub fn hf_token_to_internal(s: &str) -> String {
 }
 
 type PieceId = u32;
-pub const MAX_PACKED_SPINE_LEN: usize = 8;
+pub(crate) const MAX_PACKED_SPINE_LEN: usize = 8;
 const NO_PACKED_SPINE_INDEX: u16 = u16::MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpineEntry {
+pub(crate) struct SpineEntry {
     pub id: u16,
     /// Encodes the rank of the merge that produces the next spine node.
     /// A value of `0` means there is no next merge on this spine.
@@ -121,7 +119,7 @@ impl SpineEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PackedSpine {
+pub(crate) struct PackedSpine {
     len: u8,
     entries: [SpineEntry; MAX_PACKED_SPINE_LEN],
 }
@@ -149,7 +147,7 @@ impl PackedSpine {
         Some(packed)
     }
 
-    pub fn as_slice(&self) -> &[SpineEntry] {
+    pub(crate) fn as_slice(&self) -> &[SpineEntry] {
         &self.entries[..self.len as usize]
     }
 
@@ -159,7 +157,7 @@ impl PackedSpine {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MergeEntry {
+pub(crate) struct MergeEntry {
     pub left: u32,
     pub right: u32,
     pub merged: u32,
@@ -174,7 +172,7 @@ impl MergeEntry {
 
 /// Interned BPE pieces plus an ID-based merge table.
 #[derive(Debug, Clone)]
-pub struct BpeMerges {
+pub(crate) struct BpeMerges {
     piece_to_id: HashMap<String, PieceId>,
     pieces: Vec<String>,
     merges: HashMap<(PieceId, PieceId), MergeEntry>,
@@ -204,7 +202,7 @@ struct DerivationNode {
 }
 
 #[derive(Debug)]
-pub enum BpeError {
+pub(crate) enum BpeError {
     Io(io::Error),
     Json(serde_json::Error),
     BadMergeLine { line_no: usize, line: String },
@@ -368,12 +366,12 @@ impl BpeMerges {
     /// Load BPE merge ranks from a Hugging Face `tokenizer.json` (`model.merges`).
     /// If `model.vocab` exists, its token strings are interned too so ID-based tokenization can
     /// stay in the interned representation longer.
-    pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
+    pub(crate) fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
         let text = fs::read_to_string(path.as_ref()).expect("failed to read tokenizer.json");
         Self::from_tokenizer_json_str(&text)
     }
 
-    pub fn from_tokenizer_json_str(content: &str) -> Self {
+    pub(crate) fn from_tokenizer_json_str(content: &str) -> Self {
         let v: serde_json::Value = serde_json::from_str(content).expect("invalid tokenizer.json");
         let model = v.get("model").expect("missing model object");
         let mut out = Self::new();
@@ -403,28 +401,28 @@ impl BpeMerges {
         out
     }
 
-    pub fn lookup_merge_by_pair(&self, left: u32, right: u32) -> Option<MergeEntry> {
+    pub(crate) fn lookup_merge_by_pair(&self, left: u32, right: u32) -> Option<MergeEntry> {
         self.merges.get(&(left, right)).copied()
     }
 
     /// Encode an interned BPE piece to its internal ID.
-    pub fn encode_piece(&self, piece: &str) -> Option<u32> {
+    pub(crate) fn encode_piece(&self, piece: &str) -> Option<u32> {
         self.piece_to_id.get(piece).copied()
     }
 
     /// Decode an internal BPE piece ID back to its surface form.
-    pub fn decode_piece(&self, id: u32) -> Option<&str> {
+    pub(crate) fn decode_piece(&self, id: u32) -> Option<&str> {
         self.pieces.get(id as usize).map(String::as_str)
     }
 
     /// Decode a slice of internal BPE piece IDs.
-    pub fn decode_piece_ids<'a>(&'a self, ids: &[u32]) -> Option<Vec<&'a str>> {
+    pub(crate) fn decode_piece_ids<'a>(&'a self, ids: &[u32]) -> Option<Vec<&'a str>> {
         ids.iter().map(|&id| self.decode_piece(id)).collect()
     }
 
     /// Apply BPE merges until no adjacent pair appears in the merge table.
     /// Starts from one symbol per Unicode scalar value (`char`).
-    pub fn tokenize(&self, text: &str) -> Vec<String> {
+    pub(crate) fn tokenize(&self, text: &str) -> Vec<String> {
         self.tokenize_piece_refs(text)
             .into_iter()
             .map(|piece| piece.text(&self.pieces).to_string())
@@ -433,7 +431,7 @@ impl BpeMerges {
 
     /// Like [`Self::tokenize`], but returns interned piece IDs when every leaf and merge result is
     /// known to the current merge graph. Returns `None` if tokenization would need an inline piece.
-    pub fn tokenize_ids(&self, text: &str) -> Option<Vec<u32>> {
+    pub(crate) fn tokenize_ids(&self, text: &str) -> Option<Vec<u32>> {
         self.tokenize_piece_refs(text)
             .into_iter()
             .map(|piece| match piece {
@@ -444,7 +442,7 @@ impl BpeMerges {
     }
 
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
-    pub fn canonical_pair(&self, a: &str, b: &str) -> bool {
+    pub(crate) fn canonical_pair(&self, a: &str, b: &str) -> bool {
         if let (Some(right_spine), Some(left_spine)) = (self.right_spine(a), self.left_spine(b)) {
             return self.canonical_pair_from_spines(&right_spine, &left_spine);
         }
@@ -463,7 +461,7 @@ impl BpeMerges {
     ///
     /// See `math/tex/chapters/bpe-spines.tex` for the corresponding proof sketch and algorithmic
     /// description.
-    pub fn canonical_pair_from_spines(
+    pub(crate) fn canonical_pair_from_spines(
         &self,
         right_spine: &[SpineEntry],
         left_spine: &[SpineEntry],
@@ -514,7 +512,7 @@ impl BpeMerges {
     ///
     /// For example, if `hell` is built as `(he, ll)` with `he = (h, e)`, this returns the IDs
     /// for `[h, he, hell]`, together with the merge rank that produces the next spine node.
-    pub fn left_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
+    pub(crate) fn left_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
         self.spine(token, true)
     }
 
@@ -522,7 +520,7 @@ impl BpeMerges {
     ///
     /// For example, if `hell` is built as `(he, ll)` with `ll = (l, l)`, this returns the IDs
     /// for `[l, ll, hell]`, together with the merge rank that produces the next spine node.
-    pub fn right_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
+    pub(crate) fn right_spine(&self, token: &str) -> Option<Vec<SpineEntry>> {
         self.spine(token, false)
     }
 
@@ -551,7 +549,7 @@ impl BpeMerges {
         Some(spine)
     }
 
-    pub fn canonical_pair_from_packed_spines(
+    pub(crate) fn canonical_pair_from_packed_spines(
         &self,
         right_spine: &PackedSpine,
         left_spine: &PackedSpine,
@@ -851,7 +849,9 @@ mod tests {
 
     #[test]
     fn tinyllama_encode_string_bundled_tokenizer() {
-        let tok = TinyLlamaWordTokenizer::from_tokenizer_json(Path::new(TOKENIZER_JSON_PATH));
+        let tok = TinyLlamaWordTokenizer::from_tokenizer_json(Path::new(
+            tokenizer_config::TOKENIZER_JSON_PATH,
+        ));
         let hello = tok.lex_index("_hello").expect("expected tokenizer token");
         let okay = tok.lex_index("_okay").expect("expected tokenizer token");
         let abc = tok.lex_index("_abc").expect("expected tokenizer token");

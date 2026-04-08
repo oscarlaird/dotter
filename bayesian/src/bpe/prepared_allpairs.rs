@@ -9,13 +9,13 @@ struct RowEntry {
 }
 
 #[derive(Debug, Clone)]
-pub struct MergeRows {
+pub(crate) struct MergeRows {
     rows: Vec<Vec<RowEntry>>,
     token_count: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct PreparedFirstAllPairs<const NUM_TOKENS: usize> {
+pub(crate) struct PreparedFirstAllPairs<const NUM_TOKENS: usize> {
     right_len: u8,
     right_piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
     dense_matrix: Vec<u16>,
@@ -23,22 +23,22 @@ pub struct PreparedFirstAllPairs<const NUM_TOKENS: usize> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct LeftSpineAllPairs {
+pub(crate) struct LeftSpineAllPairs {
     pub len: u8,
     pub ids: [u16; MAX_PACKED_SPINE_LEN],
     pub piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PreparedSecondToken {
+pub(crate) struct PreparedSecondToken {
     pub lex_index: usize,
     pub left_spine: LeftSpineAllPairs,
 }
 
-pub type PreparedSecondBuckets = [Vec<PreparedSecondToken>; MAX_PACKED_SPINE_LEN + 1];
+pub(crate) type PreparedSecondBuckets = [Vec<PreparedSecondToken>; MAX_PACKED_SPINE_LEN + 1];
 
 impl MergeRows {
-    pub fn from_bpe_merges(merges: &BpeMerges) -> Self {
+    pub(crate) fn from_bpe_merges(merges: &BpeMerges) -> Self {
         let token_count = merges.pieces.len();
         let mut rows = vec![Vec::<RowEntry>::new(); token_count];
         for entry in merges.merges.values() {
@@ -57,13 +57,13 @@ impl MergeRows {
         Self { rows, token_count }
     }
 
-    pub fn token_count(&self) -> usize {
+    pub(crate) fn token_count(&self) -> usize {
         self.token_count
     }
 }
 
 impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
-    pub fn new_reusable() -> Self {
+    pub(crate) fn new_reusable() -> Self {
         Self {
             right_len: 0,
             right_piece_formed_priority_score: [0u16; MAX_PACKED_SPINE_LEN + 1],
@@ -72,7 +72,7 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
         }
     }
 
-    pub fn rebuild_in_place(
+    pub(crate) fn rebuild_in_place(
         &mut self,
         first_token_right_spine: PackedSpine,
         merge_rows: &MergeRows,
@@ -125,19 +125,19 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
         self.right_len = right_len as u8;
     }
 
-    pub fn build(first_token_right_spine: PackedSpine, merge_rows: &MergeRows) -> Self {
+    pub(crate) fn build(first_token_right_spine: PackedSpine, merge_rows: &MergeRows) -> Self {
         let mut out = Self::new_reusable();
         out.rebuild_in_place(first_token_right_spine, merge_rows);
         out
     }
 
-    pub fn row_partner_bitmap(&self) -> &[u8] {
+    pub(crate) fn row_partner_bitmap(&self) -> &[u8] {
         &self.row_partner_bitmap
     }
 }
 
 impl LeftSpineAllPairs {
-    pub fn from_packed(packed: PackedSpine) -> Self {
+    pub(crate) fn from_packed(packed: PackedSpine) -> Self {
         let mut compact = Self {
             len: 0,
             ids: [0; MAX_PACKED_SPINE_LEN],
@@ -159,7 +159,7 @@ impl LeftSpineAllPairs {
     }
 }
 
-pub fn sort_prepared_second_tokens(entries: &mut [PreparedSecondToken]) {
+pub(crate) fn sort_prepared_second_tokens(entries: &mut [PreparedSecondToken]) {
     entries.sort_by(|a, b| {
         a.left_spine.ids[..a.left_spine.len as usize]
             .cmp(&b.left_spine.ids[..b.left_spine.len as usize])
@@ -167,7 +167,7 @@ pub fn sort_prepared_second_tokens(entries: &mut [PreparedSecondToken]) {
     });
 }
 
-pub fn bucket_prepared_second_tokens(entries: &[PreparedSecondToken]) -> PreparedSecondBuckets {
+pub(crate) fn bucket_prepared_second_tokens(entries: &[PreparedSecondToken]) -> PreparedSecondBuckets {
     let mut buckets: PreparedSecondBuckets = std::array::from_fn(|_| Vec::new());
     for &entry in entries {
         buckets[entry.left_spine.len as usize].push(entry);
@@ -176,7 +176,7 @@ pub fn bucket_prepared_second_tokens(entries: &[PreparedSecondToken]) -> Prepare
 }
 
 #[inline(always)]
-pub fn is_canonical_allpairs_small<
+pub(crate) fn is_canonical_allpairs_small<
     const NUM_TOKENS: usize,
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
@@ -254,7 +254,7 @@ pub fn is_canonical_allpairs_small<
     true
 }
 
-pub fn scan_allpairs_small_bucket<
+pub(crate) fn scan_allpairs_small_bucket<
     const NUM_TOKENS: usize,
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,

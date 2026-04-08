@@ -12,7 +12,7 @@ use super::{
 };
 use crate::rolling_hash as rh;
 
-pub type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
+pub(crate) type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
 
 fn token_prefixes(token: &str) -> Vec<&str> {
     let mut prefixes = Vec::with_capacity(token.chars().count() + 1);
@@ -93,7 +93,7 @@ impl TinyLlamaWordTokenizer {
         out
     }
 
-    pub fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
+    pub(crate) fn from_tokenizer_json(path: impl AsRef<Path>) -> Self {
         let text = fs::read_to_string(path.as_ref()).expect("failed to read tokenizer.json");
         Self::from_tokenizer_json_str(&text)
     }
@@ -326,16 +326,16 @@ impl TinyLlamaWordTokenizer {
         &self.lex_tokens
     }
 
-    pub fn prefix_count(&self) -> usize {
+    pub(crate) fn prefix_count(&self) -> usize {
         self.lex_prefixes.len()
     }
 
-    pub fn prefixes(&self) -> &[String] {
+    pub(crate) fn prefixes(&self) -> &[String] {
         &self.lex_prefixes
     }
 
     /// The lexicographic index of `token`, if it is present in the tokenizer vocabulary.
-    pub fn lex_index(&self, token: &str) -> Option<TokenLexIndex> {
+    pub(crate) fn lex_index(&self, token: &str) -> Option<TokenLexIndex> {
         let normalized = Self::normalize_surface_to_tokenizer(token);
         self.token_to_lex_index
             .get(normalized.as_str())
@@ -348,7 +348,7 @@ impl TinyLlamaWordTokenizer {
     /// slot is [`f64::NEG_INFINITY`].
     ///
     /// Panics if a token is not in the vocabulary, or if two pairs map to the same lex index.
-    pub fn follower_logits_from_token_logits<I, S>(&self, pairs: I) -> Box<[f64]>
+    pub(crate) fn follower_logits_from_token_logits<I, S>(&self, pairs: I) -> Box<[f64]>
     where
         I: IntoIterator<Item = (S, f64)>,
         S: AsRef<str>,
@@ -370,7 +370,7 @@ impl TinyLlamaWordTokenizer {
         v.into_boxed_slice()
     }
 
-    pub fn prefix_lex_index(&self, prefix: &str) -> Option<PrefixLexIndex> {
+    pub(crate) fn prefix_lex_index(&self, prefix: &str) -> Option<PrefixLexIndex> {
         let normalized = Self::normalize_surface_to_tokenizer(prefix);
         self.prefix_to_lex_index
             .get(normalized.as_str())
@@ -386,18 +386,18 @@ impl TinyLlamaWordTokenizer {
             .expect("lex index out of range")
     }
 
-    pub fn prefix_at(&self, lex_index: PrefixLexIndex) -> &str {
+    pub(crate) fn prefix_at(&self, lex_index: PrefixLexIndex) -> &str {
         self.lex_prefixes
             .get(lex_index.as_usize())
             .map(String::as_str)
             .expect("prefix lex index out of range")
     }
 
-    pub fn prefix_token_starts(&self) -> &[usize] {
+    pub(crate) fn prefix_token_starts(&self) -> &[usize] {
         &self.prefix_token_starts
     }
 
-    pub fn prefix_token_stops(&self) -> &[usize] {
+    pub(crate) fn prefix_token_stops(&self) -> &[usize] {
         &self.prefix_token_stops
     }
 
@@ -410,12 +410,12 @@ impl TinyLlamaWordTokenizer {
     }
 
     /// True iff `prefix` is a prefix of some token in lexicographic order.
-    pub fn has_token_with_prefix(&self, prefix: &str) -> bool {
+    pub(crate) fn has_token_with_prefix(&self, prefix: &str) -> bool {
         self.prefix_lex_index(prefix).is_some()
     }
 
     /// True iff `prefix` is a strict prefix of some token in lexicographic order.
-    pub fn has_token_with_strict_prefix(&self, prefix: &str) -> bool {
+    pub(crate) fn has_token_with_strict_prefix(&self, prefix: &str) -> bool {
         let Some(prefix_lex_index) = self.prefix_lex_index(prefix) else {
             return false;
         };
@@ -426,7 +426,7 @@ impl TinyLlamaWordTokenizer {
     }
 
     /// The half-open lexicographic token range whose tokens start with `prefix`.
-    pub fn token_lex_range_for_prefix(&self, prefix: &str) -> (TokenLexIndex, TokenLexIndex) {
+    pub(crate) fn token_lex_range_for_prefix(&self, prefix: &str) -> (TokenLexIndex, TokenLexIndex) {
         let prefix_lex_index = self
             .prefix_lex_index(prefix)
             .expect("prefix must be present in tokenizer prefix set");
@@ -517,7 +517,7 @@ impl TinyLlamaWordTokenizer {
     }
 
     #[doc(hidden)]
-    pub fn right_packed_spine_for_lex_index(&self, lex_index: TokenLexIndex) -> PackedSpine {
+    pub(crate) fn right_packed_spine_for_lex_index(&self, lex_index: TokenLexIndex) -> PackedSpine {
         let token = self.token_at(lex_index);
         self.right_packed_spine(token)
             .expect("token must have a packed right spine")
@@ -538,12 +538,12 @@ impl TinyLlamaWordTokenizer {
     }
 
     /// Lexicographic token indices for which a left spine was successfully precomputed.
-    pub fn lex_indices_with_left_spines(&self) -> &[usize] {
+    pub(crate) fn lex_indices_with_left_spines(&self) -> &[usize] {
         &self.lex_indices_with_left_spines
     }
 
     #[doc(hidden)]
-    pub fn prepare_canonical_pair_batch_for_lex_index(
+    pub(crate) fn prepare_canonical_pair_batch_for_lex_index(
         &self,
         first_lex_index: TokenLexIndex,
     ) -> TinyLlamaPreparedFirstAllPairs {
@@ -555,17 +555,17 @@ impl TinyLlamaWordTokenizer {
     }
 
     #[doc(hidden)]
-    pub fn prepared_second_buckets(&self) -> &PreparedSecondBuckets {
+    pub(crate) fn prepared_second_buckets(&self) -> &PreparedSecondBuckets {
         &self.prepared_second_buckets
     }
 
     #[doc(hidden)]
-    pub fn prepared_merge_rows(&self) -> &MergeRows {
+    pub(crate) fn prepared_merge_rows(&self) -> &MergeRows {
         &self.prepared_merge_rows
     }
 
     #[doc(hidden)]
-    pub fn canonical_pair_batch_with_first_token_right_spine_into(
+    pub(crate) fn canonical_pair_batch_with_first_token_right_spine_into(
         &self,
         first_token_right_spine: &PackedSpine,
         out: &mut [bool],
@@ -632,7 +632,7 @@ impl TinyLlamaWordTokenizer {
     }
 
     #[doc(hidden)]
-    pub fn canonical_pair_batch_with_first_token_right_spine(
+    pub(crate) fn canonical_pair_batch_with_first_token_right_spine(
         &self,
         first_token_right_spine: &PackedSpine,
     ) -> Vec<bool> {
@@ -711,7 +711,7 @@ impl TinyLlamaWordTokenizer {
     }
 
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
-    pub fn can_canonically_follow(&self, a: &str, b: &str) -> bool {
+    pub(crate) fn can_canonically_follow(&self, a: &str, b: &str) -> bool {
         let _ = self
             .lex_index(a)
             .expect("first token must be present in tokenizer vocabulary");
@@ -728,7 +728,7 @@ impl TinyLlamaWordTokenizer {
         .unwrap_or_else(|| self.merges.canonical_pair(a, b))
     }
 
-    pub fn canonical_followers(&self, token: &str) -> Vec<bool> {
+    pub(crate) fn canonical_followers(&self, token: &str) -> Vec<bool> {
         let first_lex_index = self.lex_index(token).unwrap_or_else(|| {
             panic!(
                 "token must be present in tokenizer vocabulary: token={:?}",
@@ -739,13 +739,13 @@ impl TinyLlamaWordTokenizer {
     }
 
     /// Token lex indices for the exact input string.
-    pub fn tokenize_string_to_lex_indices(&self, text: &str) -> Vec<TokenLexIndex> {
+    pub(crate) fn tokenize_string_to_lex_indices(&self, text: &str) -> Vec<TokenLexIndex> {
         let piece_ids = self.tokenize_string_piece_ids(text);
         self.piece_ids_to_lex_indices(&piece_ids)
     }
 
     /// TinyLlama pieces together with their lex indices for the exact input string.
-    pub fn tokenize_string_with_lex_indices(&self, text: &str) -> Vec<(String, TokenLexIndex)> {
+    pub(crate) fn tokenize_string_with_lex_indices(&self, text: &str) -> Vec<(String, TokenLexIndex)> {
         let piece_ids = self.tokenize_string_piece_ids(text);
         self.piece_ids_with_lex_indices(&piece_ids)
     }
