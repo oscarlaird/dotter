@@ -9,8 +9,8 @@ pub(crate) const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte
 pub(crate) const INVALID_HASH: rh::Hash = rh::Hash::MAX;
 pub(crate) const ROOT_STRING: &str = "^";
 
-/// `ln(2/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
-pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.912023005428146;
+/// `ln(4/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
+pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
 
 /// Maximum node visits per `recalc_to_frontier_and_back` traversal.
 pub const TRIE_MAX_VISITS: i32 = 200;
