@@ -103,7 +103,7 @@ impl BayesianSession {
             full_hash,
             new_prediction
         );
-        self.trie.pending_prior.deref_mut().insert(full_hash);
+        self.trie.pending_prior.insert(full_hash);
     }
 
     pub fn apply_updates(&mut self) {
@@ -111,7 +111,7 @@ impl BayesianSession {
     }
 
     pub fn expand_to_threshold(&mut self) -> String {
-        if !self.trie.pending_prior.deref().is_empty()
+        if !self.trie.pending_prior.is_empty()
             || !self.trie.pending_likelihood.is_empty()
         {
             self.apply_updates();

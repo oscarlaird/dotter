@@ -6,6 +6,7 @@ use crate::rolling_hash::Hash;
 use crate::symbol::{Symbol, RADIX};
 use crate::safe_float::{Float, ZERO};
 use crate::trie::core::XBayes;
+use crate::trie::l_update::XLUpdate;
 use crate::trie::ROOT_HASH;
 use crate::trie::{TokenLexIndex, INVALID_TOKEN_LEXINDEX};
 use crate::bpe::NUM_TOKENS;
@@ -26,8 +27,8 @@ enum QueueItemKind {
     Continuation {
         parent_hash: Hash,
         token_lexindex: TokenLexIndex,
-        accumed_l: Float,
-        hit_clf: bool,
+        cuml_l: Float,
+        hit_cuml_edge: bool,
     },
 }
 
@@ -38,24 +39,23 @@ pub(crate) struct RequestedPrior {
 
 impl XBayes {
     fn traverse_and_count_l(
-        &self,
-        a_hash: Hash,
+        l_update: &XLUpdate,
+        b_hash: Hash,
         suffix_chars: &[Symbol],
-        mut accumed_l: Float,
-        mut hit_clf: bool,
     ) -> (Float, bool) {
-        // traverses from a_hash to b_hash
-        // while accumulating l (should include b.l, but not a.l)
-        let mut cur_hash = a_hash;
-        for symbol in suffix_chars {
-            let Some(cur_node) = self.nodes.get(&cur_hash) else {
-                break;
-            };
-            accumed_l += cur_node.c_cond_l[symbol.to_slot()];
-            cur_hash = rh::append_right(cur_hash, symbol.to_byte());
-            hit_clf = hit_clf || self.cum_likelihood.contains_key(&cur_hash);
+        // Returns:
+        // - likelihood (Float): 
+        // - on_or_beyond_edge (bool):
+        assert!(suffix_chars.len() > 0);
+        let on_or_beyond_edge = l_update.get(&b_hash).map(|entry| entry.is_leaf).unwrap_or(true);
+        let mut cur_hash = b_hash;
+        for symbol in suffix_chars.iter().rev() {
+            if let Some(entry) = l_update.get(&cur_hash) {
+                return (entry.likelihood, on_or_beyond_edge);
+            }
+            cur_hash = rh::pop_right(cur_hash, symbol.to_byte());
         }
-        (accumed_l, hit_clf)
+        panic!("traversed from b_hash to a_hash without hitting the l_update");
     }
 
     // API:
@@ -115,20 +115,28 @@ impl XBayes {
             let cond_prior = &this_pred.follower_probs;
             let canonical_followers = &this_pred.canonical_followers;
             // determine how much likelihood was accumulated from our parent to us
-            let (accumed_l, hit_clf) = match this_item.kind {
+            let (cuml_l, hit_cuml_edge) = match this_item.kind {
                 QueueItemKind::Root => (ZERO, false),
-                QueueItemKind::Continuation { parent_hash, token_lexindex, accumed_l , hit_clf } => {
-                    let token_str = self.tokenizer.token_at(token_lexindex as usize);
-                    let token_symbols = Symbol::string_to_vec(token_str);
-                    self.traverse_and_count_l(parent_hash, &token_symbols[..], accumed_l, hit_clf)
+                QueueItemKind::Continuation { parent_hash, token_lexindex, cuml_l , hit_cuml_edge } => {
+                    if hit_cuml_edge {
+                        (cuml_l, true)
+                    } else {
+                        let token_str = self.tokenizer.token_at(token_lexindex as usize);
+                        let token_symbols = Symbol::string_to_vec(token_str);
+                        XBayes::traverse_and_count_l(
+                            &self.pending_likelihood,
+                            parent_hash,
+                            &token_symbols[..],
+                        )
+                    }
                 }
             };
             // LIKELIHOOD (upper bound)
             let mut tl_array = vec![Float::NAN; NUM_TOKENS].into_boxed_slice();
-            if self.nodes.contains_key(&this_hash) {
-                self.set_tl_array(this_hash, &mut tl_array[..], accumed_l, hit_clf);
+            if hit_cuml_edge {
+                tl_array.fill(cuml_l);
             } else {
-                tl_array.fill(accumed_l);
+                self.set_tl_array(this_hash, &mut tl_array[..]);
             }
             // POSTERIOR (upper bound)
             let mut cond_posterior_ub = vec![Float::NAN; NUM_TOKENS].into_boxed_slice();
@@ -151,8 +159,8 @@ impl XBayes {
                     kind: QueueItemKind::Continuation {
                         parent_hash: this_hash,
                         token_lexindex: ix as TokenLexIndex,
-                        accumed_l,
-                        hit_clf,
+                        cuml_l,
+                        hit_cuml_edge,
                     }
                 });
             }
@@ -163,50 +171,58 @@ impl XBayes {
         &self,
         node_hash: Hash,
         tl_array: &mut [Float],
-        accumed_l: Float,
-        hit_clf: bool, // hit the clf at or above node_hash
     ) {
+        let cuml = &self.cum_likelihood;
+        let nodes = &self.nodes;
+        //
+        debug_assert!({
+            let is_interior_of_cuml = cuml.get(&node_hash).map(|entry| !entry.is_leaf).unwrap_or(false);
+            is_interior_of_cuml
+        }, "set_tl_array: node_hash is not in the interior of the cum_likelihood");
+        let node_cuml_l = cuml.get(&node_hash).map(|entry| entry.likelihood).unwrap();
+        //
+        // we always need nodes to be available in the interior of the cum_likelihood
         struct Frame {
             suffix_hash: Hash,
             suffix_length: usize,
-            accumed_l: Float, // accumed_l at or above this node
+            n_cuml_l: Float,
         }
-        let mut frames = vec![Frame {suffix_hash: 0u64, suffix_length: 0, accumed_l}];
-        if !self.nodes.contains_key(&node_hash) {
-            tl_array.fill(accumed_l);
-            return;
-        }
-        if hit_clf {
-            tl_array.fill(accumed_l);
-            return;
-        }
+        let mut frames = vec![Frame {suffix_hash: 0u64, suffix_length: 0, n_cuml_l: node_cuml_l}];
         let mut iters = 0;
-        while let Some(Frame { suffix_hash, suffix_length, accumed_l }) = frames.pop() {
+        while let Some(Frame { suffix_hash, suffix_length, n_cuml_l }) = frames.pop() {
             if iters < 1000 { iters += 1; } else { panic!("set_tl_array: too many iterations"); }
-            let node = {
-                let full_hash = rh::extend_right(node_hash, suffix_hash, suffix_length);
-                self.nodes.get(&full_hash).unwrap()
-            };
+            let n_full_hash = rh::extend_right(node_hash, suffix_hash, suffix_length);
             // handle our children
-            for child_slot in 0..RADIX {
-                let child_suffix_hash = rh::append_right(suffix_hash, Symbol::slot_to_byte(child_slot));
-                let child_suffix_length = suffix_length + 1;
-                let child_full_hash = rh::extend_right(node_hash, child_suffix_hash, child_suffix_length);
-                if self.tokenizer.token_hashset.contains(&child_suffix_hash) {
-                    let lexindex = self.tokenizer.lex_index_for_token_hash(&child_suffix_hash);
-                    tl_array[lexindex] = accumed_l + node.c_a_tl[child_slot][0];
-                }
-                if !self.tokenizer.proper_prefix_hashset.contains(&child_suffix_hash) {
+            for slot in 0..RADIX {
+                let c_suffix_hash = rh::append_right(suffix_hash, Symbol::slot_to_byte(slot));
+                let c_suffix_length = suffix_length + 1;
+                let c_full_hash = rh::extend_right(node_hash, c_suffix_hash, c_suffix_length);
+                //
+                if !self.tokenizer.token_hashset.contains(&c_suffix_hash) && !self.tokenizer.proper_prefix_hashset.contains(&c_suffix_hash) {
                     continue;
                 }
-                let child_is_clf = self.cum_likelihood.contains_key(&child_full_hash);
-                if child_is_clf {
-                    let range = self.tokenizer.token_lex_range_for_prefix_hash(&child_suffix_hash);
+                //
+                let c_cuml_l = cuml.get(&c_full_hash).map(|entry| entry.likelihood).unwrap_or(n_cuml_l);
+                let c_cuml_hit_edge = cuml.get(&c_full_hash).map(|entry| entry.is_leaf).unwrap_or(true);
+
+                if c_cuml_hit_edge {
+                    let range = self.tokenizer.token_lex_range_for_prefix_hash(&c_suffix_hash);
                     let subslice = &mut tl_array[range.0..range.1];
-                    subslice.fill(accumed_l + node.c_cond_l[child_slot]);
+                    subslice.fill(c_cuml_l);
                     continue;
                 }
-                frames.push(Frame { suffix_hash: child_suffix_hash, suffix_length: child_suffix_length, accumed_l: accumed_l + node.c_cond_l[child_slot]});
+                if self.tokenizer.token_hashset.contains(&c_suffix_hash) {
+                    // we've hit a full token, without hitting the clf; need to use mtcdl
+                    let lexindex = self.tokenizer.lex_index_for_token_hash(&c_suffix_hash);
+                    let node = nodes.get(&n_full_hash).unwrap();
+                    // TODO: this is a little ugly
+                    let l_delta_mtcdl = c_cuml_l - node.c_cuml_l_old_for_mtcdl[slot];
+                    tl_array[lexindex] = node.c_a_tl[slot][0] + l_delta_mtcdl;
+                }
+                if !self.tokenizer.proper_prefix_hashset.contains(&c_suffix_hash) {
+                    continue;
+                }
+                frames.push(Frame { suffix_hash: c_suffix_hash, suffix_length: c_suffix_length, n_cuml_l: c_cuml_l});
             }
         }
         debug_assert!(

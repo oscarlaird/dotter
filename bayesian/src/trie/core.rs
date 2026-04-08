@@ -38,8 +38,8 @@ pub(crate) struct XNode {
     c_final_token_prob: [Float; RADIX],
     // TODO: #[cfg(feature = "tokentrie")]
     pub(crate) c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
-    pub(crate) c_cond_l: [Float; RADIX],
-    c_accumed_l_old: [Float; RADIX],
+    c_cuml_l_old: [Float; RADIX],
+    pub(crate) c_cuml_l_old_for_mtcdl: [Float; RADIX],
     pub(crate) c_z: [Float; RADIX],
     //
     c_a_pred_changed: [AncestorsBitmap; RADIX], // ancestor predictions which have changed since we visited this child
@@ -148,7 +148,7 @@ impl XBayes {
             RecalcType::Update => {},
             RecalcType::Expand { .. } => {
                 assert!(self.pending_prior.is_empty());
-                assert!(self.pending_likelihood.is_empty());
+                assert!(self.pending_likelihood.len() == 1);
             }
         }
         self.cum_likelihood = merge_xl_pair(&self.cum_likelihood, &self.pending_likelihood);
@@ -191,11 +191,15 @@ impl XBayes {
             symbol: Symbol,
             depth: u16,
             target_hash: Hash,
-            n_hit_l_update_edge: bool,  // (inclusive of n)
-            n_hit_prior_update: bool,  // (inclusive of n)
+            // n_hit_l_update_edge: bool,  // (inclusive of n)
+            // n_lupdate_hit_edge: bool,
+            // n_cuml_hit_edge: bool,
+            // n_lupdate_l: Float,
+            n_cuml_l: Float,
+            //
+            n_hit_prior_update: bool,  // (inclusive of n) (cleansed by space)
             n_a_pred_changed: AncestorsBitmap,
             n_a_tp_changed: AncestorsBitmap,
-            n_accumed_l: Float, // (inclusive of n)
         }
         let mut n_walker = Self::root_walker();
         let root_pred_changed = unread_predictions.remove(&ROOT_HASH);
@@ -206,15 +210,19 @@ impl XBayes {
                 Some(root_node.if_root_then_z)
             }
         };
+        // let root_lupdate = pending_likelihood.get(&ROOT_HASH).unwrap();
+        let root_cuml = cum_likelihood.get(&ROOT_HASH).unwrap();
         let root_frame = Frame {
             symbol: Symbol::Start,
             depth: 0,
             target_hash: ROOT_HASH,
-            n_hit_l_update_edge: pending_likelihood.get(&ROOT_HASH).unwrap().is_leaf,
+            // n_lupdate_hit_edge: root_lupdate.is_leaf,
+            // n_cuml_hit_edge: root_cuml.is_leaf,
+            // n_lupdate_l: root_lupdate.likelihood,
+            n_cuml_l: root_cuml.likelihood,
             n_hit_prior_update: root_pred_changed,
             n_a_pred_changed: if root_pred_changed { 1u16 } else { 0u16 },
             n_a_tp_changed: 0,
-            n_accumed_l: ZERO, // WLOG we don't allow the root to have cond_l
         };
         let mut frames: Vec<Frame> = vec![root_frame];
         let mut nodes_over_threshold: Vec<Hash> = vec![];
@@ -226,11 +234,13 @@ impl XBayes {
             symbol,
             depth,
             target_hash,  // TODO: this can be removed since for now it is just for verification
-            n_hit_l_update_edge,
+            // n_lupdate_hit_edge,
+            // n_cuml_hit_edge,
+            // n_lupdate_l,
+            n_cuml_l,
             n_hit_prior_update,
             n_a_pred_changed,
             n_a_tp_changed,
-            n_accumed_l,
         }) = frames.pop() {
             // move the walker to the frame's node
             let n_hash;
@@ -257,16 +267,29 @@ impl XBayes {
             }
             if iters < 1000 { iters += 1; } else { panic!("apply_updates: too many iterations"); }
             let node = nodes.get_mut(&n_hash).unwrap();
+            // let n_lupdate = pending_likelihood.get(&n_hash);
+            // let n_cuml = cum_likelihood.get(&n_hash);
             for slot in 0..RADIX {
                 let child_symbol = Symbol::from_slot(slot);
                 let child_byte = Symbol::slot_to_byte(slot);
                 let child_hash = rh::append_right(n_hash, child_byte);
-                // apply likelihood update
-                let mut c_hit_l_update_edge = n_hit_l_update_edge;
-                if let Some(entry) = pending_likelihood.remove(&child_hash) {
-                    node.c_cond_l[slot] += entry.likelihood;
-                    c_hit_l_update_edge = true;
-                } 
+                //
+                let c_lupdate = pending_likelihood.get(&child_hash);
+                let c_cuml = cum_likelihood.get(&child_hash);
+                // extract likelihood update
+                // let c_lupdate_closed_edge = c_lupdate.map(|e| e.is_leaf).unwrap_or(false);
+                // let c_lupdate_open_edge = c_lupdate.is_none() && n_lupdate.map(|e| !e.is_leaf).unwrap_or(false);
+                // let c_lupdate_on_edge = c_lupdate_closed_edge || c_lupdate_open_edge;
+                // let c_lupdate_hit_edge = n_lupdate_hit_edge && c_lupdate_on_edge;
+                let c_lupdate_hit_edge = c_lupdate.map(|e| e.is_leaf).unwrap_or(true);
+                // let c_lupdate_l: Float = c_lupdate.map(|entry| entry.likelihood).unwrap_or(n_lupdate_l);
+                // extract clf
+                // let c_cuml_closed_edge = c_cuml.map(|entry| entry.is_leaf).unwrap_or(false);
+                // let c_cuml_open_edge = c_cuml.is_none() && n_cuml.map(|e| !e.is_leaf).unwrap_or(false);
+                // let c_cuml_on_edge = c_cuml_closed_edge || c_cuml_open_edge;
+                // let c_cuml_hit_edge = n_cuml_hit_edge && c_cuml_on_edge;
+                let c_cuml_hit_edge = c_cuml.map(|e| e.is_leaf).unwrap_or(true);
+                let c_cuml_l: Float = c_cuml.map(|entry| entry.likelihood).unwrap_or(n_cuml_l);
                 // apply prior update
                 let mut c_hit_p_update = n_hit_prior_update;
                 if unread_predictions.remove(&child_hash) {
@@ -275,13 +298,12 @@ impl XBayes {
                     // N.B. A prediction at a node, c, doesn't change c.p or c.tp, it only affects descendants
                 }
                 if child_symbol == Symbol::Space {
+                    // TODO: consider a better heuristic than space
                     c_hit_p_update = false; // hit_p_update is cleansed by space
                 }
-                // determine mtcdl validity
-                let valid_mtcdl = c_hit_l_update_edge; // TODO: how does not pushing likelihood affect mtcdl?
                 // determine children's validity
                 // - valid = const_likelihood || no_reweighting
-                let const_likelihood = cum_likelihood.contains_key(&child_hash);
+                let const_likelihood = c_cuml_hit_edge;
                 // TODO: writing this code made me realize we need to add a subtlety
                 // to the .tex file
                 // For no-reweighting, 
@@ -290,12 +312,15 @@ impl XBayes {
                 // - if there is a prior update ahead of us, but before the likelihood frontier, we are not valid!
                 // - if there is a prior update ahead of us, and after the cum likelihood frontier, we don't care
                 //   - (if there is a prior update beyond the trie, this is beyond the clf and so we don't care) WRONG!: the trie is infinite, the clf is all that matters
-                let no_reweighting =
-                    n_hit_l_update_edge  // this update hasn't rebalanced l beyond here
-                    && !prior_update_ancestors.contains(&child_hash) // and no p_updates are ahead of us which are behind the clf
-                    && !c_hit_p_update; // no p_updates behind (or else cleansed by space) // TODO: consider a better heuristic than space
-                let valid_z = const_likelihood || no_reweighting;
-                // recalculate prior
+                let no_likelihood_reweight= c_lupdate_hit_edge;
+                let valid_mtcdl = no_likelihood_reweight; // determine mtcdl validity
+                let no_prior_reweight=
+                    !prior_update_ancestors.contains(&child_hash) // no p_updates are at/ahead of us which are behind the clf
+                    && !c_hit_p_update; // no p_updates at/behind (or else cleansed by space)
+                let no_reweight = no_likelihood_reweight && no_prior_reweight;
+                let valid_z = const_likelihood || no_reweight;
+                // valid_z => valid_mtcdl (since both branches of valid_z contain no_likelihood_reweight)
+                // RECALCULATE PRIOR
                 let mut p = node.c_p[slot];
                 // propagate tp changed
                 let ftl = node.c_final_token_length[slot] as usize;
@@ -365,24 +390,31 @@ impl XBayes {
                 // merge change arrays into the child
                 node.c_a_pred_changed[slot] |= n_a_pred_changed << 1;
                 node.c_a_tp_changed[slot] |= n_a_tp_changed << 1;
-                // update valid children
-                let accumed_l_new = n_accumed_l + node.c_cond_l[slot];
+                // RECALCULATE POSTERIOR 
                 if valid_z {
                     if const_likelihood {
                         // Z = p + l
-                        node.c_z[slot] = p + accumed_l_new;
-                    } else if no_reweighting {
-                        let p_old = node.c_p_old[slot];
-                        let accumed_l_old = node.c_accumed_l_old[slot];
-                        // Z += (p - p_old) + (l - l_old)
-                        let p_delta = p - p_old;
-                        let l_delta = accumed_l_new - accumed_l_old;
+                        node.c_z[slot] = p + c_cuml_l;
+                    } else if no_reweight {
+                        let l_delta = c_cuml_l - node.c_cuml_l_old[slot];
+                        let p_delta = if p_changed {
+                            p - node.c_p_old[slot]
+                        } else {
+                            ZERO
+                        };
                         let z_delta = p_delta + l_delta;
                         node.c_z[slot] += z_delta;
                     }
+                    // recalculate mtcdl
+                    assert!(valid_mtcdl);
+                    let l_delta_for_mtcdl = c_cuml_l - node.c_cuml_l_old_for_mtcdl[slot];
+                    for i in 0..(node.c_can_trunc[slot].count_ones() as usize + 1) {
+                        node.c_a_tl[slot][i] += l_delta_for_mtcdl;
+                    }
                 }
                 node.c_p_old[slot] = p;
-                node.c_accumed_l_old[slot] = accumed_l_new;
+                node.c_cuml_l_old[slot] = c_cuml_l;
+                node.c_cuml_l_old_for_mtcdl[slot] = c_cuml_l;
                 // push to upprop arrays and determine wether to stop descending
                 let stop = match recalc_type {
                     RecalcType::Update => {
@@ -407,11 +439,13 @@ impl XBayes {
                         symbol: child_symbol,
                         depth: depth + 1,
                         target_hash: child_hash,
-                        n_hit_l_update_edge: c_hit_l_update_edge,
+                        // n_lupdate_hit_edge: c_lupdate_hit_edge,
+                        // n_cuml_hit_edge: c_cuml_hit_edge,
+                        // n_lupdate_l: c_lupdate_l,
+                        n_cuml_l: c_cuml_l,
                         n_hit_prior_update: c_hit_p_update,
                         n_a_pred_changed: node.c_a_pred_changed[slot],
                         n_a_tp_changed: node.c_a_tp_changed[slot],
-                        n_accumed_l: accumed_l_new,
                     });
                 }
                 if !valid_z {
@@ -423,7 +457,7 @@ impl XBayes {
                 }
             }
         }
-        assert!(self.pending_likelihood.is_empty()); // ensure we consumed all likelihood updates
+        self.pending_likelihood = new_xlupdate();
         // up-prop z 
         while let Some(n_hash) = invalid_z_hashes.pop() {
             // we are proceeding in reverse-topological order
@@ -552,9 +586,9 @@ impl XBayes {
             c_tp0: [Float::NAN; RADIX], // ok
             c_tp: [Float::NAN; RADIX], // ok
             c_final_token_prob: [Float::NAN; RADIX], // ok
-            c_cond_l: [ZERO; RADIX], // ok
             c_a_tl: [[Float::NAN; MAX_TRUNCATION_POSSIBLE+1]; RADIX], // ok
-            c_accumed_l_old: [ZERO; RADIX], // ok
+            c_cuml_l_old: [ZERO; RADIX], // ok
+            c_cuml_l_old_for_mtcdl: [ZERO; RADIX], // ok
             c_z: [Float::NAN; RADIX], // ok
             c_a_pred_changed: [0; RADIX], // ok
             c_a_tp_changed: [0; RADIX], // ok

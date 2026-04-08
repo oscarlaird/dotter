@@ -394,3 +394,46 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
     let _ = session.expand_to_threshold();
 }
 
+#[cfg(not(feature = "wasm"))]
+#[test]
+fn debug_z_after_first_expand_caret_space_space() {
+    use crate::rolling_hash as rh;
+    use crate::safe_float::{Float, into_f32};
+    use crate::symbol::Symbol;
+    use crate::trie::ROOT_HASH;
+
+    let mut session = crate::BayesianSession::new();
+    let _ = session.expand_to_threshold();
+
+    // Posterior for one-step prefix ^_ : share among root children is softmax(Z_edge − Z_root_total).
+    let root_node = session.trie.nodes.get(&ROOT_HASH).unwrap();
+    let z_root_total = root_node.if_root_then_z;
+    let z_root_to_us = root_node.c_z[Symbol::Space.to_slot()];
+    let log_post = into_f32(z_root_to_us) - into_f32(z_root_total);
+    let post_prob = log_post.exp();
+    println!(
+        "posterior ^_ : Z(^->_)={} Z_root_total={} log_ratio={} P(space|root)={}",
+        into_f32(z_root_to_us),
+        into_f32(z_root_total),
+        log_post,
+        post_prob
+    );
+
+    let h_parent = rh::append_right(ROOT_HASH, b'_');
+    let h = rh::append_right(h_parent, b'_');
+    let parent = session.trie.nodes.get(&h_parent).unwrap();
+    let z_edge = parent.c_z[Symbol::Space.to_slot()];
+    println!(
+        "^_ -> ^__: c_z on parent slot Space = {:?} f32={}",
+        z_edge,
+        into_f32(z_edge)
+    );
+    println!("^__ node exists: {}", session.trie.nodes.contains_key(&h));
+    if let Some(node) = session.trie.nodes.get(&h) {
+        let mut sum = Float::NEG_INFINITY;
+        for slot in 0..27 {
+            sum = crate::trie::logaddexp(sum, node.c_z[slot]);
+        }
+        println!("^__ logsum(children c_z): {}", into_f32(sum));
+    }
+}

@@ -77,12 +77,6 @@ fn truncate(x: &str, l_update: &XLUpdate) -> Hash {
 
 // correctness theorem: sum_i(l_update_i[truncate(x, lupdate_i)]) = l_merged[truncate(x, l_merged)]
 pub(crate) fn merge_xl_pair(a: &XLUpdate, b: &XLUpdate) -> XLUpdate {
-    if a.is_empty() {
-        return b.clone();
-    }
-    if b.is_empty() {
-        return a.clone();
-    }
     merge_many(&[a, b])
 }
 
@@ -96,26 +90,28 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
     struct Frame {
         n_symbol: Symbol,
         p_hash: Hash,
-        p_edge_hit_count: u32,
         p_proper_truncated_l: Float,
     }
     let root_frame = Frame {
         n_symbol: Symbol::Start,
-        p_hash: INVALID_HASH,
-        p_edge_hit_count: 0,
+        p_hash: 0,
         p_proper_truncated_l: ZERO,
     };
     let mut frames = Vec::new();
     frames.push(root_frame);
-    while let Some(Frame { n_symbol, p_hash, p_edge_hit_count, p_proper_truncated_l }) = frames.pop() {
+    let mut iters = 0;
+    while let Some(Frame { n_symbol, p_hash, p_proper_truncated_l }) = frames.pop() {
+        assert!({
+            iters += 1;
+            iters < 1000
+        }, "merge_many: too many iterations");
         let n_hash = rh::append_right(p_hash, n_symbol.to_byte());
         let (n_edge_hit_count, n_proper_truncated_l, n_direct_l, any_n_exists) = l_updates
             .iter()
-            .fold((p_edge_hit_count, p_proper_truncated_l, ZERO, false), |(hits, sum, direct_l, any_n), &l_update| {
+            .fold((0, p_proper_truncated_l, ZERO, false), |(hits, sum, direct_l, any_n), &l_update| {
                 let n_exists = l_update.contains_key(&n_hash);
                 let p_exists = l_update.contains_key(&p_hash);
-                let n_is_leaf = n_exists && l_update.get(&n_hash).unwrap().is_leaf;
-                let edge = n_is_leaf || (p_exists && !n_exists);
+                let hit_edge = l_update.get(&n_hash).map(|e| e.is_leaf).unwrap_or(true);
                 let proper_truncated_l_delta = if p_exists && !n_exists {
                     l_update.get(&p_hash).unwrap().likelihood
                 } else {
@@ -126,7 +122,7 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
                 } else {
                     ZERO
                 };
-                (hits + (edge as u32), sum + proper_truncated_l_delta, direct_l + direct_l_delta, any_n || n_exists)
+                (hits + (hit_edge as u32), sum + proper_truncated_l_delta, direct_l + direct_l_delta, any_n || n_exists)
             });
         let is_edge = n_edge_hit_count == l_updates.len() as u32;
         if any_n_exists {
@@ -144,7 +140,6 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
             frames.push(Frame {
                 n_symbol: child_symbol,
                 p_hash: n_hash,
-                p_edge_hit_count: n_edge_hit_count,
                 p_proper_truncated_l: n_proper_truncated_l,
             });
         }
