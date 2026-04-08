@@ -1,5 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { colorFromLetter } from '../utils/colors';
+
+// Match TrieVisualizer (v2 canvas): layout transitions over 300ms.
+const TWEEN_DURATION_MS = 300;
+
+function interpolate(start: number, end: number, progress: number): number {
+	return start + (end - start) * progress;
+}
+
+type TweenKey = string;
+interface TweenEntry {
+	start: number;
+	from: number;
+	to: number;
+}
+
+function tweenKey(fullString: string, property: string): TweenKey {
+	return `${property}\0${fullString}`;
+}
 
 export interface ExpandedSnapshotNode {
 	z: number;
@@ -16,6 +34,10 @@ interface TrieSnapshotVisualizerProps {
 	snapshot: ExpandedSnapshot;
 	timers: VisibleNodeTimerMap;
 	period: number;
+	/** When true, bright timer strokes (space, root, etc.) are shifted darker for a light canvas. */
+	lightBackground?: boolean;
+	/** Semi-transparent node background rectangles (default on). */
+	showBoxes?: boolean;
 }
 
 interface VisualNode {
@@ -53,7 +75,7 @@ function displaySymbol(symbol: string): string {
 		return ' ';
 	}
 	if (symbol === '^') {
-		return '';
+		return '^';
 	}
 	return symbol;
 }
@@ -66,6 +88,50 @@ function timerColor(symbol: string): [number, number, number] {
 		return [255, 255, 255];
 	}
 	return colorFromLetter(symbol);
+}
+
+/** Bézier edges from child to parent: dark mode stays saturated; light mode is softened. */
+function connectorStrokeStyle(
+	r: number,
+	g: number,
+	b: number,
+	lightBackground: boolean,
+): string {
+	const dr = Math.floor(r / 1.8);
+	const dg = Math.floor(g / 1.8);
+	const db = Math.floor(b / 1.8);
+	if (!lightBackground) {
+		return `rgba(${dr}, ${dg}, ${db}, 1)`;
+	}
+	const lift = 88;
+	const lr = Math.min(255, dr + lift);
+	const lg = Math.min(255, dg + lift);
+	const lb = Math.min(255, db + lift);
+	return `rgba(${lr}, ${lg}, ${lb}, 0.4)`;
+}
+
+/** Bright colors (white space, root, pale yellow, etc.) need darkening on a light canvas. */
+function timerRgbOnSurface(
+	symbol: string,
+	lightBackground: boolean,
+): [number, number, number] {
+	const [r, g, b] = timerColor(symbol);
+	if (!lightBackground) {
+		return [r, g, b];
+	}
+	const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+	if (lum < 168) {
+		return [r, g, b];
+	}
+	const tr = 30;
+	const tg = 41;
+	const tb = 59;
+	const t = Math.min(1, (lum - 168) / 88);
+	return [
+		Math.round(r + (tr - r) * t),
+		Math.round(g + (tg - g) * t),
+		Math.round(b + (tb - b) * t),
+	];
 }
 
 function logaddexp(a: number, b: number): number {
@@ -99,6 +165,24 @@ function buildTree(snapshot: ExpandedSnapshot): Record<string, VisualNode> {
 		node.children.sort((a, b) => a.localeCompare(b));
 	}
 	return nodes;
+}
+
+function readLayoutProp(node: VisualNode | undefined, property: string): number {
+	if (!node) {
+		return 0;
+	}
+	switch (property) {
+		case 'x':
+			return node.x;
+		case 'y':
+			return node.y;
+		case 'width':
+			return node.width;
+		case 'height':
+			return node.height;
+		default:
+			return 0;
+	}
 }
 
 function layoutTree(
@@ -137,12 +221,53 @@ function layoutTree(
 	}
 }
 
-function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisualizerProps) {
+function TrieSnapshotVisualizer({
+	snapshot,
+	timers,
+	period,
+	lightBackground = false,
+	showBoxes = true,
+}: TrieSnapshotVisualizerProps) {
 	const [time, setTime] = useState(() => performance.now() / 1000);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [devicePixelRatio, setDevicePixelRatio] = useState(1);
 	const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+	const tweenStartTimesRef = useRef<Record<TweenKey, TweenEntry>>({});
+	const laidOutNodesRef = useRef<Record<string, VisualNode> | null>(null);
+
+	const getTweenedValue = useCallback((fullString: string, property: string, currentTime: number): number => {
+		const key = tweenKey(fullString, property);
+		const laidOut = laidOutNodesRef.current?.[fullString];
+		const actualRaw = readLayoutProp(laidOut, property);
+		if (!tweenStartTimesRef.current[key]) {
+			tweenStartTimesRef.current[key] = {
+				start: currentTime,
+				from: actualRaw,
+				to: actualRaw,
+			};
+		}
+		const tween = tweenStartTimesRef.current[key];
+		const progress = Math.min((currentTime - tween.start) / (TWEEN_DURATION_MS / 1000), 1);
+		return interpolate(tween.from, tween.to, progress);
+	}, []);
+
+	const updateTween = useCallback(
+		(fullString: string, property: string, targetValue: number, currentTime: number): void => {
+			const key = tweenKey(fullString, property);
+			if (!tweenStartTimesRef.current[key]) {
+				tweenStartTimesRef.current[key] = {
+					start: currentTime,
+					from: targetValue,
+					to: targetValue,
+				};
+				return;
+			}
+			const current = getTweenedValue(fullString, property, currentTime);
+			tweenStartTimesRef.current[key] = { start: currentTime, from: current, to: targetValue };
+		},
+		[getTweenedValue],
+	);
 
 	useEffect(() => {
 		let frame = 0;
@@ -213,6 +338,32 @@ function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisual
 		};
 	}, [laidOutNodes, viewportSize]);
 
+	useLayoutEffect(() => {
+		laidOutNodesRef.current = laidOutNodes;
+		if (!laidOutNodes) {
+			return;
+		}
+		const t = performance.now() / 1000;
+		const active = new Set<string>();
+		for (const node of Object.values(laidOutNodes)) {
+			active.add(node.fullString);
+			updateTween(node.fullString, 'x', node.x, t);
+			updateTween(node.fullString, 'y', node.y, t);
+			updateTween(node.fullString, 'width', node.width, t);
+			updateTween(node.fullString, 'height', node.height, t);
+		}
+		for (const key of Object.keys(tweenStartTimesRef.current)) {
+			const sep = key.indexOf('\0');
+			if (sep === -1) {
+				continue;
+			}
+			const fullString = key.slice(sep + 1);
+			if (!active.has(fullString)) {
+				delete tweenStartTimesRef.current[key];
+			}
+		}
+	}, [laidOutNodes, updateTween]);
+
 	useEffect(() => {
 		const canvas = canvasRef.current;
 		if (!canvas || !laidOutNodes) {
@@ -234,19 +385,26 @@ function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisual
 		const orderedNodes = Object.values(laidOutNodes);
 		const scaleX = (value: number) => renderMetrics.offsetX + value * renderMetrics.scale;
 		const scaleSize = (value: number) => value * renderMetrics.scale;
+		const currentTime = performance.now() / 1000;
 
-		for (const node of orderedNodes) {
-			const [r, g, b] = timerColor(node.symbol);
-			ctx.beginPath();
-			ctx.rect(
-				scaleX(node.x + 3),
-				node.y + 3,
-				Math.max(0, scaleSize(node.width - 6)),
-				Math.max(0, node.height - 6),
-			);
-			ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.13)`;
-			ctx.fill();
-			ctx.closePath();
+		if (showBoxes) {
+			for (const node of orderedNodes) {
+				const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
+				const x = getTweenedValue(node.fullString, 'x', currentTime);
+				const y = getTweenedValue(node.fullString, 'y', currentTime);
+				const w = getTweenedValue(node.fullString, 'width', currentTime);
+				const h = getTweenedValue(node.fullString, 'height', currentTime);
+				ctx.beginPath();
+				ctx.rect(
+					scaleX(x + 3),
+					y + 3,
+					Math.max(0, scaleSize(w - 6)),
+					Math.max(0, h - 6),
+				);
+				ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.13)`;
+				ctx.fill();
+				ctx.closePath();
+			}
 		}
 
 		for (const node of orderedNodes) {
@@ -257,12 +415,20 @@ function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisual
 			if (!parent) {
 				continue;
 			}
-			const [r, g, b] = timerColor(node.symbol);
-			const stroke = `rgba(${Math.floor(r / 1.8)}, ${Math.floor(g / 1.8)}, ${Math.floor(b / 1.8)}, 1)`;
-			const startX = scaleX(node.x + node.width);
-			const startY = node.y + node.height / 2;
-			const endX = scaleX(parent.x + parent.width);
-			const endY = parent.y + parent.height / 2;
+			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
+			const stroke = connectorStrokeStyle(r, g, b, lightBackground);
+			const nx = getTweenedValue(node.fullString, 'x', currentTime);
+			const ny = getTweenedValue(node.fullString, 'y', currentTime);
+			const nw = getTweenedValue(node.fullString, 'width', currentTime);
+			const nh = getTweenedValue(node.fullString, 'height', currentTime);
+			const px = getTweenedValue(parent.fullString, 'x', currentTime);
+			const py = getTweenedValue(parent.fullString, 'y', currentTime);
+			const pw = getTweenedValue(parent.fullString, 'width', currentTime);
+			const ph = getTweenedValue(parent.fullString, 'height', currentTime);
+			const startX = scaleX(nx + nw);
+			const startY = ny + nh / 2;
+			const endX = scaleX(px + pw);
+			const endY = py + ph / 2;
 			const midX = (startX + endX) / 2;
 
 			ctx.beginPath();
@@ -276,7 +442,7 @@ function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisual
 
 		for (const node of orderedNodes) {
 			const displayText = displaySymbol(node.symbol);
-			const [r, g, b] = timerColor(node.symbol);
+			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const timer = timers[node.fullString];
 			const timerFrac = timer ? timerFraction(time, timer.phase, period) : 0;
 			let timerRadius = TIMER_RADIUS;
@@ -286,8 +452,12 @@ function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisual
 			}
 			timerRadius = Math.max(6, scaleSize(timerRadius));
 			timerFontSize = Math.max(10, scaleSize(timerFontSize));
-			const cx = scaleX(node.x + node.width - TIMER_RADIUS);
-			const cy = node.y + node.height / 2;
+			const lx = getTweenedValue(node.fullString, 'x', currentTime);
+			const ly = getTweenedValue(node.fullString, 'y', currentTime);
+			const lw = getTweenedValue(node.fullString, 'width', currentTime);
+			const lh = getTweenedValue(node.fullString, 'height', currentTime);
+			const cx = scaleX(lx + lw - TIMER_RADIUS);
+			const cy = ly + lh / 2;
 
 			ctx.beginPath();
 			ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 1)`;
@@ -302,20 +472,32 @@ function TrieSnapshotVisualizer({ snapshot, timers, period }: TrieSnapshotVisual
 			}
 			ctx.closePath();
 
-			if (node.symbol !== '^') {
-				ctx.beginPath();
-				ctx.arc(cx, cy, timerRadius, 0, 2 * Math.PI * timerFrac);
-				ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${timerFrac * 0.9 + 0.1})`;
-				ctx.lineWidth = Math.max(1, scaleSize(TIMER_STROKE_WIDTH));
-				ctx.stroke();
-				ctx.closePath();
-			}
+			ctx.beginPath();
+			ctx.arc(cx, cy, timerRadius, 0, 2 * Math.PI * timerFrac);
+			ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${timerFrac * 0.9 + 0.1})`;
+			ctx.lineWidth = Math.max(1, scaleSize(TIMER_STROKE_WIDTH));
+			ctx.stroke();
+			ctx.closePath();
 		}
-	}, [laidOutNodes, timers, time, period, devicePixelRatio, renderMetrics, viewportSize]);
+	}, [
+		laidOutNodes,
+		timers,
+		time,
+		period,
+		devicePixelRatio,
+		renderMetrics,
+		viewportSize,
+		getTweenedValue,
+		lightBackground,
+		showBoxes,
+	]);
 
 	return (
 		<div ref={containerRef} className="relative h-full w-full overflow-hidden">
-			<canvas ref={canvasRef} className="block h-full w-full bg-black" />
+			<canvas
+				ref={canvasRef}
+				className="block h-full w-full bg-slate-100 dark:bg-black"
+			/>
 		</div>
 	);
 }

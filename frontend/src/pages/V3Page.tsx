@@ -79,6 +79,20 @@ interface PredictionLogEntry {
 	receivedAt: string;
 }
 
+const V3_THEME_STORAGE_KEY = 'dotter-v3-theme';
+
+function readStoredColorMode(): 'light' | 'dark' {
+	try {
+		const raw = localStorage.getItem(V3_THEME_STORAGE_KEY);
+		if (raw === 'light' || raw === 'dark') {
+			return raw;
+		}
+	} catch {
+		// ignore
+	}
+	return 'dark';
+}
+
 function V3Page() {
 	const [snapshot, setSnapshot] = useState<ExpandedSnapshot | null>(null);
 	const [timers, setTimers] = useState<VisibleNodeTimerMap>({});
@@ -102,6 +116,16 @@ function V3Page() {
 	const sessionOpInFlightRef = useRef(false);
 	const sessionTrappedRef = useRef(false);
 	const sessionTrapMessageRef = useRef<string | null>(null);
+	const [colorMode, setColorMode] = useState<'light' | 'dark'>(readStoredColorMode);
+	const [showBoxes, setShowBoxes] = useState(true);
+
+	useEffect(() => {
+		try {
+			localStorage.setItem(V3_THEME_STORAGE_KEY, colorMode);
+		} catch {
+			// ignore
+		}
+	}, [colorMode]);
 
 	useEffect(() => {
 		likelihoodModelRef.current = likelihoodModel;
@@ -472,116 +496,146 @@ function V3Page() {
 	}, [applySnapshot, enqueueSessionOp, resetBothSides, snapshot, timers, wasmReady]);
 
 	return (
-		<div className="h-screen min-h-0 bg-gray-950 px-3 py-2 text-white">
-			<div className="mx-auto flex h-full min-h-0 w-full max-w-[1920px] flex-col gap-2">
-				<header className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pb-2">
-					<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-400">
-						<span>
-							WS <code className="text-gray-300">{wsStatus}</code>
-						</span>
-						<span className="text-white/25">·</span>
-						{snapshot ? (
+		<div className={colorMode === 'dark' ? 'dark' : ''}>
+			<div className="h-screen min-h-0 bg-slate-100 px-3 py-2 text-slate-900 dark:bg-gray-950 dark:text-white">
+				<div className="mx-auto flex h-full min-h-0 w-full max-w-[1920px] flex-col gap-2">
+					<header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 pb-2 dark:border-white/10">
+						<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-gray-400">
 							<span>
-								<code className="text-gray-300">{Object.keys(snapshot).length}</code> nodes
+								WS <code className="text-slate-800 dark:text-gray-300">{wsStatus}</code>
 							</span>
-						) : (
-							<span>no snapshot</span>
-						)}
-						<span className="text-white/25">·</span>
-						<span>
-							last batch <code className="text-gray-300">{lastBatchSize}</code>
-						</span>
-						<span className="text-white/25">·</span>
-						<span>
-							<code className="text-gray-300">Space</code> likelihood ·{' '}
-							<code className="text-gray-300">Esc</code> reset
-						</span>
-					</div>
-					<button
-						type="button"
-						onClick={() => {
-							void (async () => {
-								try {
-									await resetBothSides();
-									setError(null);
-								} catch (err) {
-									setError(err instanceof Error ? err.message : String(err));
-								}
-							})();
-						}}
-						className="shrink-0 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-xs text-white transition hover:bg-white/20"
-					>
-						Reset
-					</button>
-				</header>
-
-				{warning && (
-					<div className="shrink-0 rounded border border-amber-500/30 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-200">
-						{warning}
-					</div>
-				)}
-				{error && (
-					<div className="shrink-0 rounded border border-red-500/40 bg-red-950/50 px-2 py-1.5 text-xs text-red-200">
-						{error}
-					</div>
-				)}
-
-				<div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-white/10 bg-black/40">
-					{loading ? (
-						<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-gray-400">
-							Loading bayesian session…
+							<span className="text-slate-300 dark:text-white/25">·</span>
+							{snapshot ? (
+								<span>
+									<code className="text-slate-800 dark:text-gray-300">
+										{Object.keys(snapshot).length}
+									</code>{' '}
+									nodes
+								</span>
+							) : (
+								<span>no snapshot</span>
+							)}
+							<span className="text-slate-300 dark:text-white/25">·</span>
+							<span>
+								last batch <code className="text-slate-800 dark:text-gray-300">{lastBatchSize}</code>
+							</span>
+							<span className="text-slate-300 dark:text-white/25">·</span>
+							<span>
+								<code className="text-slate-800 dark:text-gray-300">Space</code> likelihood ·{' '}
+								<code className="text-slate-800 dark:text-gray-300">Esc</code> reset
+							</span>
 						</div>
-					) : !error && snapshot ? (
-						<TrieSnapshotVisualizer
-							snapshot={snapshot}
-							timers={timers}
-							period={likelihoodModel.period}
-						/>
-					) : !error ? (
-						<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-gray-400">
-							Waiting for the first visible nodes.
+						<div className="flex shrink-0 items-center gap-3">
+							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
+								<input
+									type="checkbox"
+									checked={showBoxes}
+									onChange={(e) => setShowBoxes(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
+								/>
+								Boxes
+							</label>
+							<button
+								type="button"
+								onClick={() => setColorMode((m) => (m === 'dark' ? 'light' : 'dark'))}
+								className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-800 transition hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+								aria-label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+							>
+								{colorMode === 'dark' ? 'Light' : 'Dark'}
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									void (async () => {
+										try {
+											await resetBothSides();
+											setError(null);
+										} catch (err) {
+											setError(err instanceof Error ? err.message : String(err));
+										}
+									})();
+								}}
+								className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-800 transition hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+							>
+								Reset
+							</button>
 						</div>
-					) : (
-						<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-gray-500">
-							Fix the error above to resume.
+					</header>
+
+					{warning && (
+						<div className="shrink-0 rounded border border-amber-400/60 bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200">
+							{warning}
 						</div>
 					)}
-				</div>
-
-				<div className="grid shrink-0 grid-cols-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)]">
-					<CalibrationSettings
-						useAutomaticCalibration={useAutomaticCalibration}
-						setUseAutomaticCalibration={setUseAutomaticCalibration}
-						likelihoodModel={likelihoodModel}
-						setLikelihoodModel={setLikelihoodModel}
-						autoCalibrationLikelihoodModel={DEFAULT_LIKELIHOOD_MODEL}
-					/>
-					<div className="flex min-h-0 flex-col rounded-lg border border-white/10 bg-white/5 p-2">
-						<div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
-							<h2 className="text-xs font-semibold text-gray-100">Backend Prediction Log</h2>
-							<span className="text-[0.65rem] text-gray-400">
-								<code>{predictionLog.length}</code> entries
-							</span>
+					{error && (
+						<div className="shrink-0 rounded border border-red-400/70 bg-red-50 px-2 py-1.5 text-xs text-red-900 dark:border-red-500/40 dark:bg-red-950/50 dark:text-red-200">
+							{error}
 						</div>
-						{predictionLog.length === 0 ? (
-							<p className="text-xs text-gray-400">No backend predictions received yet.</p>
+					)}
+
+					<div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-black/40 dark:shadow-none">
+						{loading ? (
+							<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-slate-500 dark:text-gray-400">
+								Loading bayesian session…
+							</div>
+						) : !error && snapshot ? (
+							<TrieSnapshotVisualizer
+								snapshot={snapshot}
+								timers={timers}
+								period={likelihoodModel.period}
+								lightBackground={colorMode === 'light'}
+								showBoxes={showBoxes}
+							/>
+						) : !error ? (
+							<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-slate-500 dark:text-gray-400">
+								Waiting for the first visible nodes.
+							</div>
 						) : (
-							<ul className="max-h-36 min-h-0 list-none space-y-1 overflow-y-auto overscroll-contain pr-1 text-xs">
-								{predictionLog.map((entry) => (
-									<li
-										key={entry.id}
-										className="flex items-baseline gap-2 border-b border-white/5 pb-1 last:border-b-0 last:pb-0"
-									>
-										<span className="min-w-0 flex-1 break-all font-mono text-gray-200">
-											{entry.fullString}
-										</span>
-										<span className="shrink-0 whitespace-nowrap text-right font-mono text-[0.65rem] tabular-nums text-gray-400">
-											[{entry.finalTokenLexindex}] ({entry.receivedAt})
-										</span>
-									</li>
-								))}
-							</ul>
+							<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-slate-500 dark:text-gray-500">
+								Fix the error above to resume.
+							</div>
 						)}
+					</div>
+
+					<div className="grid shrink-0 grid-cols-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)]">
+						<CalibrationSettings
+							useAutomaticCalibration={useAutomaticCalibration}
+							setUseAutomaticCalibration={setUseAutomaticCalibration}
+							likelihoodModel={likelihoodModel}
+							setLikelihoodModel={setLikelihoodModel}
+							autoCalibrationLikelihoodModel={DEFAULT_LIKELIHOOD_MODEL}
+						/>
+						<div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-2 shadow-sm dark:border-white/10 dark:bg-white/5 dark:shadow-none">
+							<div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
+								<h2 className="text-xs font-semibold text-slate-800 dark:text-gray-100">
+									Backend Prediction Log
+								</h2>
+								<span className="text-[0.65rem] text-slate-500 dark:text-gray-400">
+									<code>{predictionLog.length}</code> entries
+								</span>
+							</div>
+							{predictionLog.length === 0 ? (
+								<p className="text-xs text-slate-500 dark:text-gray-400">
+									No backend predictions received yet.
+								</p>
+							) : (
+								<ul className="max-h-36 min-h-0 list-none space-y-1 overflow-y-auto overscroll-contain pr-1 text-xs">
+									{predictionLog.map((entry) => (
+										<li
+											key={entry.id}
+											className="flex items-baseline gap-2 border-b border-slate-100 pb-1 last:border-b-0 last:pb-0 dark:border-white/5"
+										>
+											<span className="min-w-0 flex-1 break-all font-mono text-slate-800 dark:text-gray-200">
+												{entry.fullString}
+											</span>
+											<span className="shrink-0 whitespace-nowrap text-right font-mono text-[0.65rem] tabular-nums text-slate-500 dark:text-gray-400">
+												[{entry.finalTokenLexindex}] ({entry.receivedAt})
+											</span>
+										</li>
+									))}
+								</ul>
+							)}
+						</div>
 					</div>
 				</div>
 			</div>
