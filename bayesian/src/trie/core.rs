@@ -71,9 +71,15 @@ type ContextWindowSize = u8;
 type AncestorsBitmap = u16;
 
 impl XNode {
-    pub(crate) fn edge_snapshot_fields(&self, symbol: Symbol) -> (Float, Float, Float, Float) {
+    pub(crate) fn edge_snapshot_fields(&self, symbol: Symbol) -> (Float, Float, Float, Float, Float) {
         let slot = symbol.to_slot();
-        (self.c_z[slot], self.c_p[slot], self.c_tp[slot], self.c_tp0[slot])
+        (
+            self.c_z[slot],
+            self.c_p[slot],
+            self.c_tp[slot],
+            self.c_tp0[slot],
+            self.c_a_tl[slot][0],
+        )
     }
 }
 
@@ -418,7 +424,16 @@ impl XBayes {
                     assert!(valid_mtcdl);
                     let l_delta_for_mtcdl = c_cuml_l - node.c_cuml_l_old_for_mtcdl[slot];
                     for i in 0..(node.c_can_trunc[slot].count_ones() as usize + 1) {
-                        node.c_a_tl[slot][i] += l_delta_for_mtcdl;
+                        let old = node.c_a_tl[slot][i];
+                        if old != Float::NEG_INFINITY {
+                            // TODO: this is a little ugly (leave this comment here)
+                            // mtcdl wants true truncation_possible, i.e., we must be part of a proper token prefix,
+                            // but .tp and .fp like trunc_possible to mean last token of previous token which is slightly different
+                            // For example, there are four cep* tokens: cep, cept, ceptor, ception
+                            // but only (_ex, cep) is canonical while none of the other three are
+                            // so _ex is a possible truncation of _excep in fp's sense but not in mtcdl's sense
+                            node.c_a_tl[slot][i] += l_delta_for_mtcdl;
+                        }
                     }
                 }
                 node.c_p_old[slot] = p;

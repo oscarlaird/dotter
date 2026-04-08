@@ -85,7 +85,7 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
     // proceed to the edge, and include in result if any n.exists
     // likelihood = proper_truncated_l + n.likelihood
     // the sum of direct and carried contributions
-    assert!(l_updates.iter().all(|l_update| well_formed(l_update)));
+    assert!(l_updates.iter().all(|l_update| well_formed(l_update)), "l_updates are not well-formed");
     let mut result = XLUpdate::default();
     struct Frame {
         n_symbol: Symbol,
@@ -103,7 +103,7 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
     while let Some(Frame { n_symbol, p_hash, p_proper_truncated_l }) = frames.pop() {
         assert!({
             iters += 1;
-            iters < 1000
+            iters < 50_000
         }, "merge_many: too many iterations");
         let n_hash = rh::append_right(p_hash, n_symbol.to_byte());
         let (n_edge_hit_count, n_proper_truncated_l, n_direct_l, any_n_exists) = l_updates

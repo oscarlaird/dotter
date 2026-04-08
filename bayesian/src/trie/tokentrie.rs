@@ -55,6 +55,18 @@ impl XBayes {
             }
             cur_hash = rh::pop_right(cur_hash, symbol.to_byte());
         }
+        if let Some(entry) = l_update.get(&cur_hash) {
+            return (entry.likelihood, on_or_beyond_edge);
+        }
+        debug_assert!({
+            let a_hash = cur_hash;
+            let a_on_or_beyond_edge = l_update.get(&a_hash).map(|entry| entry.is_leaf).unwrap_or(true);
+            !a_on_or_beyond_edge
+            }, 
+            "traverse_and_count_l: should not be called when a_hash is on or beyond the edge\n  a_hash: {cur_hash:#x}\n  b_hash: {b_hash:#x}\n  suffix_chars: {:?}",
+            suffix_chars.iter().map(|s| s.to_byte()).collect::<Vec<_>>()
+        );
+   
         panic!("traversed from b_hash to a_hash without hitting the l_update");
     }
 
@@ -114,16 +126,20 @@ impl XBayes {
             // PRIOR
             // determine how much likelihood was accumulated from our parent to us
             let (cuml_l, hit_cuml_edge) = match this_item.kind {
-                QueueItemKind::Root => (ZERO, false),
-                QueueItemKind::Continuation { parent_hash, token_lexindex, cuml_l , hit_cuml_edge } => {
+                QueueItemKind::Root => {
+                    let cuml_l = self.cum_likelihood.get(&ROOT_HASH).unwrap().likelihood;
+                    let hit_cuml_edge = self.cum_likelihood.get(&ROOT_HASH).unwrap().is_leaf;
+                    (cuml_l, hit_cuml_edge)
+                }
+                QueueItemKind::Continuation { token_lexindex, cuml_l , hit_cuml_edge, .. } => {
                     if hit_cuml_edge {
                         (cuml_l, true)
                     } else {
                         let token_str = self.tokenizer.token_at(token_lexindex);
                         let token_symbols = Symbol::string_to_vec(token_str);
                         XBayes::traverse_and_count_l(
-                            &self.pending_likelihood,
-                            parent_hash,
+                            &self.cum_likelihood,
+                            this_hash,
                             &token_symbols[..],
                         )
                     }
@@ -179,7 +195,7 @@ impl XBayes {
             let is_interior_of_cuml = cuml.get(&node_hash).map(|entry| !entry.is_leaf).unwrap_or(false);
             is_interior_of_cuml
         }, "set_tl_array: node_hash is not in the interior of the cum_likelihood");
-        let node_cuml_l = cuml.get(&node_hash).map(|entry| entry.likelihood).unwrap();
+        let node_cuml_l = cuml.get(&node_hash).unwrap().likelihood;
         //
         // we always need nodes to be available in the interior of the cum_likelihood
         struct Frame {
@@ -205,21 +221,26 @@ impl XBayes {
                 let c_cuml_l = cuml.get(&c_full_hash).map(|entry| entry.likelihood).unwrap_or(n_cuml_l);
                 let c_cuml_hit_edge = cuml.get(&c_full_hash).map(|entry| entry.is_leaf).unwrap_or(true);
 
-                if c_cuml_hit_edge {
-                    let range = self.tokenizer.token_lex_range_for_prefix_hash(&c_suffix_hash);
-                    let subslice = &mut tl_array[range.0.as_usize()..range.1.as_usize()];
-                    subslice.fill(c_cuml_l);
-                    continue;
-                }
                 if self.tokenizer.token_hashset.contains(&c_suffix_hash) {
                     // we've hit a full token, without hitting the clf; need to use mtcdl
                     let lexindex = self.tokenizer.lex_index_for_token_hash(&c_suffix_hash);
                     let node = nodes.get(&n_full_hash).unwrap();
                     // TODO: this is a little ugly
                     let l_delta_mtcdl = c_cuml_l - node.c_cuml_l_old_for_mtcdl[slot];
-                    tl_array[lexindex.as_usize()] = node.c_a_tl[slot][0] + l_delta_mtcdl;
+                    let new_mtcdl0 = node.c_a_tl[slot][0] + l_delta_mtcdl;
+                    tl_array[lexindex.as_usize()] = new_mtcdl0;
+                    debug_assert!({
+                        !c_cuml_hit_edge ||
+                        f32::from(new_mtcdl0 - c_cuml_l).abs() < 1e-5
+                    })
                 }
                 if !self.tokenizer.proper_prefix_hashset.contains(&c_suffix_hash) {
+                    continue;
+                }
+                if c_cuml_hit_edge {
+                    let range = self.tokenizer.token_lex_range_for_prefix_hash(&c_suffix_hash);
+                    let subslice = &mut tl_array[range.0.as_usize()..range.1.as_usize()];
+                    subslice.fill(c_cuml_l);
                     continue;
                 }
                 frames.push(Frame { suffix_hash: c_suffix_hash, suffix_length: c_suffix_length, n_cuml_l: c_cuml_l});

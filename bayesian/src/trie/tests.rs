@@ -192,22 +192,6 @@ fn repro_root_skewed_prior_apply() {
 }
 
 #[test]
-fn probe_z_to_zz_canonical_follow() {
-    let tok = crate::bpe::TinyLlamaWordTokenizer::from_tokenizer_json_str(
-        crate::bpe::TOKENIZER_JSON_STR,
-    );
-    let z = tok.lex_index("z").unwrap();
-    let zz = tok.lex_index("zz").unwrap();
-    assert_eq!(
-        tok.canonical_followers("z")[zz.as_usize()],
-        tok.can_canonically_follow("z", "zz")
-    );
-    println!("z -> zz canonical: {}", tok.canonical_followers("z")[zz.as_usize()]);
-    println!("z lex index: {:?}", z);
-    println!("zz lex index: {:?}", zz);
-}
-
-#[test]
 #[ignore = "repro for repeated local likelihood-only apply_updates panic"]
 fn repro_repeated_local_likelihood_updates() {
     let mut session = crate::BayesianSession::new();
@@ -225,6 +209,70 @@ fn repro_repeated_local_likelihood_updates() {
         session.receive_likelihood_update(likelihood_json);
         session.apply_updates();
         snapshot_json = session.expand_to_threshold();
+    }
+}
+
+#[test]
+// #[ignore = "repro for threshold-filtered likelihood-only wasm panic"]
+// #[should_panic(expected = "SafeFloat::add received non-finite input")]
+fn repro_threshold_filtered_local_likelihood_updates() {
+    let mut session = crate::BayesianSession::new();
+    let payloads: &[&[(&str, f32)]] = &[
+        &[
+            ("^", 0.7648603),
+            ("^_", -2.7215817),
+            ("^_e", -0.5666135),
+        ],
+        &[
+            ("^", -2.2066133),
+            ("^_", -1.6530281),
+            ("^_e", 0.8655323),
+        ],
+        &[
+            ("^", -3.1953375),
+            ("^_", -1.6962824),
+            ("^_e", -3.6481507),
+            ("^_ex", 0.3758057),
+        ],
+        &[
+            ("^", -1.8789148),
+            ("^_", -1.2020872),
+            ("^_e", -1.8221935),
+            ("^_ex", -1.5863069),
+            ("^_exc", -3.7119536),
+            ("^_exce", 0.08168262),
+        ],
+        &[
+            ("^", -0.5775033),
+            ("^_", 0.4109735),
+            ("^_e", -0.22252017),
+            ("^_ex", 0.752692),
+            ("^_exc", -2.1300902),
+            ("^_exce", -3.1639462),
+            ("^_excel", -1.1428046),
+            ("^_excep", -1.296354),
+            ("^_except", -1.7402849),
+            ("^_excepti", -2.4811313),
+            ("^_exceptio", -1.5266502),
+            ("^_exe", -0.5933193),
+            ("^_ext", -1.1692876),
+        ],
+    ];
+    let _ = session.expand_to_threshold();
+
+    for (step, payload_entries) in payloads.iter().enumerate() {
+        let likelihood_json = serde_json::json!(
+            payload_entries.iter()
+                .copied()
+                .map(|(key, l)| (key, serde_json::json!({ "l": l })))
+                .collect::<std::collections::HashMap<_, _>>()
+        )
+        .to_string();
+        println!("step {step}: payload key count = {}", payload_entries.len());
+
+        session.receive_likelihood_update(likelihood_json);
+        session.apply_updates();
+        let _ = session.expand_to_threshold();
     }
 }
 

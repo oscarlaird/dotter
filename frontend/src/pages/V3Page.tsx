@@ -18,6 +18,10 @@ const DEFAULT_LIKELIHOOD_MODEL: LikelihoodModel = {
 	period: 1.1,
 };
 
+const RECENT_CONSOLE_ERROR_LIMIT = 20;
+let wasmPanicConsoleCaptureInstalled = false;
+let recentConsoleErrors: string[] = [];
+
 function logaddexp(a: number, b: number): number {
 	if (a === -Infinity) return b;
 	if (b === -Infinity) return a;
@@ -73,6 +77,67 @@ function formatStepError(step: string, err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
 	console.error(`[V3Page] ${step}`, err);
 	return `${step}: ${message}`;
+}
+
+function stringifyConsoleArg(arg: unknown): string {
+	if (arg instanceof Error) {
+		return arg.stack ? `${arg.message}\n${arg.stack}` : arg.message;
+	}
+	if (typeof arg === 'string') {
+		return arg;
+	}
+	try {
+		return JSON.stringify(arg);
+	} catch {
+		return String(arg);
+	}
+}
+
+function installWasmPanicConsoleCapture(): void {
+	if (wasmPanicConsoleCaptureInstalled) {
+		return;
+	}
+	const originalConsoleError = console.error.bind(console);
+	console.error = (...args: unknown[]) => {
+		const text = args.map(stringifyConsoleArg).join(' ');
+		recentConsoleErrors.push(text);
+		if (recentConsoleErrors.length > RECENT_CONSOLE_ERROR_LIMIT) {
+			recentConsoleErrors = recentConsoleErrors.slice(-RECENT_CONSOLE_ERROR_LIMIT);
+		}
+		originalConsoleError(...args);
+	};
+	wasmPanicConsoleCaptureInstalled = true;
+}
+
+function latestRustPanicConsoleMessage(): string | null {
+	for (let i = recentConsoleErrors.length - 1; i >= 0; i -= 1) {
+		const entry = recentConsoleErrors[i];
+		if (entry.includes('panicked at') || entry.includes('console_error_panic_hook')) {
+			return entry;
+		}
+	}
+	return null;
+}
+
+function detailedWasmTrapMessage(err: unknown): string {
+	const header =
+		err instanceof Error && err.message
+			? `BayesianSession trapped in wasm after ${err.message}`
+			: `BayesianSession trapped in wasm after ${String(err)}`;
+	const jsStack =
+		err instanceof Error && err.stack && !err.stack.startsWith(err.message)
+			? err.stack
+			: null;
+	const rustPanic = latestRustPanicConsoleMessage();
+	const parts = [header];
+	if (rustPanic) {
+		parts.push(`Rust panic:\n${rustPanic}`);
+	}
+	if (jsStack) {
+		parts.push(`JS stack:\n${jsStack}`);
+	}
+	parts.push('Press Reset to recover.');
+	return parts.join('\n\n');
 }
 
 function isWasmTrapError(err: unknown): boolean {
@@ -173,9 +238,7 @@ function V3Page() {
 			} catch (err) {
 				if (isWasmTrapError(err)) {
 					sessionTrappedRef.current = true;
-					const message = err instanceof Error ? err.message : String(err);
-					sessionTrapMessageRef.current =
-						`BayesianSession trapped in wasm after ${message}; press Reset to recover`;
+					sessionTrapMessageRef.current = detailedWasmTrapMessage(err);
 					throw new Error(sessionTrapMessageRef.current);
 				}
 				throw err;
@@ -269,6 +332,7 @@ function V3Page() {
 						bootstrapPromiseRef.current = (async () => {
 							try {
 								await initBayesianWasm();
+								installWasmPanicConsoleCapture();
 								initPanicHook();
 								if (
 									import.meta.env.DEV &&
@@ -608,7 +672,7 @@ function V3Page() {
 						</div>
 					)}
 					{error && (
-						<div className="shrink-0 rounded border border-red-400/70 bg-red-50 px-2 py-1.5 text-xs text-red-900 dark:border-red-500/40 dark:bg-red-950/50 dark:text-red-200">
+						<div className="shrink-0 whitespace-pre-wrap break-words rounded border border-red-400/70 bg-red-50 px-2 py-1.5 text-xs text-red-900 dark:border-red-500/40 dark:bg-red-950/50 dark:text-red-200">
 							{error}
 						</div>
 					)}

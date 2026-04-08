@@ -164,6 +164,7 @@ impl BayesianSession {
             p: Option<Float>,
             tp: Option<Float>,
             tp0: Option<Float>,
+            a_tl0: Option<Float>,
             symbol: Symbol,
         }
         let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
@@ -172,7 +173,7 @@ impl BayesianSession {
             let n = if n_hash == super::ROOT_HASH {
                 let s = super::ROOT_STRING.to_string();
                 let z = self.trie.nodes.get(&super::ROOT_HASH).unwrap().if_root_then_z;
-                NString { string: s, z, p: None, tp: None, tp0: None, symbol }
+                NString { string: s, z, p: None, tp: None, tp0: None, a_tl0: None, symbol }
             } else {
                 let p_hash = rh::pop_right(n_hash, symbol.to_byte());
                 // p_hash is guaranteed to be in the snapshot_by_hash
@@ -180,8 +181,8 @@ impl BayesianSession {
                 let p_string = snapshot_by_hash.get(&p_hash).unwrap().string.clone();
                 let p_node = self.trie.nodes.get(&p_hash).unwrap();
                 let s = p_string + &(symbol.to_byte() as char).to_string();
-                let (z, p, tp, tp0) = p_node.edge_snapshot_fields(symbol);
-                NString { string: s, z, p: Some(p), tp: Some(tp), tp0: Some(tp0), symbol }
+                let (z, p, tp, tp0, a_tl0) = p_node.edge_snapshot_fields(symbol);
+                NString { string: s, z, p: Some(p), tp: Some(tp), tp0: Some(tp0), a_tl0: Some(a_tl0), symbol }
             };
             snapshot_by_hash.insert(n_hash, n);
         }
@@ -192,6 +193,7 @@ impl BayesianSession {
             p: Option<f32>,
             tp: Option<f32>,
             tp0: Option<f32>,
+            a_tl0: Option<f32>,
             symbol: Symbol,
             hash: rh::Hash,
         }
@@ -202,6 +204,7 @@ impl BayesianSession {
                     p: n_string.p.map(into_f32),
                     tp: n_string.tp.map(into_f32),
                     tp0: n_string.tp0.map(into_f32),
+                    a_tl0: n_string.a_tl0.map(into_f32),
                     symbol: n_string.symbol,
                     hash
                 }))

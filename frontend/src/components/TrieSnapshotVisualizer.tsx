@@ -24,6 +24,7 @@ export interface ExpandedSnapshotNode {
 	p: number | null;
 	tp: number | null;
 	tp0: number | null;
+	a_tl0: number | null;
 	hash: number;
 }
 
@@ -549,6 +550,7 @@ function TrieSnapshotVisualizer({
 					formatStat('tp', node.node.tp),
 					formatStat('tp0', node.node.tp0),
 					formatStat('p', node.node.p),
+					formatStat('a_tl[0]', node.node.a_tl0),
 				];
 				ctx.font = `${debugFontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
 				ctx.fillStyle = debugColor;
