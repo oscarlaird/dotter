@@ -11,6 +11,8 @@ use crate::bpe::NUM_TOKENS;
 
 mod sparse16;
 mod y_walker;
+#[cfg(test)]
+pub(crate) mod debug;
 
 use super::{
     MAX_TOKEN_LENGTH, ROOT_HASH, logaddexp,

@@ -111,12 +111,7 @@ impl BayesianSession {
     }
 
     pub fn expand_to_threshold(&mut self) -> String {
-        if !self.trie.pending_prior.is_empty()
-            || !self.trie.pending_likelihood.is_empty()
-        {
-            self.apply_updates();
-        }
-
+        assert!(self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1, "Tried to expand with unprocessed updates");
         let nodes_list = match self.trie.recalc_to_frontier(
             RecalcType::Expand { threshold: Float::from(super::TRIE_EXPANSION_THRESHOLD as f32) },
         ) {

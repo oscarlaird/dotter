@@ -61,8 +61,6 @@ def _bayes_string_to_model_text(full_string: str) -> str:
     if not full_string.startswith(ROOT_MARKER):
         raise ValueError(f"expected requested prior to start with {ROOT_MARKER!r}: {full_string!r}")
     surface = full_string.removeprefix(ROOT_MARKER)
-    if surface.startswith("_"):
-        surface = surface[1:]
     return surface.replace("_", " ")
 
 

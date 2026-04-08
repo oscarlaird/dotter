@@ -394,6 +394,88 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
     let _ = session.expand_to_threshold();
 }
 
+/// One root prior from `testdata/root_lm_prior.json` (no likelihood); then what `z` does
+/// `expand_to_threshold` associate with `^_` and `^__`? Same numbers as `parent.c_z[slot]`
+/// on the root / `^_` node for the `Space` child (`session.rs` snapshot rule).
+///
+/// Regenerate the fixture with `backend/export_root_prior_for_tests.py` if needed.
+#[cfg(not(feature = "wasm"))]
+#[test]
+fn trie_explore_z_under_after_root_lm_prior_fixture() {
+    use crate::rolling_hash as rh;
+    use crate::safe_float::into_f32;
+    use crate::symbol::Symbol;
+    use crate::trie::ROOT_HASH;
+
+    #[derive(Deserialize)]
+    struct SnapshotEntry {
+        z: f32,
+        hash: rh::Hash,
+    }
+
+    let mut session = crate::BayesianSession::new();
+    session.receive_prior_update(
+        include_str!("../../testdata/root_lm_prior.json")
+            .trim()
+            .to_string(),
+    );
+    session.apply_updates();
+    let snapshot_json = session.expand_to_threshold();
+    let snapshot: std::collections::HashMap<String, SnapshotEntry> =
+        serde_json::from_str(&snapshot_json).unwrap();
+
+    let h_under = rh::append_right(ROOT_HASH, Symbol::Space.to_byte());
+    let h_under_under = rh::append_right(h_under, Symbol::Space.to_byte());
+    let root = session.trie.nodes.get(&ROOT_HASH).unwrap();
+    let under = session.trie.nodes.get(&h_under).unwrap();
+
+    println!("root.if_root_then_z = {:?}", root.if_root_then_z);
+    println!(
+        "{}",
+        crate::trie::core::debug::format_node_slot_dump(root, "root", Symbol::Space)
+    );
+    println!(
+        "{}",
+        crate::trie::core::debug::format_node_slot_dump(under, "^_", Symbol::Space)
+    );
+
+    for (path, parent_hash, slot) in [
+        ("^_", ROOT_HASH, Symbol::Space.to_slot()),
+        ("^__", h_under, Symbol::Space.to_slot()),
+    ] {
+        let entry = snapshot
+            .get(path)
+            .unwrap_or_else(|| panic!("{path} missing from expand_to_threshold snapshot"));
+        let expect_hash = if path == "^_" {
+            h_under
+        } else {
+            h_under_under
+        };
+        if entry.hash != expect_hash {
+            panic!(
+                "{path}: snapshot hash {:?} != trie hash {:?}",
+                entry.hash, expect_hash
+            );
+        }
+        let parent = session
+            .trie
+            .nodes
+            .get(&parent_hash)
+            .unwrap_or_else(|| panic!("parent trie node missing for {path}"));
+        let z_edge = parent.c_z[slot];
+        println!(
+            "{path}: snapshot z={} parent.c_z[slot] f32={} (match expand rule)",
+            entry.z,
+            into_f32(z_edge),
+        );
+    }
+
+    println!(
+        "^__ node present in trie: {}",
+        session.trie.nodes.contains_key(&h_under_under)
+    );
+}
+
 #[cfg(not(feature = "wasm"))]
 #[test]
 fn debug_z_after_first_expand_caret_space_space() {

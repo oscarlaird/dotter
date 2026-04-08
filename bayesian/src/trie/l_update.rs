@@ -1,4 +1,4 @@
-use crate::trie::{ROOT_HASH, INVALID_HASH};
+use crate::trie::ROOT_HASH;
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
