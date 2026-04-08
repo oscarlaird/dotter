@@ -80,6 +80,29 @@ function displaySymbol(symbol: string): string {
 	return symbol;
 }
 
+/** Timer circle center and drawn radius (must match the glyph/timer pass). */
+function timerCircleGeometry(
+	node: VisualNode,
+	currentTime: number,
+	getTweenedValue: (fullString: string, property: string, t: number) => number,
+	scaleX: (layoutX: number) => number,
+	scaleSize: (layoutSize: number) => number,
+): { cx: number; cy: number; r: number } {
+	const displayText = displaySymbol(node.symbol);
+	let timerRadius = TIMER_RADIUS;
+	if (displayText === 'm' || displayText === 'w') {
+		timerRadius *= 1.15;
+	}
+	timerRadius = Math.max(6, scaleSize(timerRadius));
+	const lx = getTweenedValue(node.fullString, 'x', currentTime);
+	const ly = getTweenedValue(node.fullString, 'y', currentTime);
+	const lw = getTweenedValue(node.fullString, 'width', currentTime);
+	const lh = getTweenedValue(node.fullString, 'height', currentTime);
+	const cx = scaleX(lx + lw - TIMER_RADIUS);
+	const cy = ly + lh / 2;
+	return { cx, cy, r: timerRadius };
+}
+
 function timerColor(symbol: string): [number, number, number] {
 	if (symbol === '_') {
 		return colorFromLetter(' ');
@@ -417,23 +440,17 @@ function TrieSnapshotVisualizer({
 			}
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const stroke = connectorStrokeStyle(r, g, b, lightBackground);
-			const nx = getTweenedValue(node.fullString, 'x', currentTime);
-			const ny = getTweenedValue(node.fullString, 'y', currentTime);
-			const nw = getTweenedValue(node.fullString, 'width', currentTime);
-			const nh = getTweenedValue(node.fullString, 'height', currentTime);
-			const px = getTweenedValue(parent.fullString, 'x', currentTime);
-			const py = getTweenedValue(parent.fullString, 'y', currentTime);
-			const pw = getTweenedValue(parent.fullString, 'width', currentTime);
-			const ph = getTweenedValue(parent.fullString, 'height', currentTime);
-			const startX = scaleX(nx + nw);
-			const startY = ny + nh / 2;
-			const endX = scaleX(px + pw);
-			const endY = py + ph / 2;
-			const midX = (startX + endX) / 2;
+			const childGeom = timerCircleGeometry(node, currentTime, getTweenedValue, scaleX, scaleSize);
+			const parentGeom = timerCircleGeometry(parent, currentTime, getTweenedValue, scaleX, scaleSize);
+			// Parent sits left of child: leave parent circle on the right, enter child circle on the left.
+			const startX = parentGeom.cx + parentGeom.r;
+			const startY = parentGeom.cy;
+			const endX = childGeom.cx - childGeom.r;
+			const endY = childGeom.cy;
 
 			ctx.beginPath();
 			ctx.moveTo(startX, startY);
-			ctx.bezierCurveTo(midX, startY, midX, endY, endX, endY);
+			ctx.lineTo(endX, endY);
 			ctx.strokeStyle = stroke;
 			ctx.lineWidth = Math.max(1, scaleSize(2));
 			ctx.stroke();
@@ -445,19 +462,14 @@ function TrieSnapshotVisualizer({
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const timer = timers[node.fullString];
 			const timerFrac = timer ? timerFraction(time, timer.phase, period) : 0;
-			let timerRadius = TIMER_RADIUS;
-			let timerFontSize = TIMER_FONT_SIZE;
-			if (displayText === 'm' || displayText === 'w') {
-				timerRadius *= 1.15;
-			}
-			timerRadius = Math.max(6, scaleSize(timerRadius));
-			timerFontSize = Math.max(10, scaleSize(timerFontSize));
-			const lx = getTweenedValue(node.fullString, 'x', currentTime);
-			const ly = getTweenedValue(node.fullString, 'y', currentTime);
-			const lw = getTweenedValue(node.fullString, 'width', currentTime);
-			const lh = getTweenedValue(node.fullString, 'height', currentTime);
-			const cx = scaleX(lx + lw - TIMER_RADIUS);
-			const cy = ly + lh / 2;
+			const timerFontSize = Math.max(10, scaleSize(TIMER_FONT_SIZE));
+			const { cx, cy, r: timerRadius } = timerCircleGeometry(
+				node,
+				currentTime,
+				getTweenedValue,
+				scaleX,
+				scaleSize,
+			);
 
 			ctx.beginPath();
 			ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 1)`;
