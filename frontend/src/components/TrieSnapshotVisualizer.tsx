@@ -103,25 +103,23 @@ function nodePassesThreshold(
 	return showAll || node.node.z - rootZ > expansionThreshold;
 }
 
-/** Timer circle center and drawn radius (must match the glyph/timer pass). */
+/** Timer circle center and radius — fixed CSS px like V2 TrieVisualizer (not scaled with fit-to-width). */
 function timerCircleGeometry(
 	node: VisualNode,
 	currentTime: number,
 	getTweenedValue: (fullString: string, property: string, t: number) => number,
 	scaleX: (layoutX: number, fullString: string) => number,
-	scaleSize: (layoutSize: number) => number,
 ): { cx: number; cy: number; r: number } {
 	const displayText = displaySymbol(node.symbol);
 	let timerRadius = TIMER_RADIUS;
 	if (displayText === 'm' || displayText === 'w') {
 		timerRadius *= 1.15;
 	}
-	timerRadius = Math.max(6, scaleSize(timerRadius));
 	const lx = getTweenedValue(node.fullString, 'x', currentTime);
 	const ly = getTweenedValue(node.fullString, 'y', currentTime);
 	const lw = getTweenedValue(node.fullString, 'width', currentTime);
 	const lh = getTweenedValue(node.fullString, 'height', currentTime);
-	const cx = scaleX(lx + lw - TIMER_RADIUS, node.fullString);
+	const cx = scaleX(lx + lw, node.fullString) - TIMER_RADIUS;
 	const cy = ly + lh / 2;
 	return { cx, cy, r: timerRadius };
 }
@@ -378,7 +376,8 @@ function TrieSnapshotVisualizer({
 		let contentWidth = 0;
 		let maxDepth = 0;
 		for (const node of Object.values(laidOutNodes)) {
-			contentWidth = Math.max(contentWidth, node.x + node.width + TIMER_RADIUS * 3);
+			// Extra layout slack so fixed-size circles (V2-sized) don’t crowd the viewport edge when scale < 1.
+			contentWidth = Math.max(contentWidth, node.x + node.width + TIMER_RADIUS * 6);
 			maxDepth = Math.max(maxDepth, nodeDepth(node.fullString));
 		}
 		const horizontalPadding = 12;
@@ -485,8 +484,8 @@ function TrieSnapshotVisualizer({
 			}
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const stroke = connectorStrokeStyle(r, g, b, lightBackground);
-			const childGeom = timerCircleGeometry(node, currentTime, getTweenedValue, scaleX, scaleSize);
-			const parentGeom = timerCircleGeometry(parent, currentTime, getTweenedValue, scaleX, scaleSize);
+			const childGeom = timerCircleGeometry(node, currentTime, getTweenedValue, scaleX);
+			const parentGeom = timerCircleGeometry(parent, currentTime, getTweenedValue, scaleX);
 			// Parent sits left of child: leave parent circle on the right, enter child circle on the left.
 			const startX = parentGeom.cx + parentGeom.r;
 			const startY = parentGeom.cy;
@@ -497,7 +496,7 @@ function TrieSnapshotVisualizer({
 			ctx.moveTo(startX, startY);
 			ctx.lineTo(endX, endY);
 			ctx.strokeStyle = stroke;
-			ctx.lineWidth = Math.max(1, scaleSize(2));
+			ctx.lineWidth = 2;
 			ctx.stroke();
 			ctx.closePath();
 		}
@@ -507,19 +506,18 @@ function TrieSnapshotVisualizer({
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const timer = timers[node.fullString];
 			const timerFrac = timer ? timerFraction(time, timer.phase, period) : 0;
-			const timerFontSize = Math.max(10, scaleSize(TIMER_FONT_SIZE));
+			const timerFontSize = TIMER_FONT_SIZE;
 			const { cx, cy, r: timerRadius } = timerCircleGeometry(
 				node,
 				currentTime,
 				getTweenedValue,
 				scaleX,
-				scaleSize,
 			);
 
 			ctx.beginPath();
 			ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 1)`;
 			if (node.symbol === '$') {
-				const squareSize = Math.max(8, scaleSize(17));
+				const squareSize = 17;
 				ctx.fillRect(cx - squareSize / 2, cy - squareSize / 2, squareSize, squareSize);
 			} else if (displayText) {
 				ctx.font = `${timerFontSize}px verdana, helvetica, sans-serif`;
@@ -532,14 +530,14 @@ function TrieSnapshotVisualizer({
 			ctx.beginPath();
 			ctx.arc(cx, cy, timerRadius, 0, 2 * Math.PI * timerFrac);
 			ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${timerFrac * 0.9 + 0.1})`;
-			ctx.lineWidth = Math.max(1, scaleSize(TIMER_STROKE_WIDTH));
+			ctx.lineWidth = TIMER_STROKE_WIDTH;
 			ctx.stroke();
 			ctx.closePath();
 
 			if (showDebugStats) {
-				const debugFontSize = Math.max(8, scaleSize(9));
-				const debugLineHeight = Math.max(9, debugFontSize + 1);
-				const debugY = cy + timerRadius + Math.max(2, scaleSize(3));
+				const debugFontSize = 9;
+				const debugLineHeight = debugFontSize + 1;
+				const debugY = cy + timerRadius + 3;
 				const debugColor = lightBackground
 					? 'rgba(15, 23, 42, 0.9)'
 					: 'rgba(255, 255, 255, 0.9)';

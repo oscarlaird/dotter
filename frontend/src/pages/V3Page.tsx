@@ -5,6 +5,7 @@ import initBayesianWasm, {
 	initPanicHook,
 } from '../wasm_pkg/bayesian';
 import CalibrationSettings, { type LikelihoodModel } from '../components/CalibrationSettings';
+import Eye from '../components/Eye';
 import TrieSnapshotVisualizer from '../components/TrieSnapshotVisualizer';
 import type {
 	ExpandedSnapshot,
@@ -153,6 +154,15 @@ interface PredictionLogEntry {
 }
 
 const V3_THEME_STORAGE_KEY = 'dotter-v3-theme';
+const V3_BLINK_TO_CLICK_STORAGE_KEY = 'dotter-v3-blink-to-click';
+
+function readStoredBlinkToClick(): boolean {
+	try {
+		return localStorage.getItem(V3_BLINK_TO_CLICK_STORAGE_KEY) === 'true';
+	} catch {
+		return false;
+	}
+}
 
 function readStoredColorMode(): 'light' | 'dark' {
 	try {
@@ -194,6 +204,7 @@ function V3Page() {
 	const [showBoxes, setShowBoxes] = useState(true);
 	const [showDebugStats, setShowDebugStats] = useState(false);
 	const [showAll, setShowAll] = useState(false);
+	const [blinkToClick, setBlinkToClick] = useState(readStoredBlinkToClick);
 	const [expansionThreshold, setExpansionThreshold] = useState<number>(Number.NEGATIVE_INFINITY);
 
 	useEffect(() => {
@@ -203,6 +214,14 @@ function V3Page() {
 			// ignore
 		}
 	}, [colorMode]);
+
+	useEffect(() => {
+		try {
+			localStorage.setItem(V3_BLINK_TO_CLICK_STORAGE_KEY, blinkToClick ? 'true' : 'false');
+		} catch {
+			// ignore
+		}
+	}, [blinkToClick]);
 
 	useEffect(() => {
 		likelihoodModelRef.current = likelihoodModel;
@@ -480,39 +499,8 @@ function V3Page() {
 		};
 	}, [applySnapshot, enqueueSessionOp, recordPredictionLog, resetLocalSession, wasmReady]);
 
-	useEffect(() => {
-		if (!wasmReady) {
-			return;
-		}
-
-		const handleKeyDown = (event: KeyboardEvent) => {
-			const activeElement = document.activeElement;
-			if (
-				activeElement instanceof HTMLInputElement ||
-				activeElement instanceof HTMLTextAreaElement ||
-				activeElement instanceof HTMLSelectElement ||
-				activeElement?.getAttribute('contenteditable') === 'true'
-			) {
-				return;
-			}
-
-			if (event.key === 'Escape') {
-				void (async () => {
-					try {
-						await resetBothSides();
-						setError(null);
-					} catch (err) {
-						setError(err instanceof Error ? err.message : String(err));
-					}
-				})();
-				return;
-			}
-
-			if (event.code !== 'Space') {
-				return;
-			}
-			event.preventDefault();
-
+	const runLikelihoodPulse = useCallback(
+		(timeSeconds: number) => {
 			void (async () => {
 				if (!snapshot) {
 					return;
@@ -525,17 +513,13 @@ function V3Page() {
 					return;
 				}
 
-				const time =
-					event.timeStamp && event.timeStamp > 0
-						? event.timeStamp / 1000
-						: performance.now() / 1000;
 				const likelihoodPayload: Record<string, { l: number }> = {};
 				for (const [fullString, timer] of Object.entries(timers)) {
 					if (!(fullString in snapshot)) {
 						continue;
 					}
 					likelihoodPayload[fullString] = {
-						l: timerLikelihood(time, timer.phase, likelihoodModelRef.current),
+						l: timerLikelihood(timeSeconds, timer.phase, likelihoodModelRef.current),
 					};
 				}
 				const likelihoodJson = JSON.stringify(likelihoodPayload);
@@ -573,13 +557,55 @@ function V3Page() {
 			})().catch((err) => {
 				setError(err instanceof Error ? err.message : String(err));
 			});
+		},
+		[applySnapshot, enqueueSessionOp, snapshot, timers],
+	);
+
+	useEffect(() => {
+		if (!wasmReady) {
+			return;
+		}
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			const activeElement = document.activeElement;
+			if (
+				activeElement instanceof HTMLInputElement ||
+				activeElement instanceof HTMLTextAreaElement ||
+				activeElement instanceof HTMLSelectElement ||
+				activeElement?.getAttribute('contenteditable') === 'true'
+			) {
+				return;
+			}
+
+			if (event.key === 'Escape') {
+				void (async () => {
+					try {
+						await resetBothSides();
+						setError(null);
+					} catch (err) {
+						setError(err instanceof Error ? err.message : String(err));
+					}
+				})();
+				return;
+			}
+
+			if (event.code !== 'Space') {
+				return;
+			}
+			event.preventDefault();
+
+			const time =
+				event.timeStamp && event.timeStamp > 0
+					? event.timeStamp / 1000
+					: performance.now() / 1000;
+			runLikelihoodPulse(time);
 		};
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => {
 			window.removeEventListener('keydown', handleKeyDown);
 		};
-	}, [applySnapshot, enqueueSessionOp, resetBothSides, snapshot, timers, wasmReady]);
+	}, [resetBothSides, runLikelihoodPulse, wasmReady]);
 
 	return (
 		<div className={colorMode === 'dark' ? 'dark' : ''}>
@@ -607,11 +633,20 @@ function V3Page() {
 							</span>
 							<span className="text-slate-300 dark:text-white/25">·</span>
 							<span>
-								<code className="text-slate-800 dark:text-gray-300">Space</code> likelihood ·{' '}
+								<code className="text-slate-800 dark:text-gray-300">Space</code> / blink likelihood ·{' '}
 								<code className="text-slate-800 dark:text-gray-300">Esc</code> reset
 							</span>
 						</div>
 						<div className="flex shrink-0 items-center gap-3">
+							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
+								<input
+									type="checkbox"
+									checked={blinkToClick}
+									onChange={(e) => setBlinkToClick(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
+								/>
+								Blink to click
+							</label>
 							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
 								<input
 									type="checkbox"
@@ -677,22 +712,31 @@ function V3Page() {
 						</div>
 					)}
 
-					<div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-black/40 dark:shadow-none">
+					<div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-black/40 dark:shadow-none">
 						{loading ? (
 							<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-slate-500 dark:text-gray-400">
 								Loading bayesian session…
 							</div>
 						) : !error && snapshot ? (
-							<TrieSnapshotVisualizer
-								snapshot={snapshot}
-								timers={timers}
-								period={likelihoodModel.period}
-								expansionThreshold={expansionThreshold}
-								showAll={showAll}
-								lightBackground={colorMode === 'light'}
-								showBoxes={showBoxes}
-								showDebugStats={showDebugStats}
-							/>
+							<>
+								<TrieSnapshotVisualizer
+									snapshot={snapshot}
+									timers={timers}
+									period={likelihoodModel.period}
+									expansionThreshold={expansionThreshold}
+									showAll={showAll}
+									lightBackground={colorMode === 'light'}
+									showBoxes={showBoxes}
+									showDebugStats={showDebugStats}
+								/>
+								{blinkToClick && wasmReady && (
+									<Eye
+										onBlink={() => {
+											runLikelihoodPulse(performance.now() / 1000);
+										}}
+									/>
+								)}
+							</>
 						) : !error ? (
 							<div className="flex h-full min-h-[12rem] items-center justify-center text-sm text-slate-500 dark:text-gray-400">
 								Waiting for the first visible nodes.
