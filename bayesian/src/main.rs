@@ -49,7 +49,7 @@ fn encode_words_cli(tokenizer_path: &str, words: &[String]) -> ExitCode {
         let text = format!("{SPACESYMBOL}{body}");
         let encoded = tokenizer.tokenize_string_with_lex_indices(&text);
         let pieces: Vec<&str> = encoded.iter().map(|(piece, _)| piece.as_str()).collect();
-        let lex_indices: Vec<usize> = encoded.iter().map(|(_, idx)| *idx).collect();
+        let lex_indices: Vec<usize> = encoded.iter().map(|(_, idx)| idx.as_usize()).collect();
         println!("{word:?}");
         println!("  pieces: {pieces:?}");
         println!("  lex_indices: {lex_indices:?}");

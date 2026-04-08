@@ -3,12 +3,12 @@ use std::collections::BinaryHeap;
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 
+use crate::bpe::TokenLexIndex;
 use crate::symbol::{Symbol, RADIX};
 use crate::safe_float::{Float, ZERO};
 use crate::trie::core::XBayes;
 use crate::trie::l_update::XLUpdate;
 use crate::trie::ROOT_HASH;
-use crate::trie::{TokenLexIndex, INVALID_TOKEN_LEXINDEX};
 use crate::bpe::NUM_TOKENS;
 
 const MAX_CONTINUATIONS: usize = 100;
@@ -77,7 +77,7 @@ impl XBayes {
             let this_hash = match this_item.kind {
                 QueueItemKind::Root => ROOT_HASH,
                 QueueItemKind::Continuation { parent_hash, token_lexindex, .. } => {
-                    let token_str = self.tokenizer.token_at(token_lexindex as usize);
+                    let token_str = self.tokenizer.token_at(token_lexindex);
                     let token_hash = rh::hash_string(token_str);
                     let this_hash =rh::extend_right(parent_hash, token_hash, token_str.len());
                     self.queue_ancestor_map.insert(this_hash, token_lexindex);
@@ -92,7 +92,7 @@ impl XBayes {
                 let mut last_token_lexindex;
                 while cur_hash != ROOT_HASH {
                     last_token_lexindex = *self.queue_ancestor_map.get(&cur_hash).unwrap();
-                    let token_str = self.tokenizer.token_at(last_token_lexindex as usize);
+                    let token_str = self.tokenizer.token_at(last_token_lexindex);
                     let token_hash = rh::hash_string(token_str);
                     let rev_token_str = token_str.chars().rev().collect::<String>();
                     rev_str.push_str(&rev_token_str);
@@ -103,7 +103,7 @@ impl XBayes {
                 break RequestedPrior {
                     full_string,
                     last_token_lexindex: match this_item.kind {
-                        QueueItemKind::Root => INVALID_TOKEN_LEXINDEX,
+                        QueueItemKind::Root => TokenLexIndex::INVALID,
                         QueueItemKind::Continuation { token_lexindex, .. } => token_lexindex,
                     }
 
@@ -112,8 +112,6 @@ impl XBayes {
             // visit it
             self.queue.pop();
             // PRIOR
-            let cond_prior = &this_pred.follower_probs;
-            let canonical_followers = &this_pred.canonical_followers;
             // determine how much likelihood was accumulated from our parent to us
             let (cuml_l, hit_cuml_edge) = match this_item.kind {
                 QueueItemKind::Root => (ZERO, false),
@@ -121,7 +119,7 @@ impl XBayes {
                     if hit_cuml_edge {
                         (cuml_l, true)
                     } else {
-                        let token_str = self.tokenizer.token_at(token_lexindex as usize);
+                        let token_str = self.tokenizer.token_at(token_lexindex);
                         let token_symbols = Symbol::string_to_vec(token_str);
                         XBayes::traverse_and_count_l(
                             &self.pending_likelihood,
@@ -141,8 +139,9 @@ impl XBayes {
             // POSTERIOR (upper bound)
             let mut cond_posterior_ub = vec![Float::NAN; NUM_TOKENS].into_boxed_slice();
             for i in 0..NUM_TOKENS {
-                cond_posterior_ub[i] = if canonical_followers[i] {
-                    tl_array[i] + cond_prior[i]
+                let token_lexindex = TokenLexIndex::from_usize(i);
+                cond_posterior_ub[i] = if this_pred.canonical_follower(token_lexindex) {
+                    tl_array[i] + this_pred.follower_prob(token_lexindex)
                 } else {
                     Float::NEG_INFINITY
                 };
@@ -153,12 +152,13 @@ impl XBayes {
             });
             // push to heap
             for &ix in top_ix.iter().take(MAX_CONTINUATIONS) {
+                let token_lexindex = TokenLexIndex::from_usize(ix);
                 self.queue.push(QueueItem {
                     priority: this_item.p + cond_posterior_ub[ix],
-                    p: this_item.p + cond_prior[ix],
+                    p: this_item.p + this_pred.follower_prob(token_lexindex),
                     kind: QueueItemKind::Continuation {
                         parent_hash: this_hash,
-                        token_lexindex: ix as TokenLexIndex,
+                        token_lexindex,
                         cuml_l,
                         hit_cuml_edge,
                     }
@@ -207,7 +207,7 @@ impl XBayes {
 
                 if c_cuml_hit_edge {
                     let range = self.tokenizer.token_lex_range_for_prefix_hash(&c_suffix_hash);
-                    let subslice = &mut tl_array[range.0..range.1];
+                    let subslice = &mut tl_array[range.0.as_usize()..range.1.as_usize()];
                     subslice.fill(c_cuml_l);
                     continue;
                 }
@@ -217,7 +217,7 @@ impl XBayes {
                     let node = nodes.get(&n_full_hash).unwrap();
                     // TODO: this is a little ugly
                     let l_delta_mtcdl = c_cuml_l - node.c_cuml_l_old_for_mtcdl[slot];
-                    tl_array[lexindex] = node.c_a_tl[slot][0] + l_delta_mtcdl;
+                    tl_array[lexindex.as_usize()] = node.c_a_tl[slot][0] + l_delta_mtcdl;
                 }
                 if !self.tokenizer.proper_prefix_hashset.contains(&c_suffix_hash) {
                     continue;

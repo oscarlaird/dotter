@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 use bayesian::bpe::{NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_PATH, TinyLlamaWordTokenizer};
+use bayesian::bpe::{PrefixLexIndex, TokenLexIndex};
 
 const TRIE_MAX_TOKEN_LENGTH: usize = 16;
 
@@ -48,8 +49,13 @@ fn main() -> ExitCode {
             let first_middle_token_lex_index = middle_token_lex_indices[0];
             let last_middle_token_lex_index = *middle_token_lex_indices.last().unwrap();
 
-            if get_bit(&xi_rows[last_middle_token_lex_index], prefix_lex_index)
-                && get_bit(&zeta_rows[suffix_lex_index], first_middle_token_lex_index)
+            if get_bit(
+                &xi_rows[last_middle_token_lex_index.as_usize()],
+                prefix_lex_index.as_usize(),
+            ) && get_bit(
+                &zeta_rows[suffix_lex_index],
+                first_middle_token_lex_index.as_usize(),
+            )
             {
                 let middle_tokens = middle_token_lex_indices
                     .iter()
@@ -147,7 +153,7 @@ fn build_xi_and_zeta_rows(
     let mut xi_rows = Vec::with_capacity(token_count);
     let mut zeta_rows = vec![vec![0u64; token_word_count]; suffix_count];
     for first_lex_index in 0..token_count {
-        let psi = tokenizer.canonical_followers_for_lex_index(first_lex_index);
+        let psi = tokenizer.canonical_followers_for_lex_index(TokenLexIndex::from_usize(first_lex_index));
         let prefix_counts = tokenizer.count_true_tokens_by_prefix::<NUM_PREFIXES>(&psi);
         let mut xi_row = vec![0u64; prefix_word_count];
         for (prefix_lex_index, &count) in prefix_counts.iter().enumerate() {
@@ -197,20 +203,20 @@ fn slice_by_char_range<'a>(
 
 fn find_xi_witness_token(
     tokenizer: &TinyLlamaWordTokenizer,
-    last_middle_token_lex_index: usize,
-    prefix_lex_index: usize,
+    last_middle_token_lex_index: TokenLexIndex,
+    prefix_lex_index: PrefixLexIndex,
 ) -> Option<String> {
     let psi_row = tokenizer.canonical_followers_for_lex_index(last_middle_token_lex_index);
     let (start, stop) = tokenizer.token_lex_range_for_prefix_index(prefix_lex_index);
-    (start..stop)
+    (start.as_usize()..stop.as_usize())
         .find(|&second_lex_index| psi_row[second_lex_index])
-        .map(|second_lex_index| tokenizer.token_at(second_lex_index).to_string())
+        .map(|second_lex_index| tokenizer.token_at(TokenLexIndex::from_usize(second_lex_index)).to_string())
 }
 
 fn find_zeta_witness_token(
     tokenizer: &TinyLlamaWordTokenizer,
     token_suffix_before_h: &str,
-    first_middle_token_lex_index: usize,
+    first_middle_token_lex_index: TokenLexIndex,
 ) -> Option<String> {
     let second_token = tokenizer.token_at(first_middle_token_lex_index);
     tokenizer

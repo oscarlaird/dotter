@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
+use crate::bpe::TokenLexIndex;
 use crate::safe_float::{Float, into_f32};
 use crate::symbol::Symbol;
 use crate::trie::core::{XBayes, RecalcType, RecalcResult};
 use crate::trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
 use crate::trie::prediction::XPrediction;
 use crate::rolling_hash as rh;
-use crate::trie::TokenLexIndex;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "python")]

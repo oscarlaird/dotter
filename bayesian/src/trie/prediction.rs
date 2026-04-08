@@ -1,13 +1,12 @@
-use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, TinyLlamaWordTokenizer};
+use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, PrefixLexIndex, TinyLlamaWordTokenizer, TokenLexIndex};
 use crate::safe_float::Float;
 use super::{logaddexp};
-use crate::trie::{INVALID_TOKEN_LEXINDEX, TokenLexIndex};
 
 pub(crate) struct XPrediction {
-    pub(crate) canonical_followers: Box<[bool]>,
-    pub(crate) canonical_follower_for_prefix: Box<[bool]>,
-    pub(crate) follower_probs: Box<[Float]>,
-    pub(crate) follower_prob_for_prefix: Box<[Float]>,
+    canonical_followers: Box<[bool]>,
+    canonical_follower_for_prefix: Box<[bool]>,
+    follower_probs: Box<[Float]>,
+    follower_prob_for_prefix: Box<[Float]>,
 }
 
 impl XPrediction {
@@ -29,15 +28,16 @@ impl XPrediction {
             );
         }
 
-        let canonical_followers_array = if final_token_lexindex == INVALID_TOKEN_LEXINDEX {
+        let canonical_followers_array = if final_token_lexindex == TokenLexIndex::INVALID {
             vec![true; tokenizer.tokens().len()]
         } else {
-            tokenizer.canonical_followers_for_lex_index(final_token_lexindex as usize)
+            tokenizer.canonical_followers_for_lex_index(final_token_lexindex)
         };
         let canonical_counts_by_prefix =
             tokenizer.count_true_tokens_by_prefix::<NUM_PREFIXES>(&canonical_followers_array);
         let canonical_total = canonical_counts_by_prefix[tokenizer
-            .prefix_lex_index_for_prefix_hash(&0u64)]; // hash("")=0
+            .prefix_lex_index_for_prefix_hash(&0u64)
+            .as_usize()]; // hash("")=0
 
         assert!(canonical_total != 0, "canonical_total must not be zero");
         let log_canonical_total = Float::from(canonical_total as f32).ln();
@@ -101,8 +101,9 @@ impl XPrediction {
 
         let follower_prob_for_prefix = (0..NUM_PREFIXES)
             .map(|prefix_lex_index| {
+                let prefix_lex_index = PrefixLexIndex::from_usize(prefix_lex_index);
                 let (start, stop) = tokenizer.token_lex_range_for_prefix_index(prefix_lex_index);
-                follower_probs[start..stop]
+                follower_probs[start.as_usize()..stop.as_usize()]
                     .iter()
                     .copied()
                     .fold(Float::NEG_INFINITY, logaddexp)
@@ -117,5 +118,21 @@ impl XPrediction {
             follower_probs,
             follower_prob_for_prefix,
         }
+    }
+
+    pub(crate) fn canonical_follower(&self, token_lex_index: TokenLexIndex) -> bool {
+        self.canonical_followers[token_lex_index.as_usize()]
+    }
+
+    pub(crate) fn canonical_follower_for_prefix(&self, prefix_lex_index: PrefixLexIndex) -> bool {
+        self.canonical_follower_for_prefix[prefix_lex_index.as_usize()]
+    }
+
+    pub(crate) fn follower_prob(&self, token_lex_index: TokenLexIndex) -> Float {
+        self.follower_probs[token_lex_index.as_usize()]
+    }
+
+    pub(crate) fn follower_prob_for_prefix(&self, prefix_lex_index: PrefixLexIndex) -> Float {
+        self.follower_prob_for_prefix[prefix_lex_index.as_usize()]
     }
 }

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::Path;
+use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub mod prepared_allpairs;
@@ -19,6 +20,44 @@ pub use self::tokenizer_config::{
     NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_PATH, TOKENIZER_JSON_STR,
 };
 pub use self::word_tokenizer::{TinyLlamaPreparedFirstAllPairs, TinyLlamaWordTokenizer};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TokenLexIndex(u16);
+
+impl TokenLexIndex {
+    pub const INVALID: Self = Self(u16::MAX);
+
+    pub const fn from_u16(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    pub fn from_usize(raw: usize) -> Self {
+        Self(raw.try_into().expect("token lex index must fit in u16"))
+    }
+
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PrefixLexIndex(u16);
+
+impl PrefixLexIndex {
+    pub const fn from_u16(raw: u16) -> Self {
+        Self(raw)
+    }
+
+    pub fn from_usize(raw: usize) -> Self {
+        Self(raw.try_into().expect("prefix lex index must fit in u16"))
+    }
+
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
 
 /// Hugging Face / SentencePiece surface form in `tokenizer.json` only (not used after load).
 pub const HF_SPACE_MARKER: char = '\u{2581}';
@@ -832,7 +871,7 @@ mod tests {
         );
         assert_eq!(tok.token_at(hello), "_hello");
         assert!(tok.can_canonically_follow("_abc", "def"));
-        assert!(tok.lex_indices_with_left_spines().contains(&def));
+        assert!(tok.lex_indices_with_left_spines().contains(&def.as_usize()));
         assert_eq!(
             tok.tokenize_string_with_lex_indices("_abcdef"),
             vec![("_abc".to_string(), abc), ("def".to_string(), def)]
@@ -848,20 +887,22 @@ mod tests {
         let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
 
         for &first_lex_index in tok.lex_indices_with_left_spines() {
+            let first_lex_index = TokenLexIndex::from_usize(first_lex_index);
             let mask = tok.canonical_followers_for_lex_index(first_lex_index);
             assert_eq!(mask.len(), 6);
             let first_token = tok.token_at(first_lex_index);
 
             for &second_lex_index in tok.lex_indices_with_left_spines() {
+                let second_lex_index = TokenLexIndex::from_usize(second_lex_index);
                 let second_token = tok.token_at(second_lex_index);
                 let expected = tok.can_canonically_follow(first_token, second_token);
                 assert_eq!(
-                    mask[second_lex_index], expected,
-                    "mismatch for pair ({first_lex_index}, {second_lex_index})"
+                    mask[second_lex_index.as_usize()], expected,
+                    "mismatch for pair ({first_lex_index:?}, {second_lex_index:?})"
                 );
             }
 
-            assert!(!mask[tok.lex_index("<s>").expect("expected tokenizer token")]);
+            assert!(!mask[tok.lex_index("<s>").expect("expected tokenizer token").as_usize()]);
         }
     }
 
@@ -896,17 +937,26 @@ mod tests {
             vec!["", "<", "<s", "<s>", "a", "ab", "abc", "b", "c"]
         );
         assert_eq!(tok.prefix_count(), 9);
-        assert_eq!(tok.lex_index("ab"), Some(2));
-        assert_eq!(tok.prefix_lex_index("ab"), Some(5));
-        assert_eq!(tok.token_at(2), "ab");
-        assert_eq!(tok.prefix_at(5), "ab");
+        assert_eq!(tok.lex_index("ab"), Some(TokenLexIndex::from_u16(2)));
+        assert_eq!(tok.prefix_lex_index("ab"), Some(PrefixLexIndex::from_u16(5)));
+        assert_eq!(tok.token_at(TokenLexIndex::from_u16(2)), "ab");
+        assert_eq!(tok.prefix_at(PrefixLexIndex::from_u16(5)), "ab");
         assert!(tok.has_token_with_prefix("ab"));
         assert!(tok.has_token_with_strict_prefix("ab"));
         assert!(!tok.has_token_with_strict_prefix("abc"));
         assert!(!tok.has_token_with_strict_prefix("zzz"));
-        assert_eq!(tok.token_lex_range_for_prefix("ab"), (2, 4));
-        assert_eq!(tok.token_lex_range_for_prefix("ab"), (2, 4));
-        assert_eq!(tok.token_lex_range_for_prefix_index(5), (2, 4));
+        assert_eq!(
+            tok.token_lex_range_for_prefix("ab"),
+            (TokenLexIndex::from_u16(2), TokenLexIndex::from_u16(4))
+        );
+        assert_eq!(
+            tok.token_lex_range_for_prefix("ab"),
+            (TokenLexIndex::from_u16(2), TokenLexIndex::from_u16(4))
+        );
+        assert_eq!(
+            tok.token_lex_range_for_prefix_index(PrefixLexIndex::from_u16(5)),
+            (TokenLexIndex::from_u16(2), TokenLexIndex::from_u16(4))
+        );
         assert!(!tok.has_token_with_prefix("zzz"));
     }
 
@@ -915,45 +965,50 @@ mod tests {
         const PREFIX_COUNT: usize = 9;
         let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
         let mut token_flags = vec![false; tok.tokens().len()];
-        token_flags[tok.lex_index("ab").expect("expected tokenizer token")] = true;
-        token_flags[tok.lex_index("abc").expect("expected tokenizer token")] = true;
-        token_flags[tok.lex_index("c").expect("expected tokenizer token")] = true;
+        token_flags[tok.lex_index("ab").expect("expected tokenizer token").as_usize()] = true;
+        token_flags[tok.lex_index("abc").expect("expected tokenizer token").as_usize()] = true;
+        token_flags[tok.lex_index("c").expect("expected tokenizer token").as_usize()] = true;
 
         let counts = tok.count_true_tokens_by_prefix::<PREFIX_COUNT>(&token_flags);
 
         assert_eq!(counts.len(), PREFIX_COUNT);
         assert_eq!(
-            counts[tok.prefix_lex_index("").expect("expected tokenizer prefix")],
+            counts[tok.prefix_lex_index("").expect("expected tokenizer prefix").as_usize()],
             3
         );
         assert_eq!(
             counts[tok
                 .prefix_lex_index("a")
-                .expect("expected tokenizer prefix")],
+                .expect("expected tokenizer prefix")
+                .as_usize()],
             2
         );
         assert_eq!(
             counts[tok
                 .prefix_lex_index("ab")
-                .expect("expected tokenizer prefix")],
+                .expect("expected tokenizer prefix")
+                .as_usize()],
             2
         );
         assert_eq!(
             counts[tok
                 .prefix_lex_index("abc")
-                .expect("expected tokenizer prefix")],
+                .expect("expected tokenizer prefix")
+                .as_usize()],
             1
         );
         assert_eq!(
             counts[tok
                 .prefix_lex_index("b")
-                .expect("expected tokenizer prefix")],
+                .expect("expected tokenizer prefix")
+                .as_usize()],
             0
         );
         assert_eq!(
             counts[tok
                 .prefix_lex_index("c")
-                .expect("expected tokenizer prefix")],
+                .expect("expected tokenizer prefix")
+                .as_usize()],
             1
         );
     }

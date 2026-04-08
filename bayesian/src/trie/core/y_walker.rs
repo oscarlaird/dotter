@@ -1,8 +1,7 @@
 use crate::symbol::Symbol;
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
-use crate::trie::TokenLexIndex;
-use crate::trie::INVALID_TOKEN_LEXINDEX;
+use crate::bpe::TokenLexIndex;
 
 pub(super) trait FromEnd<T> {
     fn from_end(&self, i: usize) -> &T;
@@ -58,7 +57,7 @@ impl YWalker {
             a_symbol: vec![Symbol::Start],
             a_tp: vec![ZERO],
             a_tp0: vec![ZERO],
-            a_final_token_lexindex: vec![INVALID_TOKEN_LEXINDEX],
+            a_final_token_lexindex: vec![TokenLexIndex::INVALID],
         }
     }
 

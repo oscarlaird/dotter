@@ -14,9 +14,6 @@ pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
 /// Maximum node visits per `recalc_to_frontier_and_back` traversal.
 pub const TRIE_MAX_VISITS: i32 = 200;
 
-pub(crate) type TokenLexIndex = u16;
-pub(crate) const INVALID_TOKEN_LEXINDEX: TokenLexIndex = u16::MAX;
-pub(crate) type PrefixLexIndex = usize;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 

@@ -3,8 +3,7 @@
 //! For tests that only use the public `bayesian` surface, prefer `bayesian/tests/` at the crate root.
 #[cfg(not(feature = "wasm"))]
 use crate::trie::ROOT_HASH;
-use crate::trie::INVALID_TOKEN_LEXINDEX;
-use crate::trie::TokenLexIndex;
+use crate::bpe::TokenLexIndex;
 use serde::{Deserialize, Serialize};
 
 fn expanded_hashes(snapshot_json: String) -> crate::rolling_hash::RHashSet {
@@ -90,7 +89,7 @@ fn trie_exploratory_trace() {
     let set_logit = |logits: &mut [f32], token: &str, logit: f32| {
         let token_hash = crate::rolling_hash::hash_string(token);
         let token_index = session.trie.tokenizer.lex_index_for_token_hash(&token_hash);
-        logits[token_index] = logit;
+        logits[token_index.as_usize()] = logit;
     };
     set_logit(&mut logits, "arch", 0.0);
     set_logit(&mut logits, "arrow", -1.0);
@@ -137,7 +136,7 @@ fn repro_root_uniform_prior_apply() {
     let mut session = crate::BayesianSession::new();
     let request: RequestedPrior = serde_json::from_str(&session.next_requested_prior()).unwrap();
     assert_eq!(request.full_string, "^");
-    assert_eq!(request.last_token_lexindex, INVALID_TOKEN_LEXINDEX);
+    assert_eq!(request.last_token_lexindex, TokenLexIndex::INVALID);
 
     let payload = Payload {
         full_string: request.full_string,
@@ -168,13 +167,13 @@ fn repro_root_skewed_prior_apply() {
     let mut session = crate::BayesianSession::new();
     let request: RequestedPrior = serde_json::from_str(&session.next_requested_prior()).unwrap();
     assert_eq!(request.full_string, "^");
-    assert_eq!(request.last_token_lexindex, INVALID_TOKEN_LEXINDEX);
+    assert_eq!(request.last_token_lexindex, TokenLexIndex::INVALID);
 
     let mut logits = vec![-20.0_f32; crate::bpe::NUM_TOKENS];
     let set_logit = |logits: &mut [f32], token: &str, logit: f32| {
         let token_hash = crate::rolling_hash::hash_string(token);
         let token_index = session.trie.tokenizer.lex_index_for_token_hash(&token_hash);
-        logits[token_index] = logit;
+        logits[token_index.as_usize()] = logit;
     };
     set_logit(&mut logits, "a", 0.0);
     set_logit(&mut logits, "aa", -0.5);
@@ -199,10 +198,13 @@ fn probe_z_to_zz_canonical_follow() {
     );
     let z = tok.lex_index("z").unwrap();
     let zz = tok.lex_index("zz").unwrap();
-    assert_eq!(tok.canonical_followers("z")[zz], tok.can_canonically_follow("z", "zz"));
-    println!("z -> zz canonical: {}", tok.canonical_followers("z")[zz]);
-    println!("z lex index: {}", z);
-    println!("zz lex index: {}", zz);
+    assert_eq!(
+        tok.canonical_followers("z")[zz.as_usize()],
+        tok.can_canonically_follow("z", "zz")
+    );
+    println!("z -> zz canonical: {}", tok.canonical_followers("z")[zz.as_usize()]);
+    println!("z lex index: {:?}", z);
+    println!("zz lex index: {:?}", zz);
 }
 
 #[test]
@@ -221,10 +223,10 @@ fn probe_zz_to_z_canonical_follow() {
     );
     let z = tok.lex_index("z").unwrap();
     let zz = tok.lex_index("zz").unwrap();
-    println!("zz -> z canonical: {}", tok.canonical_followers("zz")[z]);
+    println!("zz -> z canonical: {}", tok.canonical_followers("zz")[z.as_usize()]);
     println!("can_canonically_follow(\"zz\", \"z\"): {}", tok.can_canonically_follow("zz", "z"));
-    println!("zz lex index: {}", zz);
-    println!("z lex index: {}", z);
+    println!("zz lex index: {:?}", zz);
+    println!("z lex index: {:?}", z);
 }
 
 #[test]
@@ -284,13 +286,13 @@ fn probe_repeated_letter_triples_table() {
         let aaa_is_token = tok.lex_index(&aaa).is_some();
         let a_to_aa = if a_is_token && aa_is_token {
             let aa_ix = tok.lex_index(&aa).unwrap();
-            tok.canonical_followers(&c)[aa_ix]
+            tok.canonical_followers(&c)[aa_ix.as_usize()]
         } else {
             false
         };
         let aa_to_a = if a_is_token && aa_is_token {
             let a_ix = tok.lex_index(&c).unwrap();
-            tok.canonical_followers(&aa)[a_ix]
+            tok.canonical_followers(&aa)[a_ix.as_usize()]
         } else {
             false
         };
