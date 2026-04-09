@@ -126,37 +126,7 @@ impl BayesianSession {
             RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
         };
         // add all siblings to that the frontend knows how to space things
-        let nodes_set = nodes_list.iter().cloned().collect::<rh::RHashSet>();
-        let mut hash_to_symbol = nodes_set.iter()
-            .map(|&n_hash| (n_hash, self.trie.nodes.get(&n_hash).unwrap().symbol))
-            .collect::<rh::RHashMap<Symbol>>();
-        let add_siblings = true; // leave this here for now
-        let hashes: Vec<Hash>;
-        if add_siblings {
-            let mut invisible_siblings = rh::RHashSet::default();
-            for &n_hash in nodes_set.iter() {
-                let c_hash_symbol_pairs = (0..RADIX)
-                    .map(|slot| (rh::append_right(n_hash, Symbol::slot_to_byte(slot)), Symbol::from_slot(slot)))
-                    .collect::<Vec<(Hash, Symbol)>>();
-                let is_interior_node = c_hash_symbol_pairs.iter().any(|(c_hash, _)| nodes_set.contains(c_hash));
-                if is_interior_node {
-                    let invis_c_hash_symbol_pairs = c_hash_symbol_pairs
-                        .into_iter()
-                        .filter(|(c_hash, _)|
-                            !nodes_set.contains(c_hash))
-                        .collect::<Vec<(Hash, Symbol)>>();
-                    invisible_siblings.extend(invis_c_hash_symbol_pairs
-                        .iter().map(|(c_hash, _)| *c_hash));
-                    hash_to_symbol.extend(invis_c_hash_symbol_pairs);
-                }
-            }
-            hashes = nodes_list
-                .into_iter()
-                .chain(invisible_siblings.into_iter())
-                .collect();
-        } else {
-            hashes = nodes_list;
-        }
+        let nodes_set = nodes_list.into_iter().collect::<rh::RHashSet>();
         // node list is in topological order
         struct NString {
             string: String,
@@ -166,25 +136,82 @@ impl BayesianSession {
             tp0: Option<Float>,
             a_tl0: Option<Float>,
             symbol: Symbol,
+            upper_siblings_inclusive_cum_z: Option<Float>,
         }
         let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
-        for n_hash in hashes.into_iter() {
-            let symbol = *hash_to_symbol.get(&n_hash).unwrap();
-            let n = if n_hash == super::ROOT_HASH {
-                let s = super::ROOT_STRING.to_string();
-                let z = self.trie.nodes.get(&super::ROOT_HASH).unwrap().if_root_then_z;
-                NString { string: s, z, p: None, tp: None, tp0: None, a_tl0: None, symbol }
-            } else {
-                let p_hash = rh::pop_right(n_hash, symbol.to_byte());
-                // p_hash is guaranteed to be in the snapshot_by_hash
-                // because nodes_list is in topological order
-                let p_string = snapshot_by_hash.get(&p_hash).unwrap().string.clone();
-                let p_node = self.trie.nodes.get(&p_hash).unwrap();
-                let s = p_string + &(symbol.to_byte() as char).to_string();
-                let (z, p, tp, tp0, a_tl0) = p_node.edge_snapshot_fields(symbol);
-                NString { string: s, z, p: Some(p), tp: Some(tp), tp0: Some(tp0), a_tl0: Some(a_tl0), symbol }
+        snapshot_by_hash.insert(super::ROOT_HASH, NString {
+            string: String::from(super::ROOT_STRING),
+            z: self.trie.nodes.get(&super::ROOT_HASH).unwrap().if_root_then_z,
+            p: None,
+            tp: None,
+            tp0: None,
+            a_tl0: None,
+            symbol: Symbol::Start,
+            upper_siblings_inclusive_cum_z: None,
+        });
+
+        struct Frame {
+            n_hash: Hash,
+            n_symbol: Symbol,
+            n_depth: u16,
+        }
+        // a frame is a node that *may* have children that should be added to the snapshot
+        // by the time we see a frame, it should already be in the snapshot
+        // the frame list is a visit list
+        let mut full_string = String::new(); // character stack
+        let mut frames: Vec<Frame> = vec![Frame { n_hash: super::ROOT_HASH, n_symbol: Symbol::Start, n_depth: 0 }];
+        while let Some(Frame { n_hash, n_symbol, n_depth }) = frames.pop() {
+            full_string.truncate(n_depth as usize);
+            full_string.push(n_symbol.to_byte() as char);
+            debug_assert!(snapshot_by_hash.contains_key(&n_hash), "frame node not in snapshot");
+            let c_present = (0..RADIX).map(|slot| {
+                let c_byte = Symbol::slot_to_byte(slot);
+                let c_hash = rh::append_right(n_hash, c_byte);
+                nodes_set.contains(&c_hash)
+            }).collect::<Vec<_>>();
+            let is_interior = c_present.iter().cloned().any(|p| p);
+            if !is_interior {
+                continue;
+            }
+            debug_assert!(self.trie.nodes.contains_key(&n_hash), "frame node not in trie");
+            let n_node = self.trie.nodes.get(&n_hash).unwrap();
+            let c_z = n_node.c_z;
+            // Compute the partial sums of c_z using logaddexp, i.e., log-sum-exp over upper siblings
+            let c_upper_siblings_inclusive_cum_z: [_; RADIX] = {
+                let mut accum = Float::NEG_INFINITY;
+                let mut arr = [Float::NEG_INFINITY; RADIX];
+                for i in 0..RADIX {
+                    accum = crate::trie::logaddexp(accum, c_z[i]);
+                    arr[i] = accum;
+                }
+                arr
             };
-            snapshot_by_hash.insert(n_hash, n);
+            for slot in 0..RADIX {
+                if !c_present[slot] {
+                    continue;
+                }
+                let c_byte = Symbol::slot_to_byte(slot);
+                let c_symbol = Symbol::from_slot(slot);
+                let c_hash = rh::append_right(n_hash, c_byte);
+                let mut c_string = full_string.clone();
+                c_string.push(c_symbol.to_byte() as char);
+                let (z, p, tp, tp0, a_tl0) = n_node.edge_snapshot_fields(c_symbol);
+                snapshot_by_hash.insert(c_hash, NString {
+                    string: c_string,
+                    z,
+                    p: Some(p),
+                    tp: Some(tp),
+                    tp0: Some(tp0),
+                    a_tl0: Some(a_tl0),
+                    symbol: c_symbol,
+                    upper_siblings_inclusive_cum_z: Some(c_upper_siblings_inclusive_cum_z[slot]),
+                });
+                frames.push(Frame {
+                    n_hash: c_hash,
+                    n_symbol: c_symbol,
+                    n_depth: n_depth + 1,
+                })
+            }
         }
         // swap out the string for the hash as the primary key
         #[derive(Serialize)]
@@ -195,6 +222,7 @@ impl BayesianSession {
             tp0: Option<f32>,
             a_tl0: Option<f32>,
             symbol: Symbol,
+            upper_siblings_inclusive_cum_z: Option<f32>,
             hash: rh::Hash,
         }
         let snapshot_by_string = snapshot_by_hash.into_iter()
@@ -206,6 +234,7 @@ impl BayesianSession {
                     tp0: n_string.tp0.map(into_f32),
                     a_tl0: n_string.a_tl0.map(into_f32),
                     symbol: n_string.symbol,
+                    upper_siblings_inclusive_cum_z: n_string.upper_siblings_inclusive_cum_z.map(into_f32),
                     hash
                 }))
             .collect::<HashMap<String, NHash>>();

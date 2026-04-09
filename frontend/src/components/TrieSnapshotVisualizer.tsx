@@ -25,6 +25,7 @@ export interface ExpandedSnapshotNode {
 	tp: number | null;
 	tp0: number | null;
 	a_tl0: number | null;
+	upper_siblings_inclusive_cum_z: number | null;
 	hash: number;
 }
 
@@ -178,13 +179,6 @@ function timerRgbOnSurface(
 	];
 }
 
-function logaddexp(a: number, b: number): number {
-	if (a === -Infinity) return b;
-	if (b === -Infinity) return a;
-	if (a > b) return a + Math.log(1 + Math.exp(b - a));
-	return b + Math.log(1 + Math.exp(a - b));
-}
-
 function buildTree(snapshot: ExpandedSnapshot): Record<string, VisualNode> {
 	const nodes: Record<string, VisualNode> = {};
 	for (const [fullString, node] of Object.entries(snapshot)) {
@@ -246,22 +240,18 @@ function layoutTree(
 		return;
 	}
 
-	let totalChildrenZ = -Infinity;
-	for (const childKey of node.children) {
-		totalChildrenZ = logaddexp(totalChildrenZ, nodes[childKey].node.z);
-	}
-
 	const childWidth =
 		BOX_WIDTH * (1 + BOX_WIDTH_CHILDREN_MULTIPLIER * Math.log(node.children.length));
-	let childTop = y;
 	for (const childKey of node.children) {
-		const childZ = nodes[childKey].node.z;
-		const childHeight =
-			totalChildrenZ === -Infinity
-				? height / node.children.length
-				: height * Math.exp(childZ - totalChildrenZ);
+		const child = nodes[childKey];
+		const childBottomZ = child.node.upper_siblings_inclusive_cum_z;
+		if (childBottomZ === null) {
+			throw new Error(`Missing upper_siblings_inclusive_cum_z for ${child.fullString}`);
+		}
+		const childHeight = height * Math.exp(child.node.z - node.node.z);
+		const childBottom = y + height * Math.exp(childBottomZ - node.node.z);
+		const childTop = childBottom - childHeight;
 		layoutTree(nodes, childKey, childTop, childHeight, childWidth);
-		childTop += childHeight;
 	}
 }
 

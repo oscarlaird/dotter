@@ -42,8 +42,8 @@ export interface InitOutput {
     readonly bayesiansession_receive_likelihood_update: (a: number, b: number, c: number) => void;
     readonly bayesiansession_receive_prior_update: (a: number, b: number, c: number) => void;
     readonly bayesiansession_reset: (a: number) => void;
-    readonly initPanicHook: () => void;
     readonly debugPanicTest: () => void;
+    readonly initPanicHook: () => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
