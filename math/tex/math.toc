@@ -64,4 +64,5 @@
 \contentsline {section}{\numberline {10.1}Maintaining a Key-Value Cache Trie}{62}{section.10.1}%
 \contentsline {chapter}{\numberline {11}Mastering Dotter}{63}{chapter.11}%
 \contentsline {section}{\numberline {11.1}The Cost of Incorrect Signals}{63}{section.11.1}%
-\contentsline {chapter}{Bibliography}{64}{section*.20}%
+\contentsline {section}{\numberline {11.2}Zen of Dotter}{65}{section.11.2}%
+\contentsline {chapter}{Bibliography}{65}{section*.20}%
