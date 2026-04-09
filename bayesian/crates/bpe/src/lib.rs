@@ -1,8 +1,11 @@
+#![allow(dead_code)]
 //! Byte-pair encoding: load merges and run the usual merge loop on a string.
 //!
 //! For **TinyLlama** (and similar HF SentencePiece+BPE models), `tokenizer.json` uses the
 //! SentencePiece whitespace marker **`▁`** (U+2581). We normalize that to ASCII **`_`** (U+005F)
 //! everywhere inside this crate so BPE strings match the trie alphabet. See [`TinyLlamaWordTokenizer`].
+
+pub use ::rolling_hash as rolling_hash;
 
 use std::collections::HashMap;
 use std::fs;

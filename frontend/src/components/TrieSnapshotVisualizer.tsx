@@ -318,6 +318,14 @@ function firstForkNode(
 	return best;
 }
 
+function deepestVisibleDepth(nodes: Record<string, VisualNode>): number {
+	let deepest = 0;
+	for (const node of Object.values(nodes)) {
+		deepest = Math.max(deepest, nodeDepth(node.fullString));
+	}
+	return deepest;
+}
+
 function ancestorAtDepth(fullString: string, depth: number): string {
 	if (depth <= 0) {
 		return '^';
@@ -347,7 +355,9 @@ export function computeScrollLayoutState(
 ): ScrollLayoutState {
 	const visibleTree = buildVisibleTree(snapshot, expansionThreshold);
 	const firstFork = firstForkNode(visibleTree);
-	const firstForkDepth = firstFork ? nodeDepth(firstFork.fullString) : 0;
+	const firstForkDepth = firstFork
+		? nodeDepth(firstFork.fullString)
+		: deepestVisibleDepth(visibleTree);
 	const unclampedOffset =
 		(
 			SCROLL_CENTERING_WEIGHT *

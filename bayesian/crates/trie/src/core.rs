@@ -4,9 +4,9 @@ use crate::bpe::{TinyLlamaWordTokenizer, TOKENIZER_JSON_STR, TokenLexIndex};
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
 use crate::symbol::{Symbol, RADIX};
-use crate::trie::MAX_TRUNCATION_POSSIBLE;
+use crate::MAX_TRUNCATION_POSSIBLE;
 use crate::rolling_hash as rh;
-use crate::trie::prediction::XPrediction;
+use crate::prediction::XPrediction;
 use crate::bpe::NUM_TOKENS;
 
 mod sparse16;

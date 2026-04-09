@@ -2,13 +2,11 @@
 
 #![allow(dead_code)]
 
-pub mod bpe;
-pub(crate) mod rolling_hash;
-pub(crate) mod safe_float;
-pub mod symbol;
-pub mod trie;
+pub use ::bpe;
+pub use ::rolling_hash;
+pub use ::trie;
 
-pub use trie::BayesianSession;
+pub use ::trie::BayesianSession;
 
 /// Install [`console_error_panic_hook`] so panics in the wasm32 build print to `console.error`
 /// with source location (and a useful traceback when debug symbols are present). Call once

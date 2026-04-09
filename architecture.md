@@ -7,11 +7,11 @@ architecture reference for the intended target system.
 ## Where to work (active code vs archive)
 
 **Server.** Ongoing backend work belongs under **`backend/`**. The canonical
-runtime entrypoint is **`backend/new_lm.py`** (FastAPI + WebSocket, Rust
+runtime entrypoint is **`backend/lm.py`** (FastAPI + WebSocket, Rust
 `bayesian` session, prior model, `prior_update` / `likelihood_update` protocol).
-The large historical server at **`language_server/lm.py`** is kept in the tree
-as an **archive** only; do not extend it for new features and do not treat it
-as the process to run for current development.
+The large historical server at **`ARCHIVE_language_server/lm.py`** is kept in
+the tree as an **archive** only; do not extend it for new features and do not
+treat it as the process to run for current development.
 
 **Client.** Ongoing UI work targets **`frontend/` route `/v3`** (`V3Page` and
 related components). **`frontend/` route `/v2`** (`V2Page` and the legacy trie

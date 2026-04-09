@@ -2,7 +2,7 @@
 //!
 //! For tests that only use the public `bayesian` surface, prefer `bayesian/tests/` at the crate root.
 #[cfg(not(feature = "wasm"))]
-use crate::trie::ROOT_HASH;
+use crate::ROOT_HASH;
 use crate::bpe::TokenLexIndex;
 use serde::{Deserialize, Serialize};
 
@@ -319,7 +319,7 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
     let _ = session.expand_to_threshold();
 
     session.receive_prior_update(
-        include_str!("../../testdata/frontend_prior_panic/root_prior.json")
+        include_str!("../../../testdata/frontend_prior_panic/root_prior.json")
             .trim()
             .to_string(),
     );
@@ -327,7 +327,7 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
     let _ = session.expand_to_threshold();
 
     session.receive_likelihood_update(
-        include_str!("../../testdata/frontend_prior_panic/likelihood.json")
+        include_str!("../../../testdata/frontend_prior_panic/likelihood.json")
             .trim()
             .to_string(),
     );
@@ -335,7 +335,7 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
     let _ = session.expand_to_threshold();
 
     session.receive_prior_update(
-        include_str!("../../testdata/frontend_prior_panic/prior_1.json")
+        include_str!("../../../testdata/frontend_prior_panic/prior_1.json")
             .trim()
             .to_string(),
     );
@@ -343,7 +343,7 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
     let _ = session.expand_to_threshold();
 
     session.receive_prior_update(
-        include_str!("../../testdata/frontend_prior_panic/prior_2.json")
+        include_str!("../../../testdata/frontend_prior_panic/prior_2.json")
             .trim()
             .to_string(),
     );
@@ -362,7 +362,7 @@ fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
     use crate::rolling_hash as rh;
     use crate::safe_float::into_f32;
     use crate::symbol::Symbol;
-    use crate::trie::ROOT_HASH;
+    use crate::ROOT_HASH;
 
     #[derive(Deserialize)]
     struct SnapshotEntry {
@@ -372,7 +372,7 @@ fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
 
     let mut session = crate::BayesianSession::new();
     session.receive_prior_update(
-        include_str!("../../testdata/root_lm_prior.json")
+        include_str!("../../../testdata/root_lm_prior.json")
             .trim()
             .to_string(),
     );
@@ -389,11 +389,11 @@ fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
     println!("root.if_root_then_z = {:?}", root.if_root_then_z);
     println!(
         "{}",
-        crate::trie::core::debug::format_node_slot_dump(root, "root", Symbol::Space)
+        crate::core::debug::format_node_slot_dump(root, "root", Symbol::Space)
     );
     println!(
         "{}",
-        crate::trie::core::debug::format_node_slot_dump(under, "^_", Symbol::A)
+        crate::core::debug::format_node_slot_dump(under, "^_", Symbol::A)
     );
 
     for (path, parent_hash, slot) in [
@@ -439,7 +439,7 @@ fn debug_z_after_first_expand_caret_space_space() {
     use crate::rolling_hash as rh;
     use crate::safe_float::{Float, into_f32};
     use crate::symbol::Symbol;
-    use crate::trie::ROOT_HASH;
+    use crate::ROOT_HASH;
 
     let mut session = crate::BayesianSession::new();
     let _ = session.expand_to_threshold();
@@ -471,7 +471,7 @@ fn debug_z_after_first_expand_caret_space_space() {
     if let Some(node) = session.trie.nodes.get(&h) {
         let mut sum = Float::NEG_INFINITY;
         for slot in 0..27 {
-            sum = crate::trie::logaddexp(sum, node.c_z[slot]);
+            sum = crate::logaddexp(sum, node.c_z[slot]);
         }
         println!("^__ logsum(children c_z): {}", into_f32(sum));
     }

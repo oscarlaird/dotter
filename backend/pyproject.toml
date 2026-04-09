@@ -24,8 +24,8 @@ maturin = ">=1.4,<2"
 poethepoet = "^0.40"
 
 [tool.poe.tasks]
-# Rebuild/install bayesian into this venv after changing Rust (same as: cd ../bayesian && python -m maturin develop).
-develop-bayesian = { cmd = "python -m maturin develop", cwd = "../bayesian" }
+# Rebuild/install bayesian into this venv after changing Rust (same as: cd ../bayesian/crates/bayesian && python -m maturin develop).
+develop-bayesian = { cmd = "python -m maturin develop", cwd = "../bayesian/crates/bayesian" }
 
 [build-system]
 requires = ["poetry-core"]

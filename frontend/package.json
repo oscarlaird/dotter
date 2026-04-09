@@ -7,8 +7,8 @@
 		"dev": "vite",
 		"build": "vite build",
 		"preview": "vite preview",
-		"build:wasm": "wasm-pack build ../bayesian --target web --out-dir ../frontend/src/wasm_pkg -- --features wasm",
-		"build:wasm:dev": "wasm-pack build ../bayesian --dev --target web --out-dir ../frontend/src/wasm_pkg -- --features wasm"
+		"build:wasm": "wasm-pack build ../bayesian/crates/bayesian --target web --out-dir ../../../frontend/src/wasm_pkg -- --features wasm",
+		"build:wasm:dev": "wasm-pack build ../bayesian/crates/bayesian --dev --target web --out-dir ../../../frontend/src/wasm_pkg -- --features wasm"
 	},
 	"dependencies": {
 		"@google-cloud/text-to-speech": "^5.8.0",

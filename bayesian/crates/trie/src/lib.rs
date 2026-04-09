@@ -1,4 +1,11 @@
+#![allow(dead_code)]
 //! Trie engine and public session API.
+
+pub use ::bpe as bpe;
+pub use ::rolling_hash as rolling_hash;
+
+pub mod safe_float;
+pub mod symbol;
 
 use crate::rolling_hash as rh;
 use crate::safe_float::Float;

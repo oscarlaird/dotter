@@ -20,7 +20,7 @@ const INV_BASE: u64 = 1_487_038_156_641_911_229;
 
 const MAX_APPEND_LENGTH: usize = 16; // TODO: this should come from the tokenizer
 
-pub(crate) type Hash = u64;
+pub type Hash = u64;
 
 const POWERS: [u64; MAX_APPEND_LENGTH + 1] = {
     let mut powers = [0u64; MAX_APPEND_LENGTH + 1];
@@ -55,18 +55,18 @@ const fn fast_mod(x: u128) -> u64 {
     }
 }
 
-pub(crate) const fn extend_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
+pub const fn extend_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
     let mut result = hash as u128;
     let power_shift = POWERS[right_length] as u128;
     result = (result * power_shift) + (right_hash as u128);
     fast_mod(result)
 }
 
-pub(crate) const fn append_right(hash: Hash, right_char: u8) -> Hash {
+pub const fn append_right(hash: Hash, right_char: u8) -> Hash {
     extend_right(hash, right_char as Hash, 1)
 }
 
-pub(crate) fn truncate_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
+pub fn truncate_right(hash: Hash, right_hash: Hash, right_length: usize) -> Hash {
     let sub = if hash < right_hash {
         MOD + hash - right_hash
     } else {
@@ -76,11 +76,11 @@ pub(crate) fn truncate_right(hash: Hash, right_hash: Hash, right_length: usize) 
     fast_mod((sub as u128) * invpower_shift)
 }
 
-pub(crate) fn pop_right(hash: Hash, right_char: u8) -> Hash {
+pub fn pop_right(hash: Hash, right_char: u8) -> Hash {
     truncate_right(hash, right_char as Hash, 1)
 }
 
-pub(crate) fn hash_string(s: &str) -> Hash {
+pub fn hash_string(s: &str) -> Hash {
     let mut hash = 0;
     for c in s.as_bytes() {
         hash = append_right(hash, *c);

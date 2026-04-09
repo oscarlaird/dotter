@@ -6,9 +6,9 @@ use crate::rolling_hash::Hash;
 use crate::bpe::TokenLexIndex;
 use crate::symbol::{Symbol, RADIX};
 use crate::safe_float::{Float, ZERO};
-use crate::trie::core::XBayes;
-use crate::trie::l_update::XLUpdate;
-use crate::trie::ROOT_HASH;
+use crate::core::XBayes;
+use crate::l_update::XLUpdate;
+use crate::ROOT_HASH;
 use crate::bpe::NUM_TOKENS;
 
 const MAX_CONTINUATIONS: usize = 100;

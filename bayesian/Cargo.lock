@@ -6,12 +6,24 @@ version = 4
 name = "bayesian"
 version = "0.1.0"
 dependencies = [
+ "bpe",
  "console_error_panic_hook",
  "pyo3",
+ "rolling_hash",
  "serde",
  "serde_json",
+ "trie",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "bpe"
+version = "0.1.0"
+dependencies = [
+ "rolling_hash",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -159,6 +171,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rolling_hash"
+version = "0.1.0"
+
+[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -223,6 +239,18 @@ name = "target-lexicon"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
+
+[[package]]
+name = "trie"
+version = "0.1.0"
+dependencies = [
+ "bpe",
+ "pyo3",
+ "rolling_hash",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "unicode-ident"

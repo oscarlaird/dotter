@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use crate::bpe::TokenLexIndex;
 use crate::safe_float::{Float, into_f32};
 use crate::symbol::{Symbol, RADIX};
-use crate::trie::core::{XBayes, RecalcType, RecalcResult};
-use crate::trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
-use crate::trie::prediction::XPrediction;
+use crate::core::{XBayes, RecalcType, RecalcResult};
+use crate::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
+use crate::prediction::XPrediction;
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 use serde::{Deserialize, Serialize};
@@ -181,7 +181,7 @@ impl BayesianSession {
                 let mut accum = Float::NEG_INFINITY;
                 let mut arr = [Float::NEG_INFINITY; RADIX];
                 for i in 0..RADIX {
-                    accum = crate::trie::logaddexp(accum, c_z[i]);
+                    accum = crate::logaddexp(accum, c_z[i]);
                     arr[i] = accum;
                 }
                 arr
@@ -250,13 +250,13 @@ impl BayesianSession {
     /// `$` (stop), `^` (start); empty shows all nodes (root is always shown when filtered).
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie(&self, filter: &str) {
-        crate::trie::debug::eprint_trie(&self.trie, filter, None);
+        crate::debug::eprint_trie(&self.trie, filter, None);
     }
 
     /// Print the trie to stderr, restricted to `hash_filter` after applying the symbol filter.
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie_hash_filter(&self, filter: &str, hash_filter: &rh::RHashSet) {
-        crate::trie::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
+        crate::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
     }
 }
 
