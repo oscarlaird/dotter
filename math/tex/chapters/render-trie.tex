@@ -2,6 +2,55 @@
 \chapter{Render Trie}
 \label{chap:render-trie}
 
+\section{Scrolling}
+This implementation of Dotter is designed for typing 
+ medium-length strings of text of about 400 characters or less.
+It is intended for typing text messages, emails, chat-bot commands,
+and search queries. These are typically a few sentences long.
+
+This raises the problem of scrolling, because 400 characters
+is far too much to fit horizontally on a single screen.
+Scrolling must be automatic in order not to slow down the user.
+The advantage of scrolling is that keeps the active part of the trie
+centered and maximizes utilization of real estate. The disadvantage
+of scrolling is that it is jarring and disorienting. Below we discuss a simple
+heuristic to balance this trade-off.
+
+\subsection{A Quadratic Cost Heuristic}
+
+We assume that all characters occupy constant width.
+We formalize our goal of keeping the active part of the trie centered
+in terms of the ``first fork.'' The first fork node is the first node
+that has multiple children in the visible trie. We denote its depth
+as $d$. We define the scroll offset $s$ as the number of characters
+which are off-screen to the left of the window.
+
+Our centering objective means that we want to 
+minimize the distance between the
+``first fork position'', $p := w(d - s)$, where $d$ is the depth of the first fork node and $w$ is the width of any node which is a single parent, and the desired first fork position, $p^*$.
+Our stability objective means that we want to minimize 
+changes in the offset between iterations, $\Delta s = s_t - s_{t-1}$.
+
+We may parameterize such an objective with rates $a$ and $b$,
+and solve for $s_t^*$,
+
+\begin{align*}
+    J &= a (\frac{p^* - p}{w})^2 + b \Delta s^2 \\
+    J &= a (s_t - (d - \frac{p^*}{w}))^2 + b (s_t - s_{t-1})^2 \\
+    \implies 0 &= 2a (s_t - (d - \frac{p^*}{w})) + 2b (s_t - s_{t-1}) \\
+    \implies s_t^* &= \frac{a (d - \frac{p^*}{w}) + b s_{t-1}}{a + b}
+\end{align*}
+
+
+\subsection{Two Approaches to Backspace}
+
+There are two ways to allow the user to go back to 
+nodes that are beyond the scroll window. Either we can have
+a single "backspace" node that contributes likelihood to all
+off-screen predecessors, or we can try to actually assign independent
+timers to every off-screen predecessor. Not only is the former
+less cluttered, it also has the advantage of showing incremental progress.
+
 \section{Embellishments}
 \subsection{Branches of the Tree}
 % curvature is minimized with cubic splines
