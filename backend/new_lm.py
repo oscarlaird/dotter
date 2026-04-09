@@ -21,9 +21,10 @@ from fastapi import FastAPI, WebSocket
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-EXPECTED_FILTERED_TOKEN_COUNT = 17_235
+EXPECTED_FILTERED_TOKEN_COUNT = 17_236
 HF_SPACE_MARKER = "▁"
 ROOT_MARKER = "^"
+STOP_MARKER = "$"
 PIDFILE_PATH = Path("/tmp/dotter_new_lm.pid")
 START_TS = time.monotonic()
 PRIORS_PER_LIKELIHOOD_CYCLE = 5
@@ -51,6 +52,12 @@ def _initial_context_token_id(tokenizer: AutoTokenizer) -> int:
     if tokenizer.eos_token_id is not None:
         return int(tokenizer.eos_token_id)
     raise ValueError("tokenizer must expose either bos_token_id or eos_token_id")
+
+
+def _required_eos_token_id(tokenizer: AutoTokenizer) -> int:
+    if tokenizer.eos_token_id is None:
+        raise ValueError("tokenizer must expose eos_token_id so it can map to the stop symbol")
+    return int(tokenizer.eos_token_id)
 
 
 def _internal_token_to_hf_token(token: str) -> str:
@@ -201,11 +208,17 @@ class PriorModel:
         _log("model.eval() complete")
         self.cache = PrefixCacheTrie()
         self.initial_token_id = _initial_context_token_id(self.tokenizer)
+        self.stop_token_id = _required_eos_token_id(self.tokenizer)
 
         _log("building lex-index to tokenizer-id mapping")
         vocab = self.tokenizer.get_vocab()
         self.clean_ids = np.array(
-            [vocab[_internal_token_to_hf_token(token)] for token in lexicographic_tokens],
+            [
+                self.stop_token_id
+                if token == STOP_MARKER
+                else vocab[_internal_token_to_hf_token(token)]
+                for token in lexicographic_tokens
+            ],
             dtype=np.int64,
         )
         _log("lex-index mapping complete")

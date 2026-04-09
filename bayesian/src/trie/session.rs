@@ -42,7 +42,7 @@ impl BayesianSession {
             // by default, serde will ignore extra fields
             #[serde(alias = "l")]
             likelihood: f32,
-            /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `^`).
+            /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `$`, `^`).
             #[serde(default)]
             symbol: Option<Symbol>,
         }
@@ -246,7 +246,8 @@ impl BayesianSession {
         serde_json::to_string(self.trie.tokenizer.tokens()).unwrap()
     }
 
-    /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary), `^` (start); empty shows all nodes (root is always shown when filtered).
+    /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary),
+    /// `$` (stop), `^` (start); empty shows all nodes (root is always shown when filtered).
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie(&self, filter: &str) {
         crate::trie::debug::eprint_trie(&self.trie, filter, None);

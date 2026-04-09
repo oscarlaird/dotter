@@ -4,7 +4,7 @@ fn repro_traverse_and_count_l_mismatch() {
     
     // 1. Expand the tree so cum_likelihood has interior nodes (e.g. `^_`)
     // We send a prior update to pretend the LM ran.
-    let root_prior = r#"{"full_string":"^","final_token_lexindex":17235,"follower_logits":[0.0, 0.0, 0.0]}"#; // dummy
+    let root_prior = r#"{"full_string":"^","final_token_lexindex":17236,"follower_logits":[0.0, 0.0, 0.0]}"#; // dummy
     // But we can just use `expand_to_threshold` trick, or send real likelihoods.
     
     // Let's just create an artificial situation using the public API:

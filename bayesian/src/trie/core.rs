@@ -455,10 +455,11 @@ impl XBayes {
                         if met_threshold {
                             nodes_over_threshold.push(child_hash);
                         }
-                        !met_threshold
+                        !met_threshold || child_symbol == Symbol::Stop
                     }
                 };
                 if !stop {
+                    debug_assert!(child_symbol != Symbol::Stop, "We should not descend from the stop symbol");
                     frames.push(Frame {
                         symbol: child_symbol,
                         depth: depth + 1,

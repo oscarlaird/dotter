@@ -3,13 +3,13 @@ use std::fmt;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Number of symbols in the fixed trie alphabet.
-pub const RADIX: usize = 27;
+/// Number of symbols in the fixed trie alphabet, excluding the start marker.
+pub const RADIX: usize = 28;
 pub const N_SYMBOLS: usize = RADIX + 1;
 pub type RadixBitmap = u32;
 
-/// Default trie alphabet: `a`–`z`, `_` (word boundary), `^` (slot order matches this slice).
-pub const DEFAULT_ALPHABET: [u8; N_SYMBOLS] = *b"abcdefghijklmnopqrstuvwxyz_^";
+/// Default trie alphabet: `a`–`z`, `_` (word boundary), `$` (stop), `^` (start).
+pub const DEFAULT_ALPHABET: [u8; N_SYMBOLS] = *b"abcdefghijklmnopqrstuvwxyz_$^";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(u8)]
@@ -41,7 +41,8 @@ pub enum Symbol {
     Y = 24,
     Z = 25,
     Space = 26,
-    Start = 27,
+    Stop = 27,
+    Start = 28,
 }
 
 impl Symbol {
@@ -73,6 +74,7 @@ impl Symbol {
         Self::Y,
         Self::Z,
         Self::Space,
+        Self::Stop,
         Self::Start,
     ];
 
@@ -105,6 +107,7 @@ impl Symbol {
             b'y' => Some(Self::Y),
             b'z' => Some(Self::Z),
             b'_' => Some(Self::Space),
+            b'$' => Some(Self::Stop),
             b'^' => Some(Self::Start),
             _ => None,
         }
@@ -139,6 +142,7 @@ impl Symbol {
             Self::Y => b'y',
             Self::Z => b'z',
             Self::Space => b'_',
+            Self::Stop => b'$',
             Self::Start => b'^',
         }
     }
@@ -172,7 +176,8 @@ impl Symbol {
             24 => Self::Y,
             25 => Self::Z,
             26 => Self::Space,
-            27 => Self::Start,
+            27 => Self::Stop,
+            28 => Self::Start,
             _ => panic!("Symbol::from_slot: invalid slot"),
         }
     }
@@ -210,7 +215,8 @@ impl Symbol {
             24 => b'y',
             25 => b'z',
             26 => b'_',
-            27 => b'^',
+            27 => b'$',
+            28 => b'^',
             _ => panic!("invalid slot: {}", slot),
         }
     }
@@ -244,7 +250,8 @@ impl Symbol {
             b'y' => 24,
             b'z' => 25,
             b'_' => 26,
-            b'^' => 27,
+            b'$' => 27,
+            b'^' => 28,
             _ => panic!("invalid byte: {}", byte),
         }
     }
@@ -262,7 +269,7 @@ impl Symbol {
     }
 }
 
-/// JSON / serde: one character per [`Symbol`], matching [`Self::to_byte`] (`a`–`z`, `_`, `^`).
+/// JSON / serde: one character per [`Symbol`], matching [`Self::to_byte`] (`a`–`z`, `_`, `$`, `^`).
 impl Serialize for Symbol {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_char((*self).to_byte() as char)
@@ -275,7 +282,7 @@ impl<'de> Visitor<'de> for SymbolStrVisitor {
     type Value = Symbol;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a single-character trie alphabet symbol (a-z, _, ^)")
+        formatter.write_str("a single-character trie alphabet symbol (a-z, _, $, ^)")
     }
 
     fn visit_str<E: de::Error>(self, s: &str) -> Result<Symbol, E> {
