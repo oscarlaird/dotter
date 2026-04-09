@@ -35,11 +35,23 @@ export interface VisibleNodeTimer {
 }
 export type VisibleNodeTimerMap = Record<string, VisibleNodeTimer>;
 
+export interface ScrollLayoutState {
+	firstForkDepth: number;
+	firstForkFullString: string | null;
+	scrollOffset: number;
+	scrollRoot: string;
+	scrollAncestorKeys: string[];
+	renderedNodeKeys: string[];
+}
+
 interface TrieSnapshotVisualizerProps {
 	snapshot: ExpandedSnapshot;
 	timers: VisibleNodeTimerMap;
 	period: number;
 	expansionThreshold: number;
+	scrollOffset: number;
+	scrollRoot: string;
+	firstForkDepth: number | null;
 	showAll?: boolean;
 	/** When true, bright timer strokes (space, root, etc.) are shifted darker for a light canvas. */
 	lightBackground?: boolean;
@@ -66,6 +78,12 @@ const TIMER_RADIUS = 15;
 const TIMER_STROKE_WIDTH = 2;
 const TIMER_FONT_SIZE = 37;
 const DEBUG_LEVEL_GUTTER = 56;
+const ROOT_NODE_WIDTH = BOX_WIDTH * 1.5;
+const SCROLL_CENTERING_WEIGHT = 1;
+const SCROLL_STABILITY_WEIGHT = 1;
+
+export const SINGLE_PARENT_NODE_WIDTH_PX = BOX_WIDTH;
+export const SCROLL_TARGET_X_PX = 400;
 
 function timerFraction(time: number, phase: number, period: number): number {
 	return ((time - phase + period) % period) / period;
@@ -88,6 +106,13 @@ function displaySymbol(symbol: string): string {
 	return symbol;
 }
 
+function offscreenPrefixText(scrollRoot: string): string {
+	if (scrollRoot === '^') {
+		return '';
+	}
+	return scrollRoot.slice(1).replaceAll('_', ' ');
+}
+
 function nodeDepth(fullString: string): number {
 	if (fullString === '^') {
 		return 0;
@@ -95,13 +120,12 @@ function nodeDepth(fullString: string): number {
 	return Math.max(0, fullString.length - 1);
 }
 
-function nodePassesThreshold(
-	node: VisualNode,
+function snapshotNodePassesThreshold(
+	node: ExpandedSnapshotNode,
 	rootZ: number,
 	expansionThreshold: number,
-	showAll: boolean,
 ): boolean {
-	return showAll || node.node.z - rootZ > expansionThreshold;
+	return node.z - rootZ > expansionThreshold;
 }
 
 /** Timer circle center and radius — fixed CSS px like V2 TrieVisualizer (not scaled with fit-to-width). */
@@ -205,6 +229,149 @@ function buildTree(snapshot: ExpandedSnapshot): Record<string, VisualNode> {
 	return nodes;
 }
 
+function rootZOf(snapshot: ExpandedSnapshot): number {
+	return snapshot['^']?.z ?? 0;
+}
+
+function ancestorKeysThroughRoot(fullString: string): string[] {
+	if (fullString === '^') {
+		return ['^'];
+	}
+	const keys = ['^'];
+	for (let depth = 1; depth <= nodeDepth(fullString); depth += 1) {
+		keys.push(fullString.slice(0, depth + 1));
+	}
+	return keys;
+}
+
+function filterNodesByKeySet(
+	nodes: Record<string, VisualNode>,
+	keys: Set<string>,
+): Record<string, VisualNode> {
+	const filtered: Record<string, VisualNode> = {};
+	for (const key of keys) {
+		const node = nodes[key];
+		if (!node) {
+			continue;
+		}
+		filtered[key] = {
+			...node,
+			children: node.children.filter((childKey) => keys.has(childKey)),
+		};
+	}
+	return filtered;
+}
+
+export function buildVisibleTree(
+	snapshot: ExpandedSnapshot,
+	expansionThreshold: number,
+): Record<string, VisualNode> {
+	const nodes = buildTree(snapshot);
+	const rootZ = rootZOf(snapshot);
+	const visibleKeys = new Set<string>(['^']);
+	for (const [fullString, node] of Object.entries(snapshot)) {
+		if (!snapshotNodePassesThreshold(node, rootZ, expansionThreshold)) {
+			continue;
+		}
+		for (const ancestorKey of ancestorKeysThroughRoot(fullString)) {
+			visibleKeys.add(ancestorKey);
+		}
+	}
+	return filterNodesByKeySet(nodes, visibleKeys);
+}
+
+function subtreeKeys(
+	nodes: Record<string, VisualNode>,
+	rootKey: string,
+): Set<string> {
+	const included = new Set<string>();
+	const stack = [rootKey];
+	while (stack.length > 0) {
+		const key = stack.pop();
+		if (!key || included.has(key)) {
+			continue;
+		}
+		const node = nodes[key];
+		if (!node) {
+			continue;
+		}
+		included.add(key);
+		for (const childKey of node.children) {
+			stack.push(childKey);
+		}
+	}
+	return included;
+}
+
+function firstForkNode(
+	nodes: Record<string, VisualNode>,
+): VisualNode | null {
+	let best: VisualNode | null = null;
+	for (const node of Object.values(nodes)) {
+		if (node.children.length < 2) {
+			continue;
+		}
+		if (!best || nodeDepth(node.fullString) < nodeDepth(best.fullString)) {
+			best = node;
+		}
+	}
+	return best;
+}
+
+function ancestorAtDepth(fullString: string, depth: number): string {
+	if (depth <= 0) {
+		return '^';
+	}
+	return fullString.slice(0, depth + 1);
+}
+
+function scrollAncestorKeys(scrollRoot: string): string[] {
+	if (scrollRoot === '^') {
+		return [];
+	}
+	return ancestorKeysThroughRoot(scrollRoot).slice(0, -1);
+}
+
+function rootWidthFor(fullString: string): number {
+	return fullString === '^' ? ROOT_NODE_WIDTH : BOX_WIDTH;
+}
+
+function relativeDepth(fullString: string, scrollRoot: string): number {
+	return Math.max(0, nodeDepth(fullString) - nodeDepth(scrollRoot));
+}
+
+export function computeScrollLayoutState(
+	snapshot: ExpandedSnapshot,
+	expansionThreshold: number,
+	previousScrollOffset: number,
+): ScrollLayoutState {
+	const visibleTree = buildVisibleTree(snapshot, expansionThreshold);
+	const firstFork = firstForkNode(visibleTree);
+	const firstForkDepth = firstFork ? nodeDepth(firstFork.fullString) : 0;
+	const unclampedOffset =
+		(
+			SCROLL_CENTERING_WEIGHT *
+				(firstForkDepth - SCROLL_TARGET_X_PX / SINGLE_PARENT_NODE_WIDTH_PX) +
+			SCROLL_STABILITY_WEIGHT * previousScrollOffset
+		) /
+		(SCROLL_CENTERING_WEIGHT + SCROLL_STABILITY_WEIGHT);
+	const scrollOffset =
+		firstForkDepth <= 0
+			? 0
+			: Math.max(0, Math.min(Math.floor(unclampedOffset), firstForkDepth - 1));
+	const scrollRoot = firstFork
+		? ancestorAtDepth(firstFork.fullString, scrollOffset)
+		: '^';
+	return {
+		firstForkDepth,
+		firstForkFullString: firstFork?.fullString ?? null,
+		scrollOffset,
+		scrollRoot,
+		scrollAncestorKeys: scrollAncestorKeys(scrollRoot),
+		renderedNodeKeys: Array.from(subtreeKeys(visibleTree, scrollRoot)),
+	};
+}
+
 function readLayoutProp(node: VisualNode | undefined, property: string): number {
 	if (!node) {
 		return 0;
@@ -231,7 +398,10 @@ function layoutTree(
 	width: number,
 ): void {
 	const node = nodes[fullString];
-	node.x = node.parentKey === null ? 0 : nodes[node.parentKey].x + nodes[node.parentKey].width;
+	node.x =
+		node.parentKey === null || !nodes[node.parentKey]
+			? 0
+			: nodes[node.parentKey].x + nodes[node.parentKey].width;
 	node.y = y;
 	node.width = width;
 	node.height = height;
@@ -260,6 +430,9 @@ function TrieSnapshotVisualizer({
 	timers,
 	period,
 	expansionThreshold,
+	scrollOffset,
+	scrollRoot,
+	firstForkDepth,
 	showAll = false,
 	lightBackground = false,
 	showBoxes = true,
@@ -272,6 +445,7 @@ function TrieSnapshotVisualizer({
 	const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 	const tweenStartTimesRef = useRef<Record<TweenKey, TweenEntry>>({});
 	const laidOutNodesRef = useRef<Record<string, VisualNode> | null>(null);
+	const offscreenText = offscreenPrefixText(scrollRoot);
 
 	const getTweenedValue = useCallback((fullString: string, property: string, currentTime: number): number => {
 		const key = tweenKey(fullString, property);
@@ -339,19 +513,24 @@ function TrieSnapshotVisualizer({
 		};
 	}, []);
 
+	const visibleTree = useMemo(
+		() => buildVisibleTree(snapshot, expansionThreshold),
+		[snapshot, expansionThreshold],
+	);
+
 	const laidOutNodes = useMemo(() => {
 		if (viewportSize.height <= 0) {
 			return null;
 		}
-		const nodes = buildTree(snapshot);
-		if (!nodes['^']) {
+		const baseNodes = showAll ? buildTree(snapshot) : visibleTree;
+		const visibleKeys = subtreeKeys(baseNodes, scrollRoot);
+		const nodes = filterNodesByKeySet(baseNodes, visibleKeys);
+		if (!nodes[scrollRoot]) {
 			return null;
 		}
-		layoutTree(nodes, '^', 0, viewportSize.height, BOX_WIDTH * 1.5);
+		layoutTree(nodes, scrollRoot, 0, viewportSize.height, rootWidthFor(scrollRoot));
 		return nodes;
-	}, [snapshot, viewportSize.height]);
-
-	const rootZ = snapshot['^']?.z ?? 0;
+	}, [expansionThreshold, scrollRoot, showAll, snapshot, viewportSize.height, visibleTree]);
 
 	const renderMetrics = useMemo(() => {
 		if (!laidOutNodes) {
@@ -364,22 +543,13 @@ function TrieSnapshotVisualizer({
 			};
 		}
 		let contentWidth = 0;
-		let maxDepth = 0;
 		for (const node of Object.values(laidOutNodes)) {
-			// Extra layout slack so fixed-size circles (V2-sized) don’t crowd the viewport edge when scale < 1.
 			contentWidth = Math.max(contentWidth, node.x + node.width + TIMER_RADIUS * 6);
-			maxDepth = Math.max(maxDepth, nodeDepth(node.fullString));
 		}
-		const horizontalPadding = 12;
 		const levelGutter = showDebugStats ? DEBUG_LEVEL_GUTTER : 0;
-		const availableWidth = Math.max(
-			1,
-			viewportSize.width - horizontalPadding * 2 - maxDepth * levelGutter,
-		);
-		const scale = contentWidth > 0 ? Math.min(1, availableWidth / contentWidth) : 1;
 		return {
-			scale,
-			offsetX: horizontalPadding,
+			scale: 1,
+			offsetX: 0,
 			offsetY: 0,
 			contentWidth,
 			levelGutter,
@@ -430,16 +600,21 @@ function TrieSnapshotVisualizer({
 		ctx.clearRect(0, 0, canvas.width, canvas.height);
 		ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 
-		const orderedNodes = Object.values(laidOutNodes);
-		const visibleNodes = orderedNodes.filter((node) =>
-			nodePassesThreshold(node, rootZ, expansionThreshold, showAll),
-		);
+		const visibleNodes = Object.values(laidOutNodes);
 		const scaleX = (value: number, fullString: string) =>
 			renderMetrics.offsetX +
 			value * renderMetrics.scale +
-			nodeDepth(fullString) * renderMetrics.levelGutter;
+			relativeDepth(fullString, scrollRoot) * renderMetrics.levelGutter;
 		const scaleSize = (value: number) => value * renderMetrics.scale;
 		const currentTime = performance.now() / 1000;
+
+		ctx.beginPath();
+		ctx.moveTo(SCROLL_TARGET_X_PX, 0);
+		ctx.lineTo(SCROLL_TARGET_X_PX, viewportSize.height);
+		ctx.strokeStyle = lightBackground ? 'rgba(15, 23, 42, 0.8)' : 'rgba(255, 255, 255, 0.75)';
+		ctx.lineWidth = 4;
+		ctx.stroke();
+		ctx.closePath();
 
 		if (showBoxes) {
 			for (const node of visibleNodes) {
@@ -466,10 +641,7 @@ function TrieSnapshotVisualizer({
 				continue;
 			}
 			const parent = laidOutNodes[node.parentKey];
-			if (
-				!parent ||
-				!nodePassesThreshold(parent, rootZ, expansionThreshold, showAll)
-			) {
+			if (!parent) {
 				continue;
 			}
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
@@ -534,6 +706,8 @@ function TrieSnapshotVisualizer({
 				const formatStat = (label: string, value: number | null) =>
 					`${label}:${value === null ? '-' : value.toFixed(2)}`;
 				const lines = [
+					`scroll:${scrollOffset}`,
+					`fork:${firstForkDepth ?? '-'}`,
 					formatStat('z', node.node.z),
 					formatStat('tp', node.node.tp),
 					formatStat('tp0', node.node.tp0),
@@ -558,9 +732,10 @@ function TrieSnapshotVisualizer({
 		renderMetrics,
 		viewportSize,
 		getTweenedValue,
-		expansionThreshold,
+		firstForkDepth,
 		lightBackground,
-		rootZ,
+		scrollOffset,
+		scrollRoot,
 		showAll,
 		showBoxes,
 		showDebugStats,
@@ -572,6 +747,13 @@ function TrieSnapshotVisualizer({
 				ref={canvasRef}
 				className="block h-full w-full bg-slate-100 dark:bg-black"
 			/>
+			{offscreenText && (
+				<div className="pointer-events-none absolute left-4 top-[38%] w-[250px] -translate-y-1/2 rounded-md border border-slate-300/80 bg-white/90 px-3 py-2 text-sm text-slate-800 shadow-sm backdrop-blur-sm dark:border-white/20 dark:bg-black/70 dark:text-gray-100">
+					<div className="whitespace-pre-wrap break-words font-mono leading-relaxed">
+						{offscreenText}
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

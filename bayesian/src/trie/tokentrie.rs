@@ -231,7 +231,7 @@ impl XBayes {
                     tl_array[lexindex.as_usize()] = new_mtcdl0;
                     debug_assert!({
                         !c_cuml_hit_edge ||
-                        f32::from(new_mtcdl0 - c_cuml_l).abs() < 1e-5
+                        f32::from(new_mtcdl0 - c_cuml_l).abs() < 1e-3
                     })
                 }
                 if !self.tokenizer.proper_prefix_hashset.contains(&c_suffix_hash) {

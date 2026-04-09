@@ -4,9 +4,12 @@ import initBayesianWasm, {
 	debugPanicTest,
 	initPanicHook,
 } from '../wasm_pkg/bayesian';
+import practicePhrasesText from './v3-practice-phrases.txt?raw';
 import CalibrationSettings, { type LikelihoodModel } from '../components/CalibrationSettings';
 import Eye from '../components/Eye';
-import TrieSnapshotVisualizer from '../components/TrieSnapshotVisualizer';
+import TrieSnapshotVisualizer, {
+	computeScrollLayoutState,
+} from '../components/TrieSnapshotVisualizer';
 import type {
 	ExpandedSnapshot,
 	VisibleNodeTimerMap,
@@ -18,6 +21,11 @@ const DEFAULT_LIKELIHOOD_MODEL: LikelihoodModel = {
 	outliers: 0.03,
 	period: 1.1,
 };
+const N_SKIP_PRACTICE_PHRASES = 6;
+const PRACTICE_PHRASES = practicePhrasesText
+	.split('\n')
+	.map((line) => line.trim())
+	.filter((line) => line.length > 0);
 
 const RECENT_CONSOLE_ERROR_LIMIT = 20;
 let wasmPanicConsoleCaptureInstalled = false;
@@ -52,15 +60,11 @@ function randomTimersForSnapshot(
 	model: LikelihoodModel,
 	existingTimers: VisibleNodeTimerMap,
 	resetAll: boolean,
-	expansionThreshold: number,
+	renderedNodeKeys: readonly string[],
 ): VisibleNodeTimerMap {
 	const nextTimers: VisibleNodeTimerMap = {};
-	const rootZ = snapshot['^']?.z;
-	for (const fullString of Object.keys(snapshot)) {
-		if (
-			rootZ === undefined ||
-			snapshot[fullString].z - rootZ <= expansionThreshold
-		) {
+	for (const fullString of renderedNodeKeys) {
+		if (!(fullString in snapshot)) {
 			continue;
 		}
 		if (!resetAll && existingTimers[fullString]) {
@@ -176,6 +180,16 @@ function readStoredColorMode(): 'light' | 'dark' {
 	return 'dark';
 }
 
+function randomPracticePhrase(excluding?: string): string {
+	const eligiblePhrases = PRACTICE_PHRASES.slice(N_SKIP_PRACTICE_PHRASES);
+	const source = eligiblePhrases.length > 0 ? eligiblePhrases : PRACTICE_PHRASES;
+	const candidates =
+		source.length > 1 && excluding
+			? source.filter((phrase) => phrase !== excluding)
+			: source;
+	return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
 function V3Page() {
 	const [snapshot, setSnapshot] = useState<ExpandedSnapshot | null>(null);
 	const [timers, setTimers] = useState<VisibleNodeTimerMap>({});
@@ -205,7 +219,15 @@ function V3Page() {
 	const [showDebugStats, setShowDebugStats] = useState(false);
 	const [showAll, setShowAll] = useState(false);
 	const [blinkToClick, setBlinkToClick] = useState(readStoredBlinkToClick);
+	const [showPracticePhrase, setShowPracticePhrase] = useState(false);
+	const [practicePhrase, setPracticePhrase] = useState(() => randomPracticePhrase());
 	const [expansionThreshold, setExpansionThreshold] = useState<number>(Number.NEGATIVE_INFINITY);
+	const [scrollOffset, setScrollOffset] = useState(0);
+	const [scrollRoot, setScrollRoot] = useState('^');
+	const [firstForkDepth, setFirstForkDepth] = useState<number | null>(null);
+	const scrollOffsetRef = useRef(0);
+	const scrollRootRef = useRef('^');
+	const scrollAncestorKeysRef = useRef<string[]>([]);
 
 	useEffect(() => {
 		try {
@@ -227,7 +249,22 @@ function V3Page() {
 		likelihoodModelRef.current = likelihoodModel;
 	}, [likelihoodModel]);
 
+	const shufflePracticePhrase = useCallback(() => {
+		setPracticePhrase((current) => randomPracticePhrase(current));
+	}, []);
+
 	const applySnapshot = useCallback((nextSnapshot: ExpandedSnapshot, resetAllTimers: boolean) => {
+		const nextScrollLayout = computeScrollLayoutState(
+			nextSnapshot,
+			expansionThresholdRef.current,
+			scrollOffsetRef.current,
+		);
+		scrollOffsetRef.current = nextScrollLayout.scrollOffset;
+		scrollRootRef.current = nextScrollLayout.scrollRoot;
+		scrollAncestorKeysRef.current = nextScrollLayout.scrollAncestorKeys;
+		setScrollOffset(nextScrollLayout.scrollOffset);
+		setScrollRoot(nextScrollLayout.scrollRoot);
+		setFirstForkDepth(nextScrollLayout.firstForkDepth);
 		setSnapshot(nextSnapshot);
 		setTimers((currentTimers) =>
 			randomTimersForSnapshot(
@@ -235,7 +272,7 @@ function V3Page() {
 				likelihoodModelRef.current,
 				currentTimers,
 				resetAllTimers,
-				expansionThresholdRef.current,
+				nextScrollLayout.renderedNodeKeys,
 			),
 		);
 	}, []);
@@ -518,9 +555,16 @@ function V3Page() {
 					if (!(fullString in snapshot)) {
 						continue;
 					}
-					likelihoodPayload[fullString] = {
-						l: timerLikelihood(timeSeconds, timer.phase, likelihoodModelRef.current),
-					};
+					const likelihood = timerLikelihood(timeSeconds, timer.phase, likelihoodModelRef.current);
+					likelihoodPayload[fullString] = { l: likelihood };
+					if (fullString === scrollRootRef.current) {
+						for (const ancestorKey of scrollAncestorKeysRef.current) {
+							if (!(ancestorKey in snapshot)) {
+								continue;
+							}
+							likelihoodPayload[ancestorKey] = { l: likelihood };
+						}
+					}
 				}
 				const likelihoodJson = JSON.stringify(likelihoodPayload);
 				const snapshotJson = await enqueueSessionOp(() => {
@@ -636,6 +680,25 @@ function V3Page() {
 								<code className="text-slate-800 dark:text-gray-300">Space</code> / blink likelihood ·{' '}
 								<code className="text-slate-800 dark:text-gray-300">Esc</code> reset
 							</span>
+							{showPracticePhrase && (
+								<>
+									<span className="text-slate-300 dark:text-white/25">·</span>
+									<div className="flex min-w-0 items-center gap-2">
+										<button
+											type="button"
+											onClick={shufflePracticePhrase}
+											className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-600 transition hover:bg-slate-100 hover:text-slate-800 dark:border-white/10 dark:bg-white/5 dark:text-gray-300 dark:hover:bg-white/10 dark:hover:text-white"
+											aria-label="Choose another practice phrase"
+											title="Choose another practice phrase"
+										>
+											<span aria-hidden="true">⟳</span>
+										</button>
+										<span className="min-w-0 max-w-[30rem] rounded-md border border-slate-200 bg-slate-50/80 px-2.5 py-1 text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-gray-200">
+											<span className="block truncate">{practicePhrase}</span>
+										</span>
+									</div>
+								</>
+							)}
 						</div>
 						<div className="flex shrink-0 items-center gap-3">
 							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
@@ -673,6 +736,15 @@ function V3Page() {
 									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
 								/>
 								Boxes
+							</label>
+							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
+								<input
+									type="checkbox"
+									checked={showPracticePhrase}
+									onChange={(e) => setShowPracticePhrase(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
+								/>
+								Practice
 							</label>
 							<button
 								type="button"
@@ -724,6 +796,9 @@ function V3Page() {
 									timers={timers}
 									period={likelihoodModel.period}
 									expansionThreshold={expansionThreshold}
+									scrollOffset={scrollOffset}
+									scrollRoot={scrollRoot}
+									firstForkDepth={firstForkDepth}
 									showAll={showAll}
 									lightBackground={colorMode === 'light'}
 									showBoxes={showBoxes}
