@@ -252,3 +252,258 @@ $\rho$, and the parameters of the noise, $\mu_\epsilon$, $\sigma_\epsilon$.
 % Should be a uniform-von_mises mixture model
 % which we can estimate using the EM algorithm
 % which consists in soft assignment / assignment of responsibilities
+
+
+\subsection{A Hierarchical Temporal Model of User Statistics}
+Performance will vary between users, between weeks for a given user,
+between sessions for a given week, and between strings in a given session.
+
+Here, I describe a simple, normal hierarchical model of user statistics.
+
+\begin{figure}[H]
+\centering
+\makebox[\textwidth][c]{%
+\begin{tikzpicture}[
+  x=1.8cm,
+  y=1.9cm,
+  node/.style={
+    draw,
+    minimum width=2.5em,
+    minimum height=1.5em,
+    inner sep=4pt,
+  },
+  callout/.style={
+    ->,
+    very thick,
+    dashed,
+    draw=black!60,
+  }
+]
+\node[node] (a1) at (-3.5, 3) {$c(0,0,0)$};
+\node[node] (a2) at (-2.5, 3) {$c(0,0,1)$};
+\node[node] (a3) at (-1.5, 3) {$c(0,1,0)$};
+\node[node] (a4) at (-0.5, 3) {$c(0,1,1)$};
+\node[node] (a5) at ( 0.5, 3) {$c(1,0,0)$};
+\node[node] (a6) at ( 1.5, 3) {$c(1,0,1)$};
+\node[node] (a7) at ( 2.5, 3) {$c(1,1,0)$};
+\node[node] (a8) at ( 3.5, 3) {$c(1,1,1)$};
+
+\node[node] (b1) at (-3, 2) {$c(i,0,0)$};
+\node[node] (b2) at (-1, 2) {$c(i,0,1)$};
+\node[node] (b3) at ( 1, 2) {$c(i,1,0)$};
+\node[node] (b4) at ( 3, 2) {$c(i,1,1)$};
+
+\node[node] (c1) at (-2, 1) {$c(i,j,0)$};
+\node[node] (c2) at ( 2, 1) {$c(i,j,1)$};
+
+\node[node] (d1) at (0, 0) {$X_{i,j,n}$};
+
+\node[anchor=east] at (-4.4, 0) {Gesture};
+\node[anchor=east] at (-4.4, 1) {String};
+\node[anchor=east] at (-4.4, 2) {Session};
+\node[anchor=east] at (-4.4, 3) {User};
+
+\node[font=\normalsize] at ($(a2.center) + (0.18, -0.30)$) {exp};
+\node[font=\normalsize] at ($(a4.center) + (0.18, -0.30)$) {exp};
+\node[font=\normalsize] at ($(a6.center) + (0.18, -0.30)$) {exp};
+\node[font=\normalsize] at ($(a8.center) + (0.18, -0.30)$) {exp};
+\node[font=\normalsize] at ($(b2.center) + (0.18, -0.30)$) {exp};
+\node[font=\normalsize] at ($(b4.center) + (0.18, -0.30)$) {exp};
+\node[font=\normalsize] at ($(c2.center) + (0.18, -0.30)$) {exp};
+
+\node[anchor=west, align=left, text width=3.4cm] (typical-sigma-label) at ($(c2.east) + (1.45, -0.18)$) {typical $\sigma_{\mathrm{string}}$\\for this session};
+\draw[callout] (typical-sigma-label.west) to[out=180, in=0] (b3.east);
+
+\node[anchor=west, align=left, text width=3.4cm] (session-control-label) at ($(c2.east) + (1.45, 0.55)$) {How much does this session control $\sigma_{\mathrm{string}}$?};
+\draw[callout] (session-control-label.west) to[out=180, in=0] (b4.east);
+
+\node[anchor=west, align=left, text width=3.4cm] (sigma-label) at ($(c2.east) + (1.45, -0.70)$) {$\sigma$ for this string};
+\draw[callout] (sigma-label.west) to[out=180, in=0] (c2.east);
+
+\coordinate (merge-b1) at ($(b1.north) + (0, 0.35)$);
+\coordinate (merge-b2) at ($(b2.north) + (0, 0.35)$);
+\coordinate (merge-b3) at ($(b3.north) + (0, 0.35)$);
+\coordinate (merge-b4) at ($(b4.north) + (0, 0.35)$);
+\coordinate (merge-c1) at ($(c1.north) + (0, 0.35)$);
+\coordinate (merge-c2) at ($(c2.north) + (0, 0.35)$);
+\coordinate (merge-d1) at ($(d1.north) + (0, 0.35)$);
+
+\draw (a1.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-b1);
+\draw (a2.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-b1);
+\draw (merge-b1) -- node[pos=0.35, right] {$\mathcal N$} (b1.north);
+
+\draw (a3.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-b2);
+\draw (a4.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-b2);
+\draw (merge-b2) -- node[pos=0.35, right] {$\mathcal N$} (b2.north);
+
+\draw (a5.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-b3);
+\draw (a6.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-b3);
+\draw (merge-b3) -- node[pos=0.35, right] {$\mathcal N$} (b3.north);
+
+\draw (a7.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-b4);
+\draw (a8.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-b4);
+\draw (merge-b4) -- node[pos=0.35, right] {$\mathcal N$} (b4.north);
+
+\draw (b1.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-c1);
+\draw (b2.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-c1);
+\draw (merge-c1) -- node[pos=0.35, right] {$\mathcal N$} (c1.north);
+
+\draw (b3.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-c2);
+\draw (b4.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-c2);
+\draw (merge-c2) -- node[pos=0.35, right] {$\mathcal N$} (c2.north);
+
+\draw (c1.south) .. controls +(0, -0.25) and +(-0.22, 0.18) .. (merge-d1);
+\draw (c2.south) .. controls +(0, -0.25) and +( 0.22, 0.18) .. (merge-d1);
+\draw (merge-d1) -- node[pos=0.35, right] {$\mathcal N$} (d1.north);
+\end{tikzpicture}
+}
+\caption{A hierarchical temporal model in which user-level statistics refine through session- and string-level variables to individual gestures.}
+\label{fig:hierarchical-temporal-model}
+\end{figure}
+
+\begin{table}[h]
+    \centering
+    \renewcommand{\arraystretch}{1.4}
+    \begin{tabular}{|c|c|c|}
+        \hline
+        \textbf{Level} & \textbf{Number of Latent Variables} & \textbf{Number of Data Points} \\
+        \hline
+        Gesture        & 0 & $N$ \\
+        String         & $I \times J \times 2$ & 0 \\
+        Session        & $I \times 4$ & 0 \\
+        User           & 8 & 0 \\
+        \hline
+    \end{tabular}
+    \caption{Number of latent variables and data points at each hierarchical level.}
+\end{table}
+
+In this model each data point is modelled as coming from 
+a normal distribution parameterized by latent variables
+specific to the narrowest temporal scope. Those variables
+in turn are parameterized by variables of the next broader scope,
+etc. In figure \ref{fig:hierarchical-temporal-model} 
+a variable label that ends in $0$ indicates a mean for the 
+next lower scope, while a variable label that ends in $1$ indicates
+a standard deviation for the next lower scope.
+Figure \ref{fig:hierarchical-temporal-model} also indicates
+that deviation variables are in log-space, so the
+distribution of a raw deviation variable is log-normal
+with respect to fixed parent variables.
+
+\subsubsection{Variational Inference}
+
+We pursue estimation of these latent variables
+using variational inference and a diagonal Gaussian
+variational distribution. Evaluating the expected log likelihood
+involves three closely related terms. We begin from
+\[
+C \mid A, B \sim \mathcal{N}(A, \exp(B)).
+\]
+It is convenient to evaluate this density in standardized coordinates,
+\[
+Z = \frac{C - A}{\exp(B)},
+\]
+which is simply a change of basis from the original variable $C$
+to the corresponding standard-normal coordinate $Z$.
+Under this change of basis,
+\[
+p(c \mid a, b)
+= \frac{1}{\exp(b)} \mathcal{N}\left(
+    \frac{c-a}{\exp(b)} ; 0, 1
+\right),
+\]
+so in log space we must keep both the standardized Gaussian term
+and the Jacobian term $-b$.
+\begin{enumerate}
+    \item \textbf{Latent Transition Likelihood}:
+    \label{case:latent-transition}
+    Given a latent variable $c$, and its two parent variables,
+    $a$, and $b$, denote the variational distribution
+    for these parameters as $(\mu_a, \sigma_a), (\mu_b, \sigma_b)$, and
+    $(\mu_c, \sigma_c)$ respectively.
+    Then our model that $C \sim \mathcal{N}(A, \exp(B))$ implies that
+    the expected log likelihood for this transition is
+    $$
+    \mathbb{E}_{e_1,e_2,e_3} \left[
+        \log \mathcal{N}\left(
+            \frac{(\mu_c + e_3 \sigma_c) - (\mu_a + e_1 \sigma_a)}
+            {\exp(\mu_b + e_2 \sigma_b)} ; 0, 1
+        \right)
+        - (\mu_b + e_2 \sigma_b)
+    \right]
+    $$
+    where $e_1, e_2, e_3$ are iid standard normal random variables.
+    \item \textbf{Initial Latent Likelihood}:
+    In this case we consider that the parent variables are fixed and known
+    (i.e. they are true prior parameters of the model, not latents)
+    This is the same as case \ref{case:latent-transition}
+    except that $a$ and $b$ are known constants. So we have
+    an expected log likelihood of,
+    $$
+    \mathbb{E}_{e_3} \left[
+        \log \mathcal{N}\left(
+            \frac{(\mu_c + e_3 \sigma_c) - a}{\exp(b)} ; 0, 1
+        \right)
+        - b
+    \right]
+    $$
+    \item \textbf{Data Likelihood}:
+    This is the same as case \ref{case:latent-transition}
+    except that we replace the child latent variable, $c$, with the known data point, $x$.
+    So we have an expected log likelihood of,
+    $$
+    \mathbb{E}_{e_1,e_2} \left[
+        \log \mathcal{N}\left(
+            \frac{x - (\mu_a + e_1 \sigma_a)}{\exp(\mu_b + e_2 \sigma_b)} ; 0, 1
+        \right)
+        - (\mu_b + e_2 \sigma_b)
+    \right]
+    $$
+\end{enumerate}
+This suggests an implementation simplification: we need not make
+any distinction between root prior parameters at the top level, intermediate latents,
+and data points at the bottom level. 
+We may calculate all the likelihood terms in the same way,
+but enforce that in our variational distribution for a node $a$ with a known value,
+whether a prior or a data point, we have that $\sigma_a = 0$
+and $\mu_a$ is equal to the known value, with neither of the variables
+being optimized.
+
+Luckily, the above term may be evaluated analytically.
+\begin{align}
+    &\mathbb{E}_{e_1,e_2,e_3} \left[
+        \log \mathcal{N}\left(
+            \frac{(\mu_c + e_3 \sigma_c) - (\mu_a + e_1 \sigma_a)}
+            {\exp(\mu_b + e_2 \sigma_b)} ; 0, 1
+        \right)
+        - (\mu_b + e_2 \sigma_b)
+    \right] \\
+    &= -\frac{1}{2}\log(2\pi)
+    - \mathbb{E}_{e_2}[\mu_b + e_2 \sigma_b]
+    - \frac{1}{2}
+    \mathbb{E}_{e_1,e_2,e_3} \left[
+        \left(
+            \frac{(\mu_c + e_3 \sigma_c) - (\mu_a + e_1 \sigma_a)}
+            {\exp(\mu_b + e_2 \sigma_b)}
+        \right)^2
+    \right] \\
+    &= -\frac{1}{2}\log(2\pi)
+    - \mu_b
+    - \frac{1}{2}
+    \mathbb{E}_{e_1,e_3} \left[
+        \left(
+            (\mu_c - \mu_a) + e_3 \sigma_c - e_1 \sigma_a
+        \right)^2
+    \right]
+    \mathbb{E}_{e_2} \left[
+        \exp(-2\mu_b - 2 e_2 \sigma_b)
+    \right] \\
+    &= -\frac{1}{2}\log(2\pi)
+    - \mu_b
+    - \frac{1}{2}
+    \left(
+        (\mu_c - \mu_a)^2 + \sigma_c^2 + \sigma_a^2
+    \right)
+    \exp(-2\mu_b + 2\sigma_b^2).
+\end{align}
+

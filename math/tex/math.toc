@@ -52,17 +52,19 @@
 \contentsline {section}{\numberline {6.3}User Parameters}{56}{section.6.3}%
 \contentsline {subsection}{\numberline {6.3.1}The Likelihood Model}{56}{subsection.6.3.1}%
 \contentsline {subsection}{\numberline {6.3.2}Directional Statistics}{57}{subsection.6.3.2}%
-\contentsline {chapter}{\numberline {7}Render Stimulus}{58}{chapter.7}%
-\contentsline {section}{\numberline {7.1}Circular Timers}{58}{section.7.1}%
-\contentsline {chapter}{\numberline {8}Detect Response}{59}{chapter.8}%
-\contentsline {section}{\numberline {8.1}Blink Detection}{59}{section.8.1}%
-\contentsline {section}{\numberline {8.2}Keypress Detection}{59}{section.8.2}%
-\contentsline {chapter}{\numberline {9}Determine Most Likely Break Nodes}{60}{chapter.9}%
-\contentsline {section}{\numberline {9.1}An Upper Bound for the Likelihood of a Token Sequence}{60}{section.9.1}%
-\contentsline {section}{\numberline {9.2}Descending the Token Trie}{61}{section.9.2}%
-\contentsline {chapter}{\numberline {10}LLM Query}{62}{chapter.10}%
-\contentsline {section}{\numberline {10.1}Maintaining a Key-Value Cache Trie}{62}{section.10.1}%
-\contentsline {chapter}{\numberline {11}Mastering Dotter}{63}{chapter.11}%
-\contentsline {section}{\numberline {11.1}The Cost of Incorrect Signals}{63}{section.11.1}%
-\contentsline {section}{\numberline {11.2}Zen of Dotter}{65}{section.11.2}%
-\contentsline {chapter}{Bibliography}{65}{section*.20}%
+\contentsline {subsection}{\numberline {6.3.3}A Hierarchical Temporal Model of User Statistics}{57}{subsection.6.3.3}%
+\contentsline {subsubsection}{Variational Inference}{57}{section*.20}%
+\contentsline {chapter}{\numberline {7}Render Stimulus}{59}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Circular Timers}{59}{section.7.1}%
+\contentsline {chapter}{\numberline {8}Detect Response}{60}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Blink Detection}{60}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Keypress Detection}{60}{section.8.2}%
+\contentsline {chapter}{\numberline {9}Determine Most Likely Break Nodes}{61}{chapter.9}%
+\contentsline {section}{\numberline {9.1}An Upper Bound for the Likelihood of a Token Sequence}{61}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Descending the Token Trie}{62}{section.9.2}%
+\contentsline {chapter}{\numberline {10}LLM Query}{63}{chapter.10}%
+\contentsline {section}{\numberline {10.1}Maintaining a Key-Value Cache Trie}{63}{section.10.1}%
+\contentsline {chapter}{\numberline {11}Mastering Dotter}{64}{chapter.11}%
+\contentsline {section}{\numberline {11.1}The Cost of Incorrect Signals}{64}{section.11.1}%
+\contentsline {section}{\numberline {11.2}Zen of Dotter}{66}{section.11.2}%
+\contentsline {chapter}{Bibliography}{66}{section*.21}%
