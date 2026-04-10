@@ -1,18 +1,56 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use super::prepared_allpairs::{
     self, MergeRows, PreparedFirstAllPairs, PreparedSecondBuckets, PreparedSecondToken,
 };
 use super::tokenizer_config::NUM_TOKENS;
 use super::{
-    hf_token_to_internal, BpeMerges, HF_SPACE_MARKER, MAX_PACKED_SPINE_LEN, NO_PACKED_SPINE_INDEX,
+    hf_token_to_internal, BpeMerges, HF_SPACE_MARKER, NO_PACKED_SPINE_INDEX,
     PackedSpine, PrefixLexIndex, SPACESYMBOL, SpineEntry, TokenLexIndex,
 };
 use crate::rolling_hash as rh;
 
 pub(crate) type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CanonicalFollowersTimingSnapshot {
+    pub call_count: u64,
+    pub total_ns: u64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static CANONICAL_FOLLOWERS_CALL_COUNT: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(target_arch = "wasm32"))]
+static CANONICAL_FOLLOWERS_TOTAL_NS: AtomicU64 = AtomicU64::new(0);
+
+pub fn reset_canonical_followers_timing() {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        CANONICAL_FOLLOWERS_CALL_COUNT.store(0, Ordering::Relaxed);
+        CANONICAL_FOLLOWERS_TOTAL_NS.store(0, Ordering::Relaxed);
+    }
+}
+
+pub fn canonical_followers_timing_snapshot() -> CanonicalFollowersTimingSnapshot {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        return CanonicalFollowersTimingSnapshot {
+            call_count: CANONICAL_FOLLOWERS_CALL_COUNT.load(Ordering::Relaxed),
+            total_ns: CANONICAL_FOLLOWERS_TOTAL_NS.load(Ordering::Relaxed),
+        };
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        CanonicalFollowersTimingSnapshot::default()
+    }
+}
 
 fn token_prefixes(token: &str) -> Vec<&str> {
     let mut prefixes = Vec::with_capacity(token.chars().count() + 1);
@@ -580,19 +618,6 @@ impl TinyLlamaWordTokenizer {
             *first_token_right_spine,
             &self.prepared_merge_rows,
         );
-        macro_rules! fill_bucket {
-            ($left_len:literal) => {
-                for entry in &self.prepared_second_buckets[$left_len] {
-                    let is_canonical = prepared_allpairs::is_canonical_allpairs_small::<
-                        NUM_TOKENS,
-                        $left_len,
-                        MAX_PACKED_SPINE_LEN,
-                    >(&prepared_first, &entry.left_spine);
-                    out[entry.lex_index] = is_canonical;
-                }
-            };
-        }
-        // Fall back to exact right-len dispatch to preserve allpairs specialization behavior.
         let right_len = first_token_right_spine.as_slice().len();
         macro_rules! by_left {
             ($right_len:literal, $left_len:literal) => {
@@ -617,7 +642,7 @@ impl TinyLlamaWordTokenizer {
                     6 => by_left!(6, $left_len),
                     7 => by_left!(7, $left_len),
                     8 => by_left!(8, $left_len),
-                    _ => fill_bucket!($left_len),
+                    _ => unreachable!("packed right spine length must be in 1..=8"),
                 }
             };
         }
@@ -645,18 +670,15 @@ impl TinyLlamaWordTokenizer {
     }
 
     pub fn canonical_followers_for_lex_index(&self, first_lex_index: TokenLexIndex) -> Vec<bool> {
-        let first_token = self.token_at(first_lex_index);
-        if let Some(first_token_right_spine) = self.right_packed_spine(first_token) {
-            return self
-                .canonical_pair_batch_with_first_token_right_spine(&first_token_right_spine);
-        }
-        let mut out = vec![false; self.lex_tokens.len()];
-        self.seed_space_prefixed_second_tokens(&mut out);
-        for (second_lex_index, second_token) in self.lex_tokens.iter().enumerate() {
-            if out[second_lex_index] {
-                continue;
-            }
-            out[second_lex_index] = self.can_canonically_follow(first_token, second_token);
+        #[cfg(not(target_arch = "wasm32"))]
+        let started = Instant::now();
+        let first_token_right_spine = self.right_packed_spine_for_lex_index(first_lex_index);
+        let out = self.canonical_pair_batch_with_first_token_right_spine(&first_token_right_spine);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            CANONICAL_FOLLOWERS_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+            CANONICAL_FOLLOWERS_TOTAL_NS
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
         out
     }
@@ -679,13 +701,13 @@ impl TinyLlamaWordTokenizer {
         &self,
         first_token_right_spine: &PackedSpine,
         second_lex_index: TokenLexIndex,
-    ) -> Option<bool> {
-        let second_token_left_spine = self.left_packed_spine_for_lex_index(second_lex_index)?;
-        Some(
-            self.merges.canonical_pair_from_packed_spines(
-                first_token_right_spine,
-                second_token_left_spine,
-            ),
+    ) -> bool {
+        let second_token_left_spine = self
+            .left_packed_spine_for_lex_index(second_lex_index)
+            .expect("token must have a packed left spine");
+        self.merges.canonical_pair_from_packed_spines(
+            first_token_right_spine,
+            second_token_left_spine,
         )
     }
 
@@ -712,20 +734,17 @@ impl TinyLlamaWordTokenizer {
 
     /// Returns true exactly when raw BPE tokenization of `a + b` is `[a, b]`.
     pub(crate) fn can_canonically_follow(&self, a: &str, b: &str) -> bool {
-        let _ = self
+        let first_lex_index = self
             .lex_index(a)
             .expect("first token must be present in tokenizer vocabulary");
         let second_lex_index = self
             .lex_index(b)
             .expect("second token must be present in tokenizer vocabulary");
-        let Some(first_token_right_spine) = self.right_packed_spine(a) else {
-            return self.merges.canonical_pair(a, b);
-        };
+        let first_token_right_spine = self.right_packed_spine_for_lex_index(first_lex_index);
         self.canonical_pair_with_first_token_right_packed_spine_and_lex_index(
             &first_token_right_spine,
             second_lex_index,
         )
-        .unwrap_or_else(|| self.merges.canonical_pair(a, b))
     }
 
     pub(crate) fn canonical_followers(&self, token: &str) -> Vec<bool> {

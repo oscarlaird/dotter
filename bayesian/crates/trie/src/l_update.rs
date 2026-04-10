@@ -85,7 +85,10 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
     // proceed to the edge, and include in result if any n.exists
     // likelihood = proper_truncated_l + n.likelihood
     // the sum of direct and carried contributions
-    assert!(l_updates.iter().all(|l_update| well_formed(l_update)), "l_updates are not well-formed");
+    debug_assert!(
+        l_updates.iter().all(|l_update| well_formed(l_update)),
+        "l_updates are not well-formed"
+    );
     let mut result = XLUpdate::default();
     struct Frame {
         n_symbol: Symbol,

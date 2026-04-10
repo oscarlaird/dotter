@@ -29,6 +29,11 @@ mod p_update;
 pub mod core;
 pub mod debug;
 pub mod prediction;
+pub use prediction::{
+    ZeroOrderPredictionTimingSnapshot,
+    reset_zero_order_prediction_timing,
+    zero_order_prediction_timing_snapshot,
+};
 
 #[cfg(feature = "tokentrie")]
 mod tokentrie;

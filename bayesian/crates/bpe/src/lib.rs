@@ -20,7 +20,12 @@ mod tokenizer_config;
 mod word_tokenizer;
 
 pub use self::tokenizer_config::{NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_STR};
-pub use self::word_tokenizer::TinyLlamaWordTokenizer;
+pub use self::word_tokenizer::{
+    CanonicalFollowersTimingSnapshot,
+    TinyLlamaWordTokenizer,
+    canonical_followers_timing_snapshot,
+    reset_canonical_followers_timing,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -910,10 +915,10 @@ mod tests {
     }
 
     #[test]
-    fn canonical_pair_batch_supports_special_first_token_via_scalar_path() {
+    #[should_panic(expected = "token must have a packed right spine")]
+    fn canonical_pair_batch_rejects_special_first_token_without_packed_spine() {
         let tok = TinyLlamaWordTokenizer::from_tokenizer_json_str(tiny_tokenizer_json_for_tests());
-        let mask = tok.canonical_followers("<s>");
-        assert_eq!(mask, vec![false; tok.tokens().len()]);
+        let _ = tok.canonical_followers("<s>");
     }
 
     #[test]
