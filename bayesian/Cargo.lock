@@ -245,11 +245,7 @@ name = "trie"
 version = "0.1.0"
 dependencies = [
  "bpe",
- "pyo3",
  "rolling_hash",
- "serde",
- "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]

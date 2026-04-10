@@ -11,8 +11,7 @@ use crate::bpe::NUM_TOKENS;
 
 mod sparse16;
 mod y_walker;
-#[cfg(test)]
-pub(crate) mod debug;
+pub mod debug;
 
 use super::{
     MAX_TOKEN_LENGTH, ROOT_HASH, logaddexp,
@@ -25,8 +24,8 @@ use sparse16::{dense_to_sparse16, sparse16_to_dense};
 use y_walker::{FromEnd as _, YWalker, YWalkerRow};
 
 #[derive(Clone, Debug)]
-pub(crate) struct XNode {
-    pub(crate) symbol: Symbol,
+pub struct XNode {
+    pub symbol: Symbol,
     // we don't store a node's hash, because there is no way to reach the node without knowing it
     // for all matrices, children are arrayed on the major axis
     c_can_trunc: [u16; RADIX],
@@ -39,27 +38,27 @@ pub(crate) struct XNode {
     c_tp0: [Float; RADIX],
     c_final_token_prob: [Float; RADIX],
     // TODO: #[cfg(feature = "tokentrie")]
-    pub(crate) c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
+    pub c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
     c_cuml_l_old: [Float; RADIX],
-    pub(crate) c_cuml_l_old_for_mtcdl: [Float; RADIX],
-    pub(crate) c_z: [Float; RADIX],
+    pub c_cuml_l_old_for_mtcdl: [Float; RADIX],
+    pub c_z: [Float; RADIX],
     //
     c_a_pred_changed: [AncestorsBitmap; RADIX], // ancestor predictions which have changed since we visited this child
     c_a_tp_changed: [AncestorsBitmap; RADIX], // ancestor tps which have changed since we visited this child
     // ROOT
-    pub(crate) if_root_then_z: Float,
+    pub if_root_then_z: Float,
 }
 
-pub(crate) struct XBayes {
-    pub(crate) nodes: rh::RHashMap<XNode>,
-    pub(crate) full_predictions: rh::RHashMap<XPrediction>,
+pub struct XBayes {
+    pub nodes: rh::RHashMap<XNode>,
+    pub full_predictions: rh::RHashMap<XPrediction>,
     zero_order_predictions: Box<[Option<XPrediction>]>,
     root_zero_order_prediction: XPrediction,
-    pub(crate) pending_likelihood: XLUpdate,
-    pub(crate) cum_likelihood: XLUpdate,
-    pub(crate) pending_prior: PUpdate,
+    pub pending_likelihood: XLUpdate,
+    pub cum_likelihood: XLUpdate,
+    pub pending_prior: PUpdate,
     unread_predictions: PUpdate,
-    pub(crate) tokenizer: TinyLlamaWordTokenizer,
+    pub tokenizer: TinyLlamaWordTokenizer,
     #[cfg(feature = "tokentrie")]
     pub(super) queue: BinaryHeap<QueueItem>,
     #[cfg(feature = "tokentrie")]
@@ -71,7 +70,7 @@ type ContextWindowSize = u8;
 type AncestorsBitmap = u16;
 
 impl XNode {
-    pub(crate) fn edge_snapshot_fields(&self, symbol: Symbol) -> (Float, Float, Float, Float, Float) {
+    pub fn edge_snapshot_fields(&self, symbol: Symbol) -> (Float, Float, Float, Float, Float) {
         let slot = symbol.to_slot();
         (
             self.c_z[slot],
@@ -83,20 +82,20 @@ impl XNode {
     }
 }
 
-pub(crate) enum RecalcType {
+pub enum RecalcType {
     Update,
     Expand { threshold: Float },
     // N.B. you can't do both at the same time since checking threshold requires knowing the root's z which is not known until after uppropping an update
 }
 
 
-pub(crate) enum RecalcResult {
+pub enum RecalcResult {
     Updated,
     Expanded { nodes_over_threshold: Vec<Hash> }
 }
 
 impl XBayes {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let mut nodes = rh::RHashMap::default();
         let full_predictions = rh::RHashMap::default();
         let zero_order_predictions = std::iter::repeat_with(|| None)
@@ -149,7 +148,7 @@ impl XBayes {
         ));
     }
 
-    pub(crate) fn recalc_to_frontier(&mut self, recalc_type: RecalcType) -> RecalcResult {
+    pub fn recalc_to_frontier(&mut self, recalc_type: RecalcType) -> RecalcResult {
         // assert that there are no pending updates if we are expanding
         #[cfg(feature = "tokentrie")]
         {

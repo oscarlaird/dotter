@@ -59,7 +59,7 @@ fn node_label(hash: Hash, node: &XNode) -> String {
 /// * `filter`: see [`parse_symbol_filter`]. Empty / whitespace-only ⇒ show all nodes.
 /// * `hash_filter`: when present, only nodes whose hashes are in the set are shown.
 /// * The **root** (`ROOT_HASH`) is always printed when it exists unless excluded by `hash_filter`.
-pub(crate) fn eprint_trie(trie: &XBayes, filter: &str, hash_filter: Option<&rh::RHashSet>) {
+pub fn eprint_trie(trie: &XBayes, filter: &str, hash_filter: Option<&rh::RHashSet>) {
     let filter_set = parse_symbol_filter(filter);
     eprint_subtree(&trie.nodes, ROOT_HASH, "", true, &filter_set, hash_filter);
 }

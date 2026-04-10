@@ -2,7 +2,7 @@
 //!
 //! For tests that only use the public `bayesian` surface, prefer `bayesian/tests/` at the crate root.
 #[cfg(not(feature = "wasm"))]
-use crate::ROOT_HASH;
+use crate::trie::ROOT_HASH;
 use crate::bpe::TokenLexIndex;
 use serde::{Deserialize, Serialize};
 
@@ -360,9 +360,9 @@ fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
 #[test]
 fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
     use crate::rolling_hash as rh;
-    use crate::safe_float::into_f32;
-    use crate::symbol::Symbol;
-    use crate::ROOT_HASH;
+    use crate::trie::safe_float::into_f32;
+    use crate::trie::symbol::Symbol;
+    use crate::trie::ROOT_HASH;
 
     #[derive(Deserialize)]
     struct SnapshotEntry {
@@ -389,11 +389,11 @@ fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
     println!("root.if_root_then_z = {:?}", root.if_root_then_z);
     println!(
         "{}",
-        crate::core::debug::format_node_slot_dump(root, "root", Symbol::Space)
+        crate::trie::core::debug::format_node_slot_dump(root, "root", Symbol::Space)
     );
     println!(
         "{}",
-        crate::core::debug::format_node_slot_dump(under, "^_", Symbol::A)
+        crate::trie::core::debug::format_node_slot_dump(under, "^_", Symbol::A)
     );
 
     for (path, parent_hash, slot) in [
@@ -437,9 +437,9 @@ fn trie_explore_z_under_and_under_a_after_root_lm_prior_fixture() {
 #[test]
 fn debug_z_after_first_expand_caret_space_space() {
     use crate::rolling_hash as rh;
-    use crate::safe_float::{Float, into_f32};
-    use crate::symbol::Symbol;
-    use crate::ROOT_HASH;
+    use crate::trie::safe_float::{Float, into_f32};
+    use crate::trie::symbol::Symbol;
+    use crate::trie::ROOT_HASH;
 
     let mut session = crate::BayesianSession::new();
     let _ = session.expand_to_threshold();
@@ -471,7 +471,7 @@ fn debug_z_after_first_expand_caret_space_space() {
     if let Some(node) = session.trie.nodes.get(&h) {
         let mut sum = Float::NEG_INFINITY;
         for slot in 0..27 {
-            sum = crate::logaddexp(sum, node.c_z[slot]);
+            sum = crate::trie::logaddexp(sum, node.c_z[slot]);
         }
         println!("^__ logsum(children c_z): {}", into_f32(sum));
     }

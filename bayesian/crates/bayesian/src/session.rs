@@ -1,19 +1,49 @@
 use std::collections::HashMap;
 
-use crate::bpe::TokenLexIndex;
-use crate::safe_float::{Float, into_f32};
-use crate::symbol::{Symbol, RADIX};
-use crate::core::{XBayes, RecalcType, RecalcResult};
-use crate::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
-use crate::prediction::XPrediction;
-use crate::rolling_hash as rh;
-use crate::rolling_hash::Hash;
-use serde::{Deserialize, Serialize};
+use bpe::TokenLexIndex;
+use trie::safe_float::{Float, into_f32};
+use trie::symbol::{Symbol, RADIX};
+use trie::core::{XBayes, RecalcType, RecalcResult};
+use trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
+use trie::prediction::XPrediction;
+use rolling_hash as rh;
+use rolling_hash::Hash;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
+
+fn serialize_symbol<S>(symbol: &Symbol, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_char(symbol.to_byte() as char)
+}
+
+fn deserialize_optional_symbol<'de, D>(deserializer: D) -> Result<Option<Symbol>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|s| {
+        let mut it = s.chars();
+        let c = it
+            .next()
+            .ok_or_else(|| serde::de::Error::custom("empty symbol string"))?;
+        if it.next().is_some() {
+            return Err(serde::de::Error::custom("symbol string must be exactly one character"));
+        }
+        let code = u32::from(c);
+        if code > 127 {
+            return Err(serde::de::Error::custom("non-ASCII symbol"));
+        }
+        Symbol::from_byte(code as u8)
+            .ok_or_else(|| serde::de::Error::custom("invalid trie symbol byte"))
+    })
+    .transpose()
+}
 
 #[cfg_attr(feature = "python", pyclass)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
@@ -33,7 +63,7 @@ impl BayesianSession {
     }
 
     pub fn expansion_threshold(&self) -> f32 {
-        super::TRIE_EXPANSION_THRESHOLD as f32
+        trie::TRIE_EXPANSION_THRESHOLD as f32
     }
 
     pub fn receive_likelihood_update(&mut self, likelihood_json: String) {
@@ -43,7 +73,7 @@ impl BayesianSession {
             #[serde(alias = "l")]
             likelihood: f32,
             /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `$`, `^`).
-            #[serde(default)]
+            #[serde(default, deserialize_with = "deserialize_optional_symbol")]
             symbol: Option<Symbol>,
         }
         let l_by_string =
@@ -118,7 +148,7 @@ impl BayesianSession {
     pub fn expand_to_threshold(&mut self) -> String {
         assert!(self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1, "Tried to expand with unprocessed updates");
         let nodes_list = match self.trie.recalc_to_frontier(
-            RecalcType::Expand { threshold: Float::from(super::TRIE_EXPANSION_THRESHOLD as f32) },
+            RecalcType::Expand { threshold: Float::from(trie::TRIE_EXPANSION_THRESHOLD as f32) },
         ) {
             RecalcResult::Updated => {
                 panic!("expand_to_threshold unexpectedly returned Updated after applying pending updates")
@@ -139,9 +169,9 @@ impl BayesianSession {
             upper_siblings_inclusive_cum_z: Option<Float>,
         }
         let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
-        snapshot_by_hash.insert(super::ROOT_HASH, NString {
-            string: String::from(super::ROOT_STRING),
-            z: self.trie.nodes.get(&super::ROOT_HASH).unwrap().if_root_then_z,
+        snapshot_by_hash.insert(trie::ROOT_HASH, NString {
+            string: String::from(trie::ROOT_STRING),
+            z: self.trie.nodes.get(&trie::ROOT_HASH).unwrap().if_root_then_z,
             p: None,
             tp: None,
             tp0: None,
@@ -159,7 +189,7 @@ impl BayesianSession {
         // by the time we see a frame, it should already be in the snapshot
         // the frame list is a visit list
         let mut full_string = String::new(); // character stack
-        let mut frames: Vec<Frame> = vec![Frame { n_hash: super::ROOT_HASH, n_symbol: Symbol::Start, n_depth: 0 }];
+        let mut frames: Vec<Frame> = vec![Frame { n_hash: trie::ROOT_HASH, n_symbol: Symbol::Start, n_depth: 0 }];
         while let Some(Frame { n_hash, n_symbol, n_depth }) = frames.pop() {
             full_string.truncate(n_depth as usize);
             full_string.push(n_symbol.to_byte() as char);
@@ -181,7 +211,7 @@ impl BayesianSession {
                 let mut accum = Float::NEG_INFINITY;
                 let mut arr = [Float::NEG_INFINITY; RADIX];
                 for i in 0..RADIX {
-                    accum = crate::logaddexp(accum, c_z[i]);
+                    accum = trie::logaddexp(accum, c_z[i]);
                     arr[i] = accum;
                 }
                 arr
@@ -221,6 +251,7 @@ impl BayesianSession {
             tp: Option<f32>,
             tp0: Option<f32>,
             a_tl0: Option<f32>,
+            #[serde(serialize_with = "serialize_symbol")]
             symbol: Symbol,
             upper_siblings_inclusive_cum_z: Option<f32>,
             hash: rh::Hash,
@@ -250,13 +281,13 @@ impl BayesianSession {
     /// `$` (stop), `^` (start); empty shows all nodes (root is always shown when filtered).
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie(&self, filter: &str) {
-        crate::debug::eprint_trie(&self.trie, filter, None);
+        trie::debug::eprint_trie(&self.trie, filter, None);
     }
 
     /// Print the trie to stderr, restricted to `hash_filter` after applying the symbol filter.
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie_hash_filter(&self, filter: &str, hash_filter: &rh::RHashSet) {
-        crate::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
+        trie::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
     }
 }
 

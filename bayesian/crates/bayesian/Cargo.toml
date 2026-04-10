@@ -5,8 +5,8 @@ edition = "2024"
 
 [features]
 default = ["tokentrie", "proof"]
-python = ["trie/python", "dep:pyo3"]
-wasm = ["trie/wasm", "dep:wasm-bindgen", "dep:web-sys", "dep:console_error_panic_hook"]
+python = ["dep:pyo3"]
+wasm = ["dep:wasm-bindgen", "dep:web-sys", "dep:console_error_panic_hook"]
 trie-trace = ["trie/trie-trace"]
 tokentrie = ["trie/tokentrie"]
 proof = ["trie/proof"]

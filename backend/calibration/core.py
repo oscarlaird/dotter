@@ -14,6 +14,7 @@ class VNode(nn.Module):  # variational distribution node
             val = torch.empty(1, 2)
             val[0, 0] = data
             val[0, 1] = -10  # very tight deviation, essentially forcing constant
+            self.register_buffer("val", val)
             # intentionally do not register as a parameter when leaf
             down = None
         else:
@@ -21,6 +22,7 @@ class VNode(nn.Module):  # variational distribution node
                 val = torch.empty(2**height, 2)
                 val[:, 0] = priors
                 val[:, 1] = -10  # very tight deviation, essentially forcing constant
+                self.register_buffer("val", val)
                 # intentionally do not register as a parameter when root
             else:
                 val = torch.empty(2**height, 2)
@@ -75,7 +77,7 @@ def log_likelihood(v: VNode):
                         + c_sigma**2
                         + a_sigma**2
                     )
-                    * torch.exp(-2 * b_mu - 2 * b_sigma**2)
+                    * torch.exp(-2 * b_mu + 2 * b_sigma**2)
                 )
             )
     for child in v.down:

@@ -12,8 +12,8 @@ use crate::safe_float::Float;
 use crate::symbol::Symbol;
 
 /// Rolling hash of the trie root context (only the start symbol `^`).
-pub(crate) const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte());
-pub(crate) const ROOT_STRING: &str = "^";
+pub const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte());
+pub const ROOT_STRING: &str = "^";
 
 /// `ln(4/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
 pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
@@ -24,21 +24,17 @@ pub const TRIE_MAX_VISITS: i32 = 200;
 pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
 pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 
-mod l_update;
+pub mod l_update;
 mod p_update;
-mod core;
-mod debug;
-mod session;
-mod prediction;
+pub mod core;
+pub mod debug;
+pub mod prediction;
 
-pub use session::BayesianSession;
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
 
-#[cfg(test)]
-mod tests;
 
-pub(crate) fn logaddexp(a: Float, b: Float) -> Float {
+pub fn logaddexp(a: Float, b: Float) -> Float {
     if a == Float::NEG_INFINITY {
         return b;
     }

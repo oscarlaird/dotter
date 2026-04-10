@@ -6,7 +6,8 @@ pub use ::bpe;
 pub use ::rolling_hash;
 pub use ::trie;
 
-pub use ::trie::BayesianSession;
+mod session;
+pub use session::BayesianSession;
 
 /// Install [`console_error_panic_hook`] so panics in the wasm32 build print to `console.error`
 /// with source location (and a useful traceback when debug symbols are present). Call once
@@ -34,3 +35,6 @@ fn bayesian(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BayesianSession>()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

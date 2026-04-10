@@ -5,15 +5,15 @@ use crate::safe_float::{Float, ZERO};
 use crate::symbol::{Symbol, RADIX};
 
 #[derive(Clone)]
-pub(crate) struct XLUpdateEntry {
-    pub(crate) likelihood: Float,
-    pub(crate) symbol: Symbol,
-    pub(crate) is_leaf: bool,
+pub struct XLUpdateEntry {
+    pub likelihood: Float,
+    pub symbol: Symbol,
+    pub is_leaf: bool,
 }
 
 pub type XLUpdate = rh::RHashMap<XLUpdateEntry>;
 
-pub(crate) fn new_xlupdate() -> XLUpdate {
+pub fn new_xlupdate() -> XLUpdate {
     let mut xlupdate = XLUpdate::default();
     xlupdate.insert(ROOT_HASH, XLUpdateEntry {
         likelihood: ZERO,
@@ -46,7 +46,7 @@ fn leaf_indicators_correct(l_update: &XLUpdate) -> bool {
     })
 }
 
-pub(crate) fn set_leaf_indicators(l_update: &mut XLUpdate) {
+pub fn set_leaf_indicators(l_update: &mut XLUpdate) {
     let mut interior_nodes = rh::RHashSet::default();
     for (&hash, entry) in l_update.iter() {
         if hash != ROOT_HASH {
@@ -76,7 +76,7 @@ fn truncate(x: &str, l_update: &XLUpdate) -> Hash {
 
 
 // correctness theorem: sum_i(l_update_i[truncate(x, lupdate_i)]) = l_merged[truncate(x, l_merged)]
-pub(crate) fn merge_xl_pair(a: &XLUpdate, b: &XLUpdate) -> XLUpdate {
+pub fn merge_xl_pair(a: &XLUpdate, b: &XLUpdate) -> XLUpdate {
     merge_many(&[a, b])
 }
 

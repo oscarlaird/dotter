@@ -2,8 +2,7 @@ use crate::symbol::Symbol;
 
 use super::XNode;
 
-#[cfg(test)]
-pub(crate) fn format_node_slot_dump(node: &XNode, label: &str, symbol: Symbol) -> String {
+pub fn format_node_slot_dump(node: &XNode, label: &str, symbol: Symbol) -> String {
     let slot = symbol.to_slot();
     let symbol_name = format!("{:?}", symbol);
     format!(

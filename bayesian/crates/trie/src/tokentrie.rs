@@ -32,9 +32,9 @@ enum QueueItemKind {
     },
 }
 
-pub(crate) struct RequestedPrior {
-    pub(crate) full_string: String,
-    pub(crate) last_token_lexindex: TokenLexIndex,
+pub struct RequestedPrior {
+    pub full_string: String,
+    pub last_token_lexindex: TokenLexIndex,
 }
 
 impl XBayes {
@@ -83,7 +83,7 @@ impl XBayes {
     // since we can restrict ourselves to the top K, say 100, continuations
     // this will be exactly correct as long as we return fewer than 100 predictions
     // before the next likelihood update
-    pub(crate) fn next_requested_prior(&mut self) -> RequestedPrior {
+    pub fn next_requested_prior(&mut self) -> RequestedPrior {
         loop {
             let this_item = self.queue.peek().copied().expect("Queue should never be empty");
             let this_hash = match this_item.kind {

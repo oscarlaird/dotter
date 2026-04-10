@@ -2,7 +2,7 @@ use crate::bpe::{NUM_PREFIXES, NUM_TOKENS, PrefixLexIndex, TinyLlamaWordTokenize
 use crate::safe_float::Float;
 use super::{logaddexp};
 
-pub(crate) struct XPrediction {
+pub struct XPrediction {
     canonical_followers: Box<[bool]>,
     canonical_follower_for_prefix: Box<[bool]>,
     follower_probs: Box<[Float]>,
@@ -10,7 +10,7 @@ pub(crate) struct XPrediction {
 }
 
 impl XPrediction {
-    pub(crate) fn create_prediction(
+    pub fn create_prediction(
         is_zero_order: bool,
         final_token_lexindex: TokenLexIndex,
         follower_logits: Option<Box<[Float]>>,

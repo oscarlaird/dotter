@@ -2,9 +2,9 @@ use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 
 #[cfg(debug_assertions)]
-pub(crate) type Float = SafeFloat;
+pub type Float = SafeFloat;
 #[cfg(not(debug_assertions))]
-pub(crate) type Float = f32;
+pub type Float = f32;
 #[cfg(debug_assertions)]
 pub(crate) const ZERO: Float = SafeFloat(0.0);
 #[cfg(not(debug_assertions))]
@@ -12,11 +12,11 @@ pub(crate) const ZERO: Float = 0.0;
 
 #[derive(Copy, Clone, Default, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub(crate) struct SafeFloat(f32);
+pub struct SafeFloat(f32);
 
 impl SafeFloat {
-    pub(crate) const NAN: Self = Self(f32::NAN);
-    pub(crate) const NEG_INFINITY: Self = Self(f32::NEG_INFINITY);
+    pub const NAN: Self = Self(f32::NAN);
+    pub const NEG_INFINITY: Self = Self(f32::NEG_INFINITY);
     #[inline]
     pub(crate) fn new(value: f32) -> Self {
         assert!(
@@ -189,12 +189,12 @@ impl Neg for SafeFloat {
 
 #[cfg(debug_assertions)]
 #[inline]
-pub(crate) fn into_f32(value: Float) -> f32 {
+pub fn into_f32(value: Float) -> f32 {
     value.to_f32()
 }
 
 #[cfg(not(debug_assertions))]
 #[inline]
-pub(crate) fn into_f32(value: Float) -> f32 {
+pub fn into_f32(value: Float) -> f32 {
     value
 }

@@ -5,8 +5,6 @@ edition = "2024"
 
 [features]
 default = ["tokentrie", "proof"]
-python = ["dep:pyo3"]
-wasm = ["dep:wasm-bindgen"]
 trie-trace = []
 tokentrie = []
 proof = []
@@ -14,10 +12,6 @@ proof = []
 [dependencies]
 bpe = { path = "../bpe" }
 rolling_hash = { path = "../rolling_hash" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
 
 [lib]
 path = "src/lib.rs"
