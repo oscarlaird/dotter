@@ -88,3 +88,6 @@ demos/lean_python_demo/build/
 demos/rust_aeneas_demo/lean_verify/generated/
 demos/
 rust_out
+
+# dumps
+dumps/
