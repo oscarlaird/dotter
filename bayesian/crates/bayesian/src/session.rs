@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use bpe::TokenLexIndex;
 use trie::safe_float::{Float, into_f32};
@@ -14,6 +17,40 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use pyo3::prelude::*;
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+type TimingStart = f64;
+#[cfg(not(target_arch = "wasm32"))]
+type TimingStart = Instant;
+
+#[cfg(target_arch = "wasm32")]
+fn timing_start() -> TimingStart {
+    web_sys::window()
+        .unwrap()
+        .performance()
+        .unwrap()
+        .now()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn timing_start() -> TimingStart {
+    Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn elapsed_ms_since(start: TimingStart) -> f64 {
+    web_sys::window()
+        .unwrap()
+        .performance()
+        .unwrap()
+        .now()
+        - start
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn elapsed_ms_since(start: TimingStart) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
+}
 
 fn serialize_symbol<S>(symbol: &Symbol, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -45,28 +82,76 @@ where
     .transpose()
 }
 
+#[derive(Clone, Serialize)]
+struct SessionEvent {
+    kind: &'static str,
+    duration_ms: f64,
+    json_payload_ix: Option<usize>,
+}
+
+#[derive(Clone, Default, Serialize)]
+struct SessionObservability {
+    json_payloads: Vec<String>,
+    event_log: Vec<SessionEvent>,
+}
+
 #[cfg_attr(feature = "python", pyclass)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
     pub(crate) trie: XBayes,
+    observability: Mutex<SessionObservability>,
 }
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
+    fn push_json_payload(&self, json: String) -> usize {
+        let mut observability = self.observability.lock().unwrap();
+        let ix = observability.json_payloads.len();
+        observability.json_payloads.push(json);
+        ix
+    }
+
+    fn record_event(&self, kind: &'static str, start: TimingStart, json_payload_ix: Option<usize>) {
+        self.observability.lock().unwrap().event_log.push(SessionEvent {
+            kind,
+            duration_ms: elapsed_ms_since(start),
+            json_payload_ix,
+        });
+    }
+
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
     pub fn new() -> Self {
-        Self { trie: XBayes::new() }
+        let start = timing_start();
+        let session = Self {
+            trie: XBayes::new(),
+            observability: Mutex::new(SessionObservability::default()),
+        };
+        session.record_event("new", start, None);
+        session
     }
 
     pub fn reset(&mut self) {
+        let start = timing_start();
         self.trie = XBayes::new();
+        let mut observability = self.observability.lock().unwrap();
+        observability.json_payloads.clear();
+        observability.event_log.clear();
+        observability.event_log.push(SessionEvent {
+            kind: "reset",
+            duration_ms: elapsed_ms_since(start),
+            json_payload_ix: None,
+        });
     }
 
     pub fn expansion_threshold(&self) -> f32 {
-        trie::TRIE_EXPANSION_THRESHOLD as f32
+        let start = timing_start();
+        let threshold = trie::TRIE_EXPANSION_THRESHOLD as f32;
+        self.record_event("expansion_threshold", start, None);
+        threshold
     }
 
     pub fn receive_likelihood_update(&mut self, likelihood_json: String) {
+        let start = timing_start();
         #[derive(Deserialize)]
         struct NHash {
             // by default, serde will ignore extra fields
@@ -78,6 +163,7 @@ impl BayesianSession {
         }
         let l_by_string =
             serde_json::from_str::<HashMap<String, NHash>>(&likelihood_json).unwrap();
+        let json_payload_ix = self.push_json_payload(likelihood_json);
         let mut new_l_update = l_by_string.iter()
             .map(|(s, nhash)| (rh::hash_string(&s), 
                 XLUpdateEntry {
@@ -93,10 +179,12 @@ impl BayesianSession {
         //
         self.trie.pending_likelihood =
             merge_xl_pair(&self.trie.pending_likelihood, &new_l_update);
+        self.record_event("receive_likelihood_update", start, Some(json_payload_ix));
     }
 
     #[cfg(feature = "tokentrie")]
     pub fn next_requested_prior(&mut self) -> String {
+        let start = timing_start();
         let requested_prior = self.trie.next_requested_prior();
         #[derive(Serialize)]
         struct RequestedPrior {
@@ -107,10 +195,13 @@ impl BayesianSession {
             full_string: requested_prior.full_string,
             last_token_lexindex: requested_prior.last_token_lexindex,
         };
-        serde_json::to_string(&requested_prior).unwrap()
+        let requested_prior_json = serde_json::to_string(&requested_prior).unwrap();
+        self.record_event("next_requested_prior", start, None);
+        requested_prior_json
     }
 
     pub fn receive_prior_update(&mut self, prior_json: String) {
+        let start = timing_start();
         #[derive(Deserialize)]
         struct Payload {
             full_string: String,
@@ -118,6 +209,7 @@ impl BayesianSession {
             follower_logits: Vec<f32>
         }
         let payload= serde_json::from_str::<Payload>(&prior_json).unwrap();
+        let json_payload_ix = self.push_json_payload(prior_json);
         let new_prediction = XPrediction::create_prediction(
             false,
             payload.final_token_lexindex,
@@ -139,13 +231,17 @@ impl BayesianSession {
             new_prediction
         );
         self.trie.pending_prior.insert(full_hash);
+        self.record_event("receive_prior_update", start, Some(json_payload_ix));
     }
 
     pub fn apply_updates(&mut self) {
+        let start = timing_start();
         self.trie.recalc_to_frontier(RecalcType::Update);
+        self.record_event("apply_updates", start, None);
     }
 
     pub fn expand_to_threshold(&mut self) -> String {
+        let start = timing_start();
         assert!(self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1, "Tried to expand with unprocessed updates");
         let nodes_list = match self.trie.recalc_to_frontier(
             RecalcType::Expand { threshold: Float::from(trie::TRIE_EXPANSION_THRESHOLD as f32) },
@@ -270,24 +366,39 @@ impl BayesianSession {
                 }))
             .collect::<HashMap<String, NHash>>();
         let snapshot_json = serde_json::to_string(&snapshot_by_string).unwrap();
+        self.record_event("expand_to_threshold", start, None);
         snapshot_json
     }
 
     pub fn lexicographic_tokens_json(&self) -> String {
-        serde_json::to_string(self.trie.tokenizer.tokens()).unwrap()
+        let start = timing_start();
+        let tokens_json = serde_json::to_string(self.trie.tokenizer.tokens()).unwrap();
+        self.record_event("lexicographic_tokens_json", start, None);
+        tokens_json
+    }
+
+    pub fn debug_dump_json(&self) -> String {
+        let start = timing_start();
+        let dump_json = serde_json::to_string(&*self.observability.lock().unwrap()).unwrap();
+        self.record_event("debug_dump_json", start, None);
+        dump_json
     }
 
     /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary),
     /// `$` (stop), `^` (start); empty shows all nodes (root is always shown when filtered).
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie(&self, filter: &str) {
+        let start = timing_start();
         trie::debug::eprint_trie(&self.trie, filter, None);
+        self.record_event("debug_eprint_trie", start, None);
     }
 
     /// Print the trie to stderr, restricted to `hash_filter` after applying the symbol filter.
     #[cfg(not(feature = "wasm"))]
     pub fn debug_eprint_trie_hash_filter(&self, filter: &str, hash_filter: &rh::RHashSet) {
+        let start = timing_start();
         trie::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
+        self.record_event("debug_eprint_trie_hash_filter", start, None);
     }
 }
 
@@ -333,5 +444,10 @@ impl BayesianSession {
     #[pyo3(name = "lexicographic_tokens_json")]
     fn py_lexicographic_tokens_json(&self) -> String {
         BayesianSession::lexicographic_tokens_json(self)
+    }
+
+    #[pyo3(name = "debug_dump_json")]
+    fn py_debug_dump_json(&self) -> String {
+        BayesianSession::debug_dump_json(self)
     }
 }

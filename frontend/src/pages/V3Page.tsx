@@ -157,6 +157,13 @@ interface PredictionLogEntry {
 	receivedAt: string;
 }
 
+interface SessionDebugDump {
+	update_json_log: Array<{
+		kind: 'likelihood' | 'prior' | string;
+		json: string;
+	}>;
+}
+
 const V3_THEME_STORAGE_KEY = 'dotter-v3-theme';
 const V3_BLINK_TO_CLICK_STORAGE_KEY = 'dotter-v3-blink-to-click';
 
@@ -188,6 +195,18 @@ function randomPracticePhrase(excluding?: string): string {
 			? source.filter((phrase) => phrase !== excluding)
 			: source;
 	return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string): void {
+	const blob = new Blob([content], { type: mimeType });
+	const url = URL.createObjectURL(blob);
+	const anchor = document.createElement('a');
+	anchor.href = url;
+	anchor.download = filename;
+	document.body.appendChild(anchor);
+	anchor.click();
+	anchor.remove();
+	URL.revokeObjectURL(url);
 }
 
 function V3Page() {
@@ -338,6 +357,31 @@ function V3Page() {
 		};
 		setPredictionLog((current) => [nextEntry, ...current]);
 	}, []);
+
+	const downloadSessionDebugDump = useCallback(() => {
+		void (async () => {
+			try {
+				const dumpJson = await enqueueSessionOp(() => {
+					const session = sessionRef.current;
+					if (!session) {
+						throw new Error('BayesianSession is not initialized');
+					}
+					try {
+						return session.debug_dump_json();
+					} catch (err) {
+						throw new Error(formatStepError('debug_dump_json failed', err));
+					}
+				});
+				const parsed = JSON.parse(dumpJson) as SessionDebugDump;
+				const now = new Date().toISOString().replaceAll(':', '-');
+				const filename = `bayesian-session-dump-${now}.json`;
+				downloadTextFile(filename, JSON.stringify(parsed, null, 2), 'application/json');
+				setError(null);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : String(err));
+			}
+		})();
+	}, [enqueueSessionOp]);
 
 	const resetLocalSession = useCallback(async () => {
 		const snapshotJson = await enqueueSessionOp(() => {
@@ -753,6 +797,13 @@ function V3Page() {
 								aria-label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 							>
 								{colorMode === 'dark' ? 'Light' : 'Dark'}
+							</button>
+							<button
+								type="button"
+								onClick={downloadSessionDebugDump}
+								className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-800 transition hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+							>
+								Dump logs
 							</button>
 							<button
 								type="button"

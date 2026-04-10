@@ -40,6 +40,10 @@ formal/proof/TrieMerge/
 charon_out/
 **/charon_out/
 **/dist/
+frontend/dist/index.html
+frontend/src/wasm_pkg/bayesian_bg.wasm.d.ts
+frontend/src/wasm_pkg/bayesian.d.ts
+frontend/src/wasm_pkg/bayesian.js
 **/build/generated/
 **/*.tgz
 **/*.wasm
