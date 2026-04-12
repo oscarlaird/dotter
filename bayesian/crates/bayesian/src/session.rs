@@ -95,11 +95,31 @@ struct SessionObservability {
     event_log: Vec<SessionEvent>,
 }
 
+#[derive(Deserialize, Clone)]
+struct LikelihoodUpdatePayload {
+    period: f64,
+    y: f64,
+    nodes: HashMap<String, NHash>,
+}
+
+#[derive(Deserialize, Clone)]
+struct NHash {
+    // by default, serde will ignore extra fields
+    #[serde(alias = "l")]
+    likelihood: f32,
+    /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `$`, `^`).
+    #[serde(default, deserialize_with = "deserialize_optional_symbol")]
+    symbol: Option<Symbol>,
+    phase: f64,
+}
+
 #[cfg_attr(feature = "python", pyclass)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
     pub(crate) trie: XBayes,
     observability: Mutex<SessionObservability>,
+    likelihood_history: Vec<LikelihoodUpdatePayload>,
+    current_prior: [f64; 6],
 }
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
@@ -125,6 +145,12 @@ impl BayesianSession {
         let session = Self {
             trie: XBayes::new(),
             observability: Mutex::new(SessionObservability::default()),
+            likelihood_history: Vec::new(),
+            current_prior: [
+                0.0, 0.080,
+                -5.5, 1.0,
+                2.5f64.ln(), 25.0f64.ln()
+            ],
         };
         session.record_event("new", start, None);
         session
@@ -133,6 +159,12 @@ impl BayesianSession {
     pub fn reset(&mut self) {
         let start = timing_start();
         self.trie = XBayes::new();
+        self.likelihood_history.clear();
+        self.current_prior = [
+            0.0, 0.080,
+            -5.5, 1.0,
+            2.5f64.ln(), 25.0f64.ln()
+        ];
         let mut observability = self.observability.lock().unwrap();
         observability.json_payloads.clear();
         observability.event_log.clear();
@@ -152,19 +184,29 @@ impl BayesianSession {
 
     pub fn receive_likelihood_update(&mut self, likelihood_json: String) {
         let start = timing_start();
-        #[derive(Deserialize)]
-        struct NHash {
-            // by default, serde will ignore extra fields
-            #[serde(alias = "l")]
-            likelihood: f32,
-            /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `$`, `^`).
-            #[serde(default, deserialize_with = "deserialize_optional_symbol")]
-            symbol: Option<Symbol>,
+        
+        let payload =
+            serde_json::from_str::<LikelihoodUpdatePayload>(&likelihood_json).unwrap();
+        assert!(payload.period.is_finite() && payload.period > 0.0, "likelihood period must be finite and positive");
+        assert!(payload.y.is_finite(), "likelihood y must be finite");
+        assert!(!payload.nodes.is_empty(), "likelihood update contained no nodes");
+        for (s, nhash) in &payload.nodes {
+            assert!(!s.is_empty(), "likelihood update contained an empty node string");
+            assert!(nhash.likelihood.is_finite(), "likelihood for node {:?} must be finite", s);
+            assert!(nhash.phase.is_finite(), "phase for node {:?} must be finite", s);
+            assert!(
+                nhash.phase >= 0.0 && nhash.phase < payload.period,
+                "phase for node {:?} must lie in [0, period); got {} with period {}",
+                s,
+                nhash.phase,
+                payload.period,
+            );
         }
-        let l_by_string =
-            serde_json::from_str::<HashMap<String, NHash>>(&likelihood_json).unwrap();
+        
+        self.likelihood_history.push(payload.clone());
         let json_payload_ix = self.push_json_payload(likelihood_json);
-        let mut new_l_update = l_by_string.iter()
+        
+        let mut new_l_update = payload.nodes.iter()
             .map(|(s, nhash)| (rh::hash_string(&s), 
                 XLUpdateEntry {
                     likelihood: Float::from(nhash.likelihood),
@@ -180,6 +222,74 @@ impl BayesianSession {
         self.trie.pending_likelihood =
             merge_xl_pair(&self.trie.pending_likelihood, &new_l_update);
         self.record_event("receive_likelihood_update", start, Some(json_payload_ix));
+    }
+
+    pub fn recalibrate(&mut self, initial_prior_json: String) -> String {
+        let start = timing_start();
+        assert!(
+            self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1,
+            "recalibrate called with unprocessed trie updates"
+        );
+        
+        let threshold = (-0.0100503f32).into(); // ln(0.99)
+        let certain_prefix_nodes = match self.trie.recalc_to_frontier(trie::core::RecalcType::Expand { threshold }) {
+            trie::core::RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
+            _ => panic!("Expected Expanded"),
+        };
+        assert!(!certain_prefix_nodes.is_empty(), "recalibrate expected at least the root node in certain_prefix_nodes");
+        
+        let mut prior: [f64; 6] = serde_json::from_str(&initial_prior_json).expect("Invalid initial prior JSON");
+        let mut used_likelihood_updates = 0usize;
+        let mut recent_pairs: Vec<(f64, f64)> = Vec::new();
+        
+        if let Some(&last_certain) = certain_prefix_nodes.last() {
+            for payload in &self.likelihood_history {
+                let mut payload_hashes = HashMap::new();
+                for (s, nhash) in &payload.nodes {
+                    payload_hashes.insert(rh::hash_string(s), nhash);
+                }
+                
+                if payload_hashes.contains_key(&last_certain) {
+                    continue;
+                }
+                
+                let mut target_node = None;
+                for hash in certain_prefix_nodes.iter().rev() {
+                    if let Some(&nhash) = payload_hashes.get(hash) {
+                        target_node = Some(nhash);
+                        break;
+                    }
+                }
+                
+                if let Some(target) = target_node {
+                    let phase = target.phase;
+                    let mut x = payload.y - phase;
+                    x = ((x % payload.period) + payload.period) % payload.period;
+                    prior = calibration::optimize_online(x, payload.period, &prior);
+                    used_likelihood_updates += 1;
+                    recent_pairs.push((x, payload.period));
+                    if recent_pairs.len() > 5 {
+                        recent_pairs.remove(0);
+                    }
+                }
+            }
+        }
+        
+        self.current_prior = prior;
+        
+        #[derive(Serialize)]
+        struct RecalibrationResult {
+            prior_params: [f64; 6],
+            used_likelihood_updates: usize,
+            recent_pairs: Vec<(f64, f64)>,
+        }
+        let metrics_json = serde_json::to_string(&RecalibrationResult {
+            prior_params: self.current_prior,
+            used_likelihood_updates,
+            recent_pairs,
+        }).unwrap();
+        self.record_event("recalibrate", start, None);
+        metrics_json
     }
 
     #[cfg(feature = "tokentrie")]

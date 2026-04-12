@@ -130,15 +130,20 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &[f64; 6]) -> [f64; 6] 
         prior_params[5]
     );
 
+    #[cfg(not(target_arch = "wasm32"))]
     let mut total_duration = std::time::Duration::new(0, 0);
 
     for i in 0..20 {
+        #[cfg(not(target_arch = "wasm32"))]
         let start = std::time::Instant::now();
         let (loss, grad, mut hessian) = num_dual::hessian(
             |p| -evaluate_j(p, x, p_val, prior_params),
             q_params,
         );
-        total_duration += start.elapsed();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            total_duration += start.elapsed();
+        }
 
 
         let mut eigen = hessian.symmetric_eigen();
@@ -169,14 +174,20 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &[f64; 6]) -> [f64; 6] 
         q_params = new_params;
         
         if (alpha * step).norm() < 1e-6 {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
             let avg_duration = total_duration / (i + 1) as u32;
             println!("Converged in {} iterations. ELBO: {:.4} (Time per iter: {:?})", i + 1, -loss, avg_duration);
+            }
             break;
         }
         
         if i == 19 {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
             let avg_duration = total_duration / 20;
             println!("Did not converge in 20 iterations. Final step norm: {:.4e}, ELBO: {:.4} (Time per iter: {:?})", (alpha * step).norm(), -loss, avg_duration);
+            }
         }
     }
     

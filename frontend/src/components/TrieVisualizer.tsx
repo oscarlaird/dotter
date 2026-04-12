@@ -60,14 +60,25 @@ function timerLikelihood(
 ): { likelihood: number; delay_pair: DelayPair } {
 	let delay = time - phase;
 	delay = ((delay + model.period * 1.5) % model.period) - model.period / 2;
-	const gaussianLogLikelihood = normalLogpdf(delay, model.mu_delay, model.stddev_delay);
-	const uniformLogLikelihood = Math.log(1 / model.period);
-	const outlierProb = Math.log(model.outliers);
+	
+	let x = time - phase;
+	x = ((x % model.period) + model.period) % model.period;
+	const outlierProb = Math.log(model.outliers) - Math.log(model.period);
 	const notOutlierProb = Math.log(1 - model.outliers);
+	
+	const normalModes = [-1, 0, 1].map(k => {
+		return normalLogpdf(x, model.mu_delay + k * model.period, model.stddev_delay);
+	});
+	
+	let sumNormalModes = normalModes[0];
+	for (let i = 1; i < normalModes.length; i++) {
+		sumNormalModes = logaddexp(sumNormalModes, normalModes[i]);
+	}
+
 	return {
 		likelihood: logaddexp(
-			notOutlierProb + gaussianLogLikelihood,
-			outlierProb + uniformLogLikelihood,
+			outlierProb,
+			notOutlierProb + sumNormalModes
 		),
 		delay_pair: { delay, period: model.period },
 	};

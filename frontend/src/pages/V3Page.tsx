@@ -5,7 +5,7 @@ import initBayesianWasm, {
 	initPanicHook,
 } from '../wasm_pkg/bayesian';
 import practicePhrasesText from './v3-practice-phrases.txt?raw';
-import CalibrationSettings, { type LikelihoodModel } from '../components/CalibrationSettings';
+import CalibrationSettings, { type LikelihoodModel, type AutoCalibrationState } from '../components/CalibrationSettings';
 import Eye from '../components/Eye';
 import TrieSnapshotVisualizer, {
 	SCROLL_CENTERING_WEIGHT,
@@ -16,12 +16,42 @@ import type {
 	ExpandedSnapshot,
 	VisibleNodeTimerMap,
 } from '../components/TrieSnapshotVisualizer';
+import { jStat } from 'jstat';
+
+const OSCAR_DEFAULT: [number, number, number, number, number, number] = [
+	0.150011, 0.005779, -6.902864, 0.268396, 1.042674, 4.214543,
+];
+
+const INITIAL_VARIATIONAL_PRIOR = OSCAR_DEFAULT;
+const ORIGINAL_INITIAL_VARIATIONAL_PRIOR = [
+	0.0, 0.080,
+	-5.5, 1.0,
+	Math.log(2.5), Math.log(25.0)
+];
+void ORIGINAL_INITIAL_VARIATIONAL_PRIOR;
+const INITIAL_VARIATIONAL_PRIOR_JSON = JSON.stringify(INITIAL_VARIATIONAL_PRIOR);
+
+function predictiveStddev(muS: number, sigmaS: number, sigmaM: number): number {
+	return Math.sqrt(Math.exp(muS + (sigmaS ** 2) / 2) + sigmaM ** 2);
+}
 
 const DEFAULT_LIKELIHOOD_MODEL: LikelihoodModel = {
-	mu_delay: 0.15,
-	stddev_delay: 0.04,
-	outliers: 0.03,
+	mu_delay: INITIAL_VARIATIONAL_PRIOR[0],
+	stddev_delay: predictiveStddev(
+		INITIAL_VARIATIONAL_PRIOR[2],
+		INITIAL_VARIATIONAL_PRIOR[3],
+		INITIAL_VARIATIONAL_PRIOR[1],
+	),
+	outliers: jStat.beta.inv(0.5, Math.exp(INITIAL_VARIATIONAL_PRIOR[4]), Math.exp(INITIAL_VARIATIONAL_PRIOR[5])),
 	period: 1.1,
+	intervals: {
+		mu_delay: [INITIAL_VARIATIONAL_PRIOR[0] - 1.96 * INITIAL_VARIATIONAL_PRIOR[1], INITIAL_VARIATIONAL_PRIOR[0] + 1.96 * INITIAL_VARIATIONAL_PRIOR[1]],
+		stddev_delay: [
+			predictiveStddev(INITIAL_VARIATIONAL_PRIOR[2] - 1.96 * INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[1]),
+			predictiveStddev(INITIAL_VARIATIONAL_PRIOR[2] + 1.96 * INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[1]),
+		],
+		outliers: [jStat.beta.inv(0.025, Math.exp(INITIAL_VARIATIONAL_PRIOR[4]), Math.exp(INITIAL_VARIATIONAL_PRIOR[5])), jStat.beta.inv(0.975, Math.exp(INITIAL_VARIATIONAL_PRIOR[4]), Math.exp(INITIAL_VARIATIONAL_PRIOR[5]))]
+	}
 };
 const N_SKIP_PRACTICE_PHRASES = 6;
 const PRACTICE_PHRASES = practicePhrasesText
@@ -45,15 +75,24 @@ function normalLogpdf(x: number, mean: number, stddev: number): number {
 }
 
 function timerLikelihood(time: number, phase: number, model: LikelihoodModel): number {
-	let delay = time - phase;
-	delay = ((delay + model.period * 1.5) % model.period) - model.period / 2;
-	const gaussianLogLikelihood = normalLogpdf(delay, model.mu_delay, model.stddev_delay);
-	const uniformLogLikelihood = Math.log(1 / model.period);
-	const outlierProb = Math.log(model.outliers);
+	let x = time - phase;
+	x = ((x % model.period) + model.period) % model.period;
+	const outlierProb = Math.log(model.outliers) - Math.log(model.period);
+	
 	const notOutlierProb = Math.log(1 - model.outliers);
+	
+	const normalModes = [-1, 0, 1].map(k => {
+		return normalLogpdf(x, model.mu_delay + k * model.period, model.stddev_delay);
+	});
+	
+	let sumNormalModes = normalModes[0];
+	for (let i = 1; i < normalModes.length; i++) {
+		sumNormalModes = logaddexp(sumNormalModes, normalModes[i]);
+	}
+	
 	return logaddexp(
-		notOutlierProb + gaussianLogLikelihood,
-		outlierProb + uniformLogLikelihood,
+		outlierProb,
+		notOutlierProb + sumNormalModes
 	);
 }
 
@@ -224,7 +263,15 @@ function V3Page() {
 	const [likelihoodModel, setLikelihoodModel] = useState<LikelihoodModel>({
 		...DEFAULT_LIKELIHOOD_MODEL,
 	});
-	const [useAutomaticCalibration, setUseAutomaticCalibration] = useState(false);
+	const [useAutomaticCalibration, setUseAutomaticCalibration] = useState<AutoCalibrationState>({
+		mu_delay: true,
+		stddev_delay: true,
+		outliers: true,
+	});
+	const [autoCalibrationLikelihoodModel, setAutoCalibrationLikelihoodModel] = useState<LikelihoodModel>(DEFAULT_LIKELIHOOD_MODEL);
+	const [calibrationSampleCount, setCalibrationSampleCount] = useState(0);
+	const [rawVariationalParams, setRawVariationalParams] = useState<[number, number, number, number, number, number] | null>(null);
+	const [recentCalibrationPairs, setRecentCalibrationPairs] = useState<Array<[number, number]>>([]);
 	const sessionRef = useRef<BayesianSession | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
 	const likelihoodModelRef = useRef(likelihoodModel);
@@ -375,7 +422,7 @@ function V3Page() {
 					}
 				});
 				const parsed = JSON.parse(dumpJson) as SessionDebugDump;
-				const now = new Date().toISOString().replaceAll(':', '-');
+				const now = new Date().toISOString().replace(/:/g, '-');
 				const filename = `bayesian-session-dump-${now}.json`;
 				downloadTextFile(filename, JSON.stringify(parsed, null, 2), 'application/json');
 				setError(null);
@@ -411,6 +458,9 @@ function V3Page() {
 			}
 		});
 		applySnapshot(JSON.parse(snapshotJson) as ExpandedSnapshot, true);
+		setCalibrationSampleCount(0);
+		setRawVariationalParams(null);
+		setRecentCalibrationPairs([]);
 	}, [applySnapshot, enqueueSessionOp]);
 
 	const resetBothSides = useCallback(async () => {
@@ -596,22 +646,28 @@ function V3Page() {
 					return;
 				}
 
-				const likelihoodPayload: Record<string, { l: number }> = {};
+				const nodes: Record<string, { l: number, phase: number }> = {};
 				for (const [fullString, timer] of Object.entries(timers)) {
 					if (!(fullString in snapshot)) {
 						continue;
 					}
 					const likelihood = timerLikelihood(timeSeconds, timer.phase, likelihoodModelRef.current);
-					likelihoodPayload[fullString] = { l: likelihood };
+					nodes[fullString] = { l: likelihood, phase: timer.phase };
 					if (fullString === scrollRootRef.current) {
 						for (const ancestorKey of scrollAncestorKeysRef.current) {
 							if (!(ancestorKey in snapshot)) {
 								continue;
 							}
-							likelihoodPayload[ancestorKey] = { l: likelihood };
+							nodes[ancestorKey] = { l: likelihood, phase: timer.phase };
 						}
 					}
 				}
+				const period = likelihoodModelRef.current.period;
+				const likelihoodPayload = {
+					period,
+					y: timeSeconds,
+					nodes
+				};
 				const likelihoodJson = JSON.stringify(likelihoodPayload);
 				const snapshotJson = await enqueueSessionOp(() => {
 					const session = sessionRef.current;
@@ -642,7 +698,44 @@ function V3Page() {
 				} else {
 					setWarning('Backend disconnected. Applied likelihoods locally only.');
 				}
-				setLastBatchSize(Object.keys(likelihoodPayload).length);
+				const metricsJson = await enqueueSessionOp(() => {
+					const session = sessionRef.current;
+					if (!session) {
+						throw new Error('BayesianSession is not initialized');
+					}
+					try {
+						return session.recalibrate(INITIAL_VARIATIONAL_PRIOR_JSON);
+					} catch (err) {
+						throw new Error(formatStepError('recalibrate failed', err));
+					}
+				});
+				const recalibrationResult = JSON.parse(metricsJson) as {
+					prior_params: [number, number, number, number, number, number];
+					used_likelihood_updates: number;
+					recent_pairs: Array<[number, number]>;
+				};
+				const priorParams = recalibrationResult.prior_params;
+				const [mu_m, sigma_m, mu_s, sigma_s, a, b] = priorParams;
+				const alpha = Math.exp(a);
+				const beta = Math.exp(b);
+				setCalibrationSampleCount(recalibrationResult.used_likelihood_updates);
+				setRawVariationalParams(priorParams);
+				setRecentCalibrationPairs(recalibrationResult.recent_pairs);
+				setAutoCalibrationLikelihoodModel({
+					mu_delay: mu_m,
+					stddev_delay: predictiveStddev(mu_s, sigma_s, sigma_m),
+					outliers: jStat.beta.inv(0.5, alpha, beta),
+					period,
+					intervals: {
+						mu_delay: [mu_m - 1.96 * sigma_m, mu_m + 1.96 * sigma_m],
+						stddev_delay: [
+							predictiveStddev(mu_s - 1.96 * sigma_s, sigma_s, sigma_m),
+							predictiveStddev(mu_s + 1.96 * sigma_s, sigma_s, sigma_m),
+						],
+						outliers: [jStat.beta.inv(0.025, alpha, beta), jStat.beta.inv(0.975, alpha, beta)]
+					}
+				});
+				setLastBatchSize(Object.keys(nodes).length);
 				setError(null);
 			})().catch((err) => {
 				setError(err instanceof Error ? err.message : String(err));
@@ -889,7 +982,10 @@ function V3Page() {
 							setUseAutomaticCalibration={setUseAutomaticCalibration}
 							likelihoodModel={likelihoodModel}
 							setLikelihoodModel={setLikelihoodModel}
-							autoCalibrationLikelihoodModel={DEFAULT_LIKELIHOOD_MODEL}
+							autoCalibrationLikelihoodModel={autoCalibrationLikelihoodModel}
+							calibrationSampleCount={calibrationSampleCount}
+							rawVariationalParams={rawVariationalParams}
+							recentCalibrationPairs={recentCalibrationPairs}
 						/>
 						<div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-2 shadow-sm dark:border-white/10 dark:bg-white/5 dark:shadow-none">
 							<div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">

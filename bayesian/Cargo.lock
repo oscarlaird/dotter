@@ -22,6 +22,7 @@ name = "bayesian"
 version = "0.1.0"
 dependencies = [
  "bpe",
+ "calibration",
  "console_error_panic_hook",
  "libc",
  "pyo3",
@@ -58,9 +59,11 @@ checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 name = "calibration"
 version = "0.1.0"
 dependencies = [
+ "getrandom",
  "nalgebra 0.32.6",
  "num-dual",
  "polygamma",
+ "serde",
  "statrs",
 ]
 
@@ -87,8 +90,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]

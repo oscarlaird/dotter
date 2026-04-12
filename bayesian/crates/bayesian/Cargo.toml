@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bpe = { path = "../bpe" }
 rolling_hash = { path = "../rolling_hash" }
+calibration = { path = "../calibration" }
 trie = { path = "../trie", default-features = false }
 pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 serde = { version = "1", features = ["derive"] }
