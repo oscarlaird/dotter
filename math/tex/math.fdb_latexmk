@@ -1,13 +1,13 @@
 # Fdb version 4
-["bibtex math"] 1775948807.40732 "math.aux" "math.bbl" "math" 1775949502.25268 0
+["bibtex math"] 1775965022.33735 "math.aux" "math.bbl" "math" 1775965023.40651 0
   "./references.bib" 1773352007.23395 806 0d16c346247aef3da6b08f3a9d293da5 ""
   "/usr/share/texlive/texmf-dist/bibtex/bst/base/plain.bst" 1292289607 20613 bd3fbfa9f64872b81ac57a0dd2ed855f ""
-  "math.aux" 1775949502.15373 27211 06703008505c2788c535f2769bdfe685 "pdflatex"
+  "math.aux" 1775965023.30608 27237 0cce30cd7d1453925b17c7eb7822a124 "pdflatex"
   (generated)
   "math.bbl"
   "math.blg"
   (rewritten before read)
-["pdflatex"] 1775949501.22241 "/home/oscar/dotter/math/tex/math.tex" "math.pdf" "math" 1775949502.25288 0
+["pdflatex"] 1775965022.35608 "/home/oscar/dotter/math/tex/math.tex" "math.pdf" "math" 1775965023.40671 0
   "/etc/texmf/web2c/texmf.cnf" 1773167709.0501 475 c0e671620eb5563b2130f56340a5fde8 ""
   "/home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm0800.600pk" 1773428688.11601 9268 ca57107ce06dd06441534164fda3e9e1 ""
   "/home/oscar/.texlive2023/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1000.600pk" 1773241895.18481 11524 17d5711974e3802cf9274494796d7cb0 ""
@@ -263,13 +263,13 @@
   "chapters/practice.tex" 1775701245.56697 5952 85c324f3990843bde01de16e791d05bc ""
   "chapters/render-stimulus.tex" 1773415314.93548 804 7a998e76219b3cb8bd69a13b5de5e80c ""
   "chapters/render-trie.tex" 1775690501.08793 3320 5343b5aa5085390bbf383f7564dfca97 ""
-  "chapters/stimulus.tex" 1775949501.13993 32842 b3217f0e8682f42d52cb3e681fcdea40 ""
+  "chapters/stimulus.tex" 1775965021.07608 32855 d8f8d1bb5edd7fac39350df32e733599 ""
   "chapters/trie.tex" 1774981832.55813 106872 2f8bcedf64274cb3758558abc98aee89 ""
-  "math.aux" 1775949502.15373 27211 06703008505c2788c535f2769bdfe685 "pdflatex"
-  "math.bbl" 1775948807.41831 564 b2b49c9aeb9feda464ae4b9be1877ac0 "bibtex math"
-  "math.out" 1775949502.15694 9983 77a1dd6b2b227b4e0aaa503260819e65 "pdflatex"
+  "math.aux" 1775965023.30608 27237 0cce30cd7d1453925b17c7eb7822a124 "pdflatex"
+  "math.bbl" 1775965022.35108 564 b2b49c9aeb9feda464ae4b9be1877ac0 "bibtex math"
+  "math.out" 1775965023.31108 9983 77a1dd6b2b227b4e0aaa503260819e65 "pdflatex"
   "math.tex" 1775689901.33508 1885 44f135c97aa3656c61f29c9a262c7127 ""
-  "math.toc" 1775949502.15694 6140 a002f4492824c4a50b3abe728140bb41 "pdflatex"
+  "math.toc" 1775965023.31191 6153 96c70fec1eaaf955674c7a417e02f9ab "pdflatex"
   (generated)
   "math.aux"
   "math.log"
