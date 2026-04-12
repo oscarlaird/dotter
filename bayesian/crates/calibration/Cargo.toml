@@ -1,0 +1,10 @@
+[package]
+name = "calibration"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = "0.32"
+num-dual = "0.9"
+statrs = "0.16"
+polygamma = "0.1.0"

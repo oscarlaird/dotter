@@ -180,6 +180,14 @@ $$ J = \sum_{i < j} \pi_i \pi_j I_0\left( 2\kappa \cos\left( \frac{\mu_i - \mu_j
 Applying Kolchinsky's lower bound using the Bhattacharyya coefficient to the von Mises mixture model yields an objective with an identical structure to the Rényi case. The difference lies solely in the concentration parameter, which is halved:
 $$ J = \sum_{i < j} \pi_i \pi_j I_0\left( \kappa \cos\left( \frac{\mu_i - \mu_j}{2} \right) \right) $$
 
+\paragraph{Wrapped Gaussian Mixture Model with Rényi Entropy}
+For a true wrapped Gaussian distribution on a periodic domain with period $P$, the density of the $i$-th component is given by the infinite sum $p_i(x) = \sum_{k=-\infty}^\infty \mathcal{N}(x | \mu_i + kP, \sigma^2)$.
+When evaluating the information potential $J = \int_0^P p(x)^2 dx$ for the mixture over one period, the cross-term between component $i$ and component $j$ can be evaluated exactly. Using the unfolding property of wrapped distributions, the integral of the periodic product simplifies to a single infinite sum of Gaussian evaluations:
+$$ \int_0^P p_i(x) p_j(x) dx = \sum_{k=-\infty}^\infty \mathcal{N}(0 | \mu_i - \mu_j + kP, 2\sigma^2) $$
+Dropping the leading scalar and the self-interaction terms, the exact pairwise objective to minimize becomes:
+$$ J = \sum_{i < j} \pi_i \pi_j \sum_{k=-\infty}^\infty \exp\left( - \frac{(\mu_i - \mu_j + kP)^2}{4\sigma^2} \right) $$
+This infinite sum corresponds to the Jacobi theta function $\vartheta_3$. In practice, due to the rapid decay of the Gaussian tails, this series converges extremely quickly. For computationally efficient optimization with reasonably small $\sigma$, truncating the sum to just the nearest shifts $k \in \{-1, 0, 1\}$ provides a highly accurate approximation of the true wrapped entropy without introducing the artifactual weighting that arises from integrating finite spatial approximations over the real line.
+
 \subsubsection{An approximation for the entropy via Cramér's theorem}
 UNFINISHED
 Here we discuss a closed form approximation for the entropy in terms of the
@@ -506,4 +514,85 @@ Luckily, the above term may be evaluated analytically.
     \right)
     \exp(-2\mu_b + 2\sigma_b^2).
 \end{align}
+
+
+\subsection{Online Variational Estimation}
+The above promises to quickly become a terrifying morass.
+Here I discuss an online variational estimation algorithm
+that is small and tractable.
+We have the following desiderata,
+\begin{enumerate}
+    \item Use wrapped normal likelihoods
+    \item Estimate the outlier rate, $\rho$
+    \item Model variation between strings and between sessions
+\end{enumerate}
+
+We parameterize the user with three parameters:
+$m$, $s$, and $\rho$.
+We use a mean-field variational distribution for the parameters,
+with six variational parameters:
+\begin{align*}
+    m &\sim \mathcal{N}(\mu_{m,q}, \sigma_{m,q}) \\
+    \log s &\sim \mathcal{N}(\mu_{s,q}, \sigma_{s,q}) \\
+    \rho &\sim Beta(\exp(a_q), \exp(b_q))
+\end{align*}
+
+Our likelihood is given by,
+$$
+P(x | m, s, \rho) = \rho \frac{1}{P} + (1 - \rho)\sum_{k \in \{-1, 0, 1\}} \frac{1}{\sqrt{2 \pi s}} \exp\left( -\frac{(x - m - k P)^2}{2 s} \right)
+$$
+
+The regularization on the update is the distance between the prior and posterior variational distributions.
+This quantity, $D_{KL}(q || p)$, may be decomposed into three terms because we are making a mean-field approximation.
+Let $p$ represent the prior distribution over the parameters from the previous step, and $q$ represent our new variational distribution.
+The two normal KL divergence terms are
+\begin{align*}
+    & \log \frac{\sigma_{m,p}}{\sigma_{m,q}} + \frac{\sigma_{m,q}^2 + (\mu_{m,q} - \mu_{m,p})^2}{2 \sigma_{m,p}^2} - \frac{1}{2} \\
+   +& \log \frac{\sigma_{s,p}}{\sigma_{s,q}} + \frac{\sigma_{s,q}^2 + (\mu_{s,q} - \mu_{s,p})^2}{2 \sigma_{s,p}^2} - \frac{1}{2}
+\end{align*}
+while the beta KL divergence term is (letting $\alpha_p = \exp(a_p)$ and $\beta_p = \exp(b_p)$, and similarly for $q$):
+\begin{align*}
+    \ln \frac{B(\alpha_p, \beta_p)}{B(\alpha_q, \beta_q)}
+    + (\alpha_q - \alpha_p) \psi(\alpha_q)
+    + (\beta_q - \beta_p) \psi(\beta_q)
+    - \left[(\alpha_q + \beta_q) - (\alpha_p + \beta_p)\right] \psi(\alpha_q + \beta_q)
+\end{align*}
+where $B$ is the Beta function and $\psi$ is the digamma function.
+
+We will approximate optimizing the log likelihood by optimizing
+a lower bound derived by using Jensen's inequality
+to pull the `logaddexp' out of the expectation.
+
+\begin{align*}
+    \mathbb{E}_{q} \left[ \log P(x | m, s, \rho) \right] &= \mathbb{E}_{q} \left[ \log \left( \rho \frac{1}{P} + (1 - \rho)\sum_{k \in \{-1, 0, 1\}} \frac{1}{\sqrt{2 \pi s}} \exp\left( -\frac{(x - m - k P)^2}{2 s} \right) \right) \right] \\
+    &\geq \log \left( \exp\left( \mathbb{E}_{q} \left[ \log \rho \right] - \log P \right) + \sum_{k \in \{-1, 0, 1\}} \exp\left( \mathbb{E}_{q} \left[ \log(1 - \rho) - \frac{1}{2}\log(2\pi s) - \frac{(x - m - k P)^2}{2 s} \right] \right) \right)
+\end{align*}
+
+which is analytically tractable.
+We will use the facts that
+\begin{align*}
+    \mathbb{E}_q \left[ \log \rho \right] &= \psi(\alpha_q) - \psi(\alpha_q + \beta_q) \\
+    \mathbb{E}_q \left[ \log(1 - \rho) \right] &= \psi(\beta_q) - \psi(\alpha_q + \beta_q)
+\end{align*}
+
+Using the shorthand $\theta$ to denote the parameters $(m, \log s, \rho)$, our full variational objective $J$
+may be written as:
+\begin{align*}
+    J(q) &= \mathbb{E}_{\theta \sim q} \left[ \log P(x | \theta) \right] - D_{KL}(q || p)
+\end{align*}
+It is incorrect to use any kind of discount factor in the distance term.
+
+To make the expected likelihood component concrete, we substitute our earlier derivations into the lower bound.
+We use the fact that if $\log s \sim \mathcal{N}(\mu_{s,q}, \sigma_{s,q})$, then $\mathbb{E}_q[s^{-1}] = \exp(-\mu_{s,q} + \sigma_{s,q}^2 / 2)$.
+Thus, the fully broken-down objective is given by:
+\begin{align*}
+    J(q) &\geq \log \left( \exp\left( \psi(\alpha_q) - \psi(\alpha_q + \beta_q) - \log P \right) + \sum_{k \in \{-1, 0, 1\}} \exp\left( L_k \right) \right) \\
+    &\quad - \left( \log \frac{\sigma_{m,p}}{\sigma_{m,q}} + \frac{\sigma_{m,q}^2 + (\mu_{m,q} - \mu_{m,p})^2}{2 \sigma_{m,p}^2} - \frac{1}{2} \right) \\
+    &\quad - \left( \log \frac{\sigma_{s,p}}{\sigma_{s,q}} + \frac{\sigma_{s,q}^2 + (\mu_{s,q} - \mu_{s,p})^2}{2 \sigma_{s,p}^2} - \frac{1}{2} \right) \\
+    &\quad - \left( \ln \frac{B(\alpha_p, \beta_p)}{B(\alpha_q, \beta_q)} + (\alpha_q - \alpha_p) \psi(\alpha_q) + (\beta_q - \beta_p) \psi(\beta_q) - \left(\alpha_q + \beta_q - \alpha_p - \beta_p\right) \psi(\alpha_q + \beta_q) \right)
+\end{align*}
+where $L_k$ is the log-likelihood component for each wrapped normal mode:
+\begin{align*}
+    L_k = \psi(\beta_q) - \psi(\alpha_q + \beta_q) - \frac{1}{2}\log(2\pi) - \frac{1}{2}\mu_{s,q} - \frac{1}{2} \exp\left(-\mu_{s,q} + \frac{\sigma_{s,q}^2}{2}\right) \left((x - \mu_{m,q} - k P)^2 + \sigma_{m,q}^2\right)
+\end{align*}
 

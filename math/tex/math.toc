@@ -48,23 +48,25 @@
 \contentsline {paragraph}{Gaussian Mixture Model with Kolchinsky Objective}{55}{section*.16}%
 \contentsline {paragraph}{Von Mises Mixture Model with Rényi Entropy}{55}{section*.17}%
 \contentsline {paragraph}{Von Mises Mixture Model with Kolchinsky Objective}{55}{section*.18}%
-\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{55}{section*.19}%
-\contentsline {section}{\numberline {6.3}User Parameters}{56}{section.6.3}%
-\contentsline {subsection}{\numberline {6.3.1}The Likelihood Model}{56}{subsection.6.3.1}%
+\contentsline {paragraph}{Wrapped Gaussian Mixture Model with Rényi Entropy}{55}{section*.19}%
+\contentsline {subsubsection}{An approximation for the entropy via Cramér's theorem}{56}{section*.20}%
+\contentsline {section}{\numberline {6.3}User Parameters}{57}{section.6.3}%
+\contentsline {subsection}{\numberline {6.3.1}The Likelihood Model}{57}{subsection.6.3.1}%
 \contentsline {subsection}{\numberline {6.3.2}Directional Statistics}{57}{subsection.6.3.2}%
 \contentsline {subsection}{\numberline {6.3.3}A Hierarchical Temporal Model of User Statistics}{57}{subsection.6.3.3}%
-\contentsline {subsubsection}{Variational Inference}{57}{section*.20}%
-\contentsline {chapter}{\numberline {7}Render Stimulus}{59}{chapter.7}%
-\contentsline {section}{\numberline {7.1}Circular Timers}{59}{section.7.1}%
-\contentsline {chapter}{\numberline {8}Detect Response}{60}{chapter.8}%
-\contentsline {section}{\numberline {8.1}Blink Detection}{60}{section.8.1}%
-\contentsline {section}{\numberline {8.2}Keypress Detection}{60}{section.8.2}%
-\contentsline {chapter}{\numberline {9}Determine Most Likely Break Nodes}{61}{chapter.9}%
-\contentsline {section}{\numberline {9.1}An Upper Bound for the Likelihood of a Token Sequence}{61}{section.9.1}%
-\contentsline {section}{\numberline {9.2}Descending the Token Trie}{62}{section.9.2}%
-\contentsline {chapter}{\numberline {10}LLM Query}{63}{chapter.10}%
-\contentsline {section}{\numberline {10.1}Maintaining a Key-Value Cache Trie}{63}{section.10.1}%
-\contentsline {chapter}{\numberline {11}Mastering Dotter}{64}{chapter.11}%
-\contentsline {section}{\numberline {11.1}The Cost of Incorrect Signals}{64}{section.11.1}%
-\contentsline {section}{\numberline {11.2}Zen of Dotter}{66}{section.11.2}%
-\contentsline {chapter}{Bibliography}{66}{section*.21}%
+\contentsline {subsubsection}{Variational Inference}{58}{section*.21}%
+\contentsline {subsection}{\numberline {6.3.4}Online Variational Estimation}{59}{subsection.6.3.4}%
+\contentsline {chapter}{\numberline {7}Render Stimulus}{61}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Circular Timers}{61}{section.7.1}%
+\contentsline {chapter}{\numberline {8}Detect Response}{62}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Blink Detection}{62}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Keypress Detection}{62}{section.8.2}%
+\contentsline {chapter}{\numberline {9}Determine Most Likely Break Nodes}{63}{chapter.9}%
+\contentsline {section}{\numberline {9.1}An Upper Bound for the Likelihood of a Token Sequence}{63}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Descending the Token Trie}{64}{section.9.2}%
+\contentsline {chapter}{\numberline {10}LLM Query}{65}{chapter.10}%
+\contentsline {section}{\numberline {10.1}Maintaining a Key-Value Cache Trie}{65}{section.10.1}%
+\contentsline {chapter}{\numberline {11}Mastering Dotter}{66}{chapter.11}%
+\contentsline {section}{\numberline {11.1}The Cost of Incorrect Signals}{66}{section.11.1}%
+\contentsline {section}{\numberline {11.2}Zen of Dotter}{68}{section.11.2}%
+\contentsline {chapter}{Bibliography}{68}{section*.22}%

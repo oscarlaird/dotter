@@ -8,6 +8,8 @@ import practicePhrasesText from './v3-practice-phrases.txt?raw';
 import CalibrationSettings, { type LikelihoodModel } from '../components/CalibrationSettings';
 import Eye from '../components/Eye';
 import TrieSnapshotVisualizer, {
+	SCROLL_CENTERING_WEIGHT,
+	SCROLL_STABILITY_WEIGHT,
 	computeScrollLayoutState,
 } from '../components/TrieSnapshotVisualizer';
 import type {
@@ -718,6 +720,13 @@ function V3Page() {
 							<span className="text-slate-300 dark:text-white/25">·</span>
 							<span>
 								last batch <code className="text-slate-800 dark:text-gray-300">{lastBatchSize}</code>
+							</span>
+							<span className="text-slate-300 dark:text-white/25">·</span>
+							<span title="Scroll heuristic: centering weight a, stability weight b (see render-trie.tex)">
+								scroll{' '}
+								<code className="text-slate-800 dark:text-gray-300">a={SCROLL_CENTERING_WEIGHT}</code>
+								{' '}
+								<code className="text-slate-800 dark:text-gray-300">b={SCROLL_STABILITY_WEIGHT}</code>
 							</span>
 							<span className="text-slate-300 dark:text-white/25">·</span>
 							<span>

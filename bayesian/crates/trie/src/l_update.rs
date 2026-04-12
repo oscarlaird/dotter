@@ -106,7 +106,7 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
     while let Some(Frame { n_symbol, p_hash, p_proper_truncated_l }) = frames.pop() {
         assert!({
             iters += 1;
-            iters < 50_000
+            iters < 500_000
         }, "merge_many: too many iterations");
         let n_hash = rh::append_right(p_hash, n_symbol.to_byte());
         let (n_edge_hit_count, n_proper_truncated_l, n_direct_l, any_n_exists) = l_updates

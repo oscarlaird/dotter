@@ -36,7 +36,8 @@ export interface VisibleNodeTimer {
 export type VisibleNodeTimerMap = Record<string, VisibleNodeTimer>;
 
 export interface ScrollLayoutState {
-	firstForkDepth: number;
+	/** Depth of first fork in visible trie, or null when the visible trie has no branching. */
+	firstForkDepth: number | null;
 	firstForkFullString: string | null;
 	scrollOffset: number;
 	scrollRoot: string;
@@ -79,8 +80,8 @@ const TIMER_STROKE_WIDTH = 2;
 const TIMER_FONT_SIZE = 37;
 const DEBUG_LEVEL_GUTTER = 56;
 const ROOT_NODE_WIDTH = BOX_WIDTH * 1.5;
-const SCROLL_CENTERING_WEIGHT = 1;
-const SCROLL_STABILITY_WEIGHT = 1;
+export const SCROLL_CENTERING_WEIGHT = 1;
+export const SCROLL_STABILITY_WEIGHT = 4;
 
 export const SINGLE_PARENT_NODE_WIDTH_PX = BOX_WIDTH;
 export const SCROLL_TARGET_X_PX = 400;
@@ -318,12 +319,17 @@ function firstForkNode(
 	return best;
 }
 
-function deepestVisibleDepth(nodes: Record<string, VisualNode>): number {
-	let deepest = 0;
+/** Deepest visible node; tie-break lexicographically for determinism. Used to anchor scroll when there is no fork. */
+function deepestVisibleNode(nodes: Record<string, VisualNode>): VisualNode | null {
+	let best: VisualNode | null = null;
 	for (const node of Object.values(nodes)) {
-		deepest = Math.max(deepest, nodeDepth(node.fullString));
+		const d = nodeDepth(node.fullString);
+		const bestD = best === null ? -1 : nodeDepth(best.fullString);
+		if (best === null || d > bestD || (d === bestD && node.fullString.localeCompare(best.fullString) < 0)) {
+			best = node;
+		}
 	}
-	return deepest;
+	return best;
 }
 
 function ancestorAtDepth(fullString: string, depth: number): string {
@@ -355,26 +361,56 @@ export function computeScrollLayoutState(
 ): ScrollLayoutState {
 	const visibleTree = buildVisibleTree(snapshot, expansionThreshold);
 	const firstFork = firstForkNode(visibleTree);
-	const firstForkDepth = firstFork
-		? nodeDepth(firstFork.fullString)
-		: deepestVisibleDepth(visibleTree);
+	if (!firstFork) {
+		const anchor = deepestVisibleNode(visibleTree);
+		if (!anchor) {
+			return {
+				firstForkDepth: null,
+				firstForkFullString: null,
+				scrollOffset: 0,
+				scrollRoot: '^',
+				scrollAncestorKeys: [],
+				renderedNodeKeys: Array.from(subtreeKeys(visibleTree, '^')),
+			};
+		}
+		const anchorDepth = nodeDepth(anchor.fullString);
+		if (anchorDepth <= 0) {
+			return {
+				firstForkDepth: null,
+				firstForkFullString: null,
+				scrollOffset: 0,
+				scrollRoot: '^',
+				scrollAncestorKeys: [],
+				renderedNodeKeys: Array.from(subtreeKeys(visibleTree, '^')),
+			};
+		}
+		const scrollOffset = Math.max(0, Math.min(previousScrollOffset, anchorDepth - 1));
+		const scrollRoot = ancestorAtDepth(anchor.fullString, scrollOffset);
+		return {
+			firstForkDepth: null,
+			firstForkFullString: null,
+			scrollOffset,
+			scrollRoot,
+			scrollAncestorKeys: scrollAncestorKeys(scrollRoot),
+			renderedNodeKeys: Array.from(subtreeKeys(visibleTree, scrollRoot)),
+		};
+	}
+	const forkDepth = nodeDepth(firstFork.fullString);
 	const unclampedOffset =
 		(
 			SCROLL_CENTERING_WEIGHT *
-				(firstForkDepth - SCROLL_TARGET_X_PX / SINGLE_PARENT_NODE_WIDTH_PX) +
+				(forkDepth - SCROLL_TARGET_X_PX / SINGLE_PARENT_NODE_WIDTH_PX) +
 			SCROLL_STABILITY_WEIGHT * previousScrollOffset
 		) /
 		(SCROLL_CENTERING_WEIGHT + SCROLL_STABILITY_WEIGHT);
 	const scrollOffset =
-		firstForkDepth <= 0
+		forkDepth <= 0
 			? 0
-			: Math.max(0, Math.min(Math.floor(unclampedOffset), firstForkDepth - 1));
-	const scrollRoot = firstFork
-		? ancestorAtDepth(firstFork.fullString, scrollOffset)
-		: '^';
+			: Math.max(0, Math.min(Math.floor(unclampedOffset), forkDepth - 1));
+	const scrollRoot = ancestorAtDepth(firstFork.fullString, scrollOffset);
 	return {
-		firstForkDepth,
-		firstForkFullString: firstFork?.fullString ?? null,
+		firstForkDepth: forkDepth,
+		firstForkFullString: firstFork.fullString,
 		scrollOffset,
 		scrollRoot,
 		scrollAncestorKeys: scrollAncestorKeys(scrollRoot),
@@ -455,7 +491,6 @@ function TrieSnapshotVisualizer({
 	const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 	const tweenStartTimesRef = useRef<Record<TweenKey, TweenEntry>>({});
 	const laidOutNodesRef = useRef<Record<string, VisualNode> | null>(null);
-	const offscreenText = offscreenPrefixText(scrollRoot);
 
 	const getTweenedValue = useCallback((fullString: string, property: string, currentTime: number): number => {
 		const key = tweenKey(fullString, property);
@@ -527,6 +562,21 @@ function TrieSnapshotVisualizer({
 		() => buildVisibleTree(snapshot, expansionThreshold),
 		[snapshot, expansionThreshold],
 	);
+
+	/** Path key for the off-screen caption: through first fork, or full deepest path if no fork. Hidden until scroll leaves root. */
+	const offscreenPrefixDisplay = useMemo(() => {
+		if (scrollRoot === '^') {
+			return '';
+		}
+		const fork = firstForkNode(visibleTree);
+		const pathKey = fork
+			? fork.fullString
+			: (deepestVisibleNode(visibleTree)?.fullString ?? '^');
+		if (pathKey === '^') {
+			return '';
+		}
+		return offscreenPrefixText(pathKey);
+	}, [scrollRoot, visibleTree]);
 
 	const laidOutNodes = useMemo(() => {
 		if (viewportSize.height <= 0) {
@@ -757,10 +807,17 @@ function TrieSnapshotVisualizer({
 				ref={canvasRef}
 				className="block h-full w-full bg-slate-100 dark:bg-black"
 			/>
-			{offscreenText && (
-				<div className="pointer-events-none absolute left-4 top-[38%] w-[250px] -translate-y-1/2 rounded-md border border-slate-300/80 bg-white/90 px-3 py-2 text-sm text-slate-800 shadow-sm backdrop-blur-sm dark:border-white/20 dark:bg-black/70 dark:text-gray-100">
-					<div className="whitespace-pre-wrap break-words font-mono leading-relaxed">
-						{offscreenText}
+			{offscreenPrefixDisplay && (
+				<div
+					className="pointer-events-auto absolute bottom-[calc(50%+0.75rem)] left-4 z-10 flex max-h-[min(42vh,calc(50%-1.25rem))] w-[min(20rem,calc(100%-2rem))] flex-col gap-1.5 overflow-y-auto overscroll-contain rounded-lg border border-slate-200/90 bg-white/95 py-2.5 pl-3 pr-2.5 shadow-lg shadow-slate-900/10 ring-1 ring-slate-900/[0.04] backdrop-blur-md dark:border-white/15 dark:bg-gray-950/90 dark:shadow-black/40 dark:ring-white/[0.06]"
+					role="region"
+					aria-label="Text before the visible trie window"
+				>
+					<div className="shrink-0 select-none text-[0.65rem] font-medium uppercase tracking-wider text-slate-500 dark:text-gray-500">
+						Scrolled prefix
+					</div>
+					<div className="min-h-0 select-text whitespace-pre-wrap break-words font-mono text-[0.8125rem] leading-relaxed text-slate-800 dark:text-gray-100">
+						{offscreenPrefixDisplay}
 					</div>
 				</div>
 			)}
