@@ -27,6 +27,7 @@ interface CalibrationSettingsProps {
 	calibrationSampleCount: number;
 	rawVariationalParams: [number, number, number, number, number, number] | null;
 	recentCalibrationPairs: Array<[number, number]>;
+	showCalibrationDebug: boolean;
 }
 
 function CalibrationSettings({
@@ -38,6 +39,7 @@ function CalibrationSettings({
 	calibrationSampleCount,
 	rawVariationalParams,
 	recentCalibrationPairs,
+	showCalibrationDebug,
 }: CalibrationSettingsProps) {
 	// Sync model from auto-calibration whenever it is enabled or updates
 	useEffect(() => {
@@ -60,11 +62,19 @@ function CalibrationSettings({
 		};
 
 	return (
-		<div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 text-slate-900 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-white dark:shadow-none">
-			<div className="text-sm text-slate-600 dark:text-gray-300">
-				Calibration samples: {calibrationSampleCount}
+		<div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white/95 p-3 text-slate-900 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5 dark:text-white dark:shadow-none">
+			<div className="flex items-center justify-between gap-3">
+				<div>
+					<div className="text-sm font-semibold text-slate-800 dark:text-gray-100">Calibration</div>
+					<div className="text-xs text-slate-600 dark:text-gray-300">
+						Calibration samples: {calibrationSampleCount}
+					</div>
+				</div>
+				<div className="text-[0.65rem] uppercase tracking-[0.18em] text-slate-400 dark:text-gray-500">
+					Auto-calibrated controls
+				</div>
 			</div>
-			{rawVariationalParams && (
+			{showCalibrationDebug && rawVariationalParams && (
 				<div className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs dark:border-white/8 dark:bg-black/20">
 					<div className="mb-1 font-semibold text-slate-700 dark:text-gray-200">Variational params</div>
 					<div className="font-mono text-slate-600 dark:text-gray-300">
@@ -72,7 +82,7 @@ function CalibrationSettings({
 					</div>
 				</div>
 			)}
-			{recentCalibrationPairs.length > 0 && (
+			{showCalibrationDebug && recentCalibrationPairs.length > 0 && (
 				<div className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs dark:border-white/8 dark:bg-black/20">
 					<div className="mb-1 font-semibold text-slate-700 dark:text-gray-200">Recent calibration pairs</div>
 					<div className="font-mono text-slate-600 dark:text-gray-300">
@@ -82,7 +92,7 @@ function CalibrationSettings({
 					</div>
 				</div>
 			)}
-			<div className="grid grid-cols-2 gap-2">
+			<div className="grid grid-cols-1 gap-2 md:grid-cols-4">
 				<SliderRow
 					label={`Mean (${(1000 * likelihoodModel.mu_delay).toFixed(0)}ms)`}
 					min={-0.05}

@@ -272,6 +272,8 @@ function V3Page() {
 	const [calibrationSampleCount, setCalibrationSampleCount] = useState(0);
 	const [rawVariationalParams, setRawVariationalParams] = useState<[number, number, number, number, number, number] | null>(null);
 	const [recentCalibrationPairs, setRecentCalibrationPairs] = useState<Array<[number, number]>>([]);
+	const [showPredictionLogPanel, setShowPredictionLogPanel] = useState(false);
+	const [showCalibrationDebugPanel, setShowCalibrationDebugPanel] = useState(false);
 	const sessionRef = useRef<BayesianSession | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
 	const likelihoodModelRef = useRef(likelihoodModel);
@@ -902,6 +904,28 @@ function V3Page() {
 							</button>
 							<button
 								type="button"
+								onClick={() => setShowCalibrationDebugPanel((prev) => !prev)}
+								className={`rounded border px-2.5 py-1 text-xs transition ${
+									showCalibrationDebugPanel
+										? 'border-blue-400 bg-blue-50 text-blue-900 hover:bg-blue-100 dark:border-blue-400/60 dark:bg-blue-500/20 dark:text-blue-100 dark:hover:bg-blue-500/30'
+										: 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
+								}`}
+							>
+								Calibration debug
+							</button>
+							<button
+								type="button"
+								onClick={() => setShowPredictionLogPanel((prev) => !prev)}
+								className={`rounded border px-2.5 py-1 text-xs transition ${
+									showPredictionLogPanel
+										? 'border-blue-400 bg-blue-50 text-blue-900 hover:bg-blue-100 dark:border-blue-400/60 dark:bg-blue-500/20 dark:text-blue-100 dark:hover:bg-blue-500/30'
+										: 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'
+								}`}
+							>
+								Backend log
+							</button>
+							<button
+								type="button"
 								onClick={downloadSessionDebugDump}
 								className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-800 transition hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
 							>
@@ -934,6 +958,52 @@ function V3Page() {
 					{error && (
 						<div className="shrink-0 whitespace-pre-wrap break-words rounded border border-red-400/70 bg-red-50 px-2 py-1.5 text-xs text-red-900 dark:border-red-500/40 dark:bg-red-950/50 dark:text-red-200">
 							{error}
+						</div>
+					)}
+
+					<CalibrationSettings
+						useAutomaticCalibration={useAutomaticCalibration}
+						setUseAutomaticCalibration={setUseAutomaticCalibration}
+						likelihoodModel={likelihoodModel}
+						setLikelihoodModel={setLikelihoodModel}
+						autoCalibrationLikelihoodModel={autoCalibrationLikelihoodModel}
+						calibrationSampleCount={calibrationSampleCount}
+						rawVariationalParams={rawVariationalParams}
+						recentCalibrationPairs={recentCalibrationPairs}
+						showCalibrationDebug={showCalibrationDebugPanel}
+					/>
+
+					{showPredictionLogPanel && (
+						<div className="shrink-0 rounded-lg border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-white/5 dark:shadow-none">
+							<div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
+								<h2 className="text-xs font-semibold text-slate-800 dark:text-gray-100">
+									Backend Prediction Log
+								</h2>
+								<span className="text-[0.65rem] text-slate-500 dark:text-gray-400">
+									<code>{predictionLog.length}</code> entries
+								</span>
+							</div>
+							{predictionLog.length === 0 ? (
+								<p className="text-xs text-slate-500 dark:text-gray-400">
+									No backend predictions received yet.
+								</p>
+							) : (
+								<ul className="max-h-36 min-h-0 list-none space-y-1 overflow-y-auto overscroll-contain pr-1 text-xs">
+									{predictionLog.map((entry) => (
+										<li
+											key={entry.id}
+											className="flex items-baseline gap-2 border-b border-slate-100 pb-1 last:border-b-0 last:pb-0 dark:border-white/5"
+										>
+											<span className="min-w-0 flex-1 break-all font-mono text-slate-800 dark:text-gray-200">
+												{entry.fullString}
+											</span>
+											<span className="shrink-0 whitespace-nowrap text-right font-mono text-[0.65rem] tabular-nums text-slate-500 dark:text-gray-400">
+												[{entry.finalTokenLexindex}] ({entry.receivedAt})
+											</span>
+										</li>
+									))}
+								</ul>
+							)}
 						</div>
 					)}
 
@@ -976,49 +1046,6 @@ function V3Page() {
 						)}
 					</div>
 
-					<div className="grid shrink-0 grid-cols-1 gap-2 lg:grid-cols-[minmax(0,3fr)_minmax(16rem,1fr)]">
-						<CalibrationSettings
-							useAutomaticCalibration={useAutomaticCalibration}
-							setUseAutomaticCalibration={setUseAutomaticCalibration}
-							likelihoodModel={likelihoodModel}
-							setLikelihoodModel={setLikelihoodModel}
-							autoCalibrationLikelihoodModel={autoCalibrationLikelihoodModel}
-							calibrationSampleCount={calibrationSampleCount}
-							rawVariationalParams={rawVariationalParams}
-							recentCalibrationPairs={recentCalibrationPairs}
-						/>
-						<div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-2 shadow-sm dark:border-white/10 dark:bg-white/5 dark:shadow-none">
-							<div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
-								<h2 className="text-xs font-semibold text-slate-800 dark:text-gray-100">
-									Backend Prediction Log
-								</h2>
-								<span className="text-[0.65rem] text-slate-500 dark:text-gray-400">
-									<code>{predictionLog.length}</code> entries
-								</span>
-							</div>
-							{predictionLog.length === 0 ? (
-								<p className="text-xs text-slate-500 dark:text-gray-400">
-									No backend predictions received yet.
-								</p>
-							) : (
-								<ul className="max-h-36 min-h-0 list-none space-y-1 overflow-y-auto overscroll-contain pr-1 text-xs">
-									{predictionLog.map((entry) => (
-										<li
-											key={entry.id}
-											className="flex items-baseline gap-2 border-b border-slate-100 pb-1 last:border-b-0 last:pb-0 dark:border-white/5"
-										>
-											<span className="min-w-0 flex-1 break-all font-mono text-slate-800 dark:text-gray-200">
-												{entry.fullString}
-											</span>
-											<span className="shrink-0 whitespace-nowrap text-right font-mono text-[0.65rem] tabular-nums text-slate-500 dark:text-gray-400">
-												[{entry.finalTokenLexindex}] ({entry.receivedAt})
-											</span>
-										</li>
-									))}
-								</ul>
-							)}
-						</div>
-					</div>
 				</div>
 			</div>
 		</div>
