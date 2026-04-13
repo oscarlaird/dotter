@@ -580,7 +580,7 @@ may be written as:
 \begin{align*}
     J(q) &= \mathbb{E}_{\theta \sim q} \left[ \log P(x | \theta) \right] - D_{KL}(q || p)
 \end{align*}
-It is incorrect to use any kind of discount factor in the distance term.
+It is incorrect to use any kind of discount factor in the distance term (though in practice a small discount factor may be useful as an adaptation heuristic, allowing the estimate to forget old evidence slightly faster).
 
 To make the expected likelihood component concrete, we substitute our earlier derivations into the lower bound.
 We use the fact that if $\log s \sim \mathcal{N}(\mu_{s,q}, \sigma_{s,q})$, then $\mathbb{E}_q[s^{-1}] = \exp(-\mu_{s,q} + \sigma_{s,q}^2 / 2)$.

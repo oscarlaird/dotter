@@ -526,7 +526,7 @@ function V3Page() {
 				throw new Error('BayesianSession is not initialized');
 			}
 			try {
-				return session.recalibrate(JSON.stringify(currentViBefore));
+				return session.recalibrate(JSON.stringify(currentViBefore), true);
 			} catch (err) {
 				throw new Error(formatStepError('recalibrate before reset failed', err));
 			}
@@ -787,7 +787,7 @@ function V3Page() {
 						throw new Error('BayesianSession is not initialized');
 					}
 					try {
-						return session.recalibrate(JSON.stringify(currentViBefore));
+						return session.recalibrate(JSON.stringify(currentViBefore), true);
 					} catch (err) {
 						throw new Error(formatStepError('recalibrate failed', err));
 					}

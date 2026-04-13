@@ -34,6 +34,16 @@ impl VariationalParams {
     }
 }
 
+pub const DISCOUNTED_KL_FACTOR: f64 = 0.995;
+
+fn kl_discount(use_discount_factor: bool) -> f64 {
+    if use_discount_factor {
+        DISCOUNTED_KL_FACTOR
+    } else {
+        1.0
+    }
+}
+
 trait CustomFuncs {
     fn my_lgamma(&self) -> Self;
     fn my_digamma(&self) -> Self;
@@ -78,7 +88,13 @@ fn logsumexp(slice: &[Dual2SVec64<6>]) -> Dual2SVec64<6> {
     sum_exp.ln() + max_val_dual
 }
 
-fn evaluate_j(params: OVector<Dual2SVec64<6>, Const<6>>, x: f64, p_val: f64, prior_params: &VariationalParams) -> Dual2SVec64<6> {
+fn evaluate_j(
+    params: OVector<Dual2SVec64<6>, Const<6>>,
+    x: f64,
+    p_val: f64,
+    prior_params: &VariationalParams,
+    use_discount_factor: bool,
+) -> Dual2SVec64<6> {
     let mu_m_q = params[0];
     let sigma_m_q = params[1].exp();
     let mu_s_q = params[2];
@@ -149,10 +165,16 @@ fn evaluate_j(params: OVector<Dual2SVec64<6>, Const<6>>, x: f64, p_val: f64, pri
                 + (beta_q - beta_p_dual) * beta_q.my_digamma()
                 - (alpha_q + beta_q - alpha_p_dual - beta_p_dual) * (alpha_q + beta_q).my_digamma();
                 
-    likelihood_bound - kl_m - kl_s - kl_beta
+    let kl_weight = Dual2SVec64::from_re(kl_discount(use_discount_factor));
+    likelihood_bound - kl_weight * (kl_m + kl_s + kl_beta)
 }
 
-pub fn optimize_online(x: f64, p_val: f64, prior_params: &VariationalParams) -> VariationalParams {
+pub fn optimize_online(
+    x: f64,
+    p_val: f64,
+    prior_params: &VariationalParams,
+    use_discount_factor: bool,
+) -> VariationalParams {
     let mut q_params = SVector::<f64, 6>::new(
         prior_params.mu_m,
         prior_params.sigma_m.ln(),
@@ -169,7 +191,7 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &VariationalParams) -> 
         #[cfg(not(target_arch = "wasm32"))]
         let start = std::time::Instant::now();
         let (loss, grad, hessian) = num_dual::hessian(
-            |p| -evaluate_j(p, x, p_val, prior_params),
+            |p| -evaluate_j(p, x, p_val, prior_params, use_discount_factor),
             q_params,
         );
         #[cfg(not(target_arch = "wasm32"))]
@@ -194,7 +216,10 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &VariationalParams) -> 
         
         while alpha > 1e-6 {
             new_params = q_params + alpha * step;
-            let (new_loss, _, _) = num_dual::hessian(|p| -evaluate_j(p, x, p_val, prior_params), new_params);
+            let (new_loss, _, _) = num_dual::hessian(
+                |p| -evaluate_j(p, x, p_val, prior_params, use_discount_factor),
+                new_params,
+            );
             if new_loss <= loss + c * alpha * grad.dot(&step) {
                 break;
             }

@@ -345,7 +345,7 @@ class BackendRuntime:
             return None
         username = self.current_username
         vi_before = self.current_vi_before
-        recalibration_result = json.loads(self.session.recalibrate(_json_dumps(vi_before)))
+        recalibration_result = json.loads(self.session.recalibrate(_json_dumps(vi_before), True))
         vi_after = recalibration_result["prior_params"]
         string_value = self.session.certain_prefix_string()
         self.calibration_store.insert_string(

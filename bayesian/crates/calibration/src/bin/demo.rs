@@ -42,7 +42,7 @@ fn main() {
     
     for (idx, (x, p_val)) in dummy_data.iter().enumerate() {
         println!("Observation {}: x = {:.4}, P = {:.2}", idx + 1, x, p_val);
-        current_prior = optimize_online(*x, *p_val, &current_prior);
+        current_prior = optimize_online(*x, *p_val, &current_prior, false);
         
         print_prior(&current_prior, "Updated Prior");
         println!("{:-<75}", "");
