@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import initBayesianWasm, {
 	BayesianSession,
 	debugPanicTest,
@@ -16,6 +16,7 @@ import TrieSnapshotVisualizer, {
 	SCROLL_CENTERING_WEIGHT,
 	SCROLL_STABILITY_WEIGHT,
 	computeScrollLayoutState,
+	findTutorTargetKey,
 } from '../components/TrieSnapshotVisualizer';
 import type {
 	ExpandedSnapshot,
@@ -56,10 +57,14 @@ const DEFAULT_LIKELIHOOD_MODEL: LikelihoodModel = {
 	period: DEFAULT_PERIOD,
 };
 const N_SKIP_PRACTICE_PHRASES = 6;
+function formatPracticePhrase(phrase: string): string {
+	return ` ${phrase}$`;
+}
 const PRACTICE_PHRASES = practicePhrasesText
 	.split('\n')
 	.map((line) => line.trim())
-	.filter((line) => line.length > 0);
+	.filter((line) => line.length > 0)
+	.map(formatPracticePhrase);
 
 const RECENT_CONSOLE_ERROR_LIMIT = 20;
 let wasmPanicConsoleCaptureInstalled = false;
@@ -260,6 +265,84 @@ function downloadTextFile(filename: string, content: string, mimeType: string): 
 	URL.revokeObjectURL(url);
 }
 
+function moduloDelay(timeSeconds: number, phase: number, period: number): number {
+	let x = timeSeconds - phase;
+	x = ((x % period) + period) % period;
+	return x;
+}
+
+function playTutorTone(
+	audioContextRef: React.MutableRefObject<AudioContext | null>,
+	frequencyHz: number,
+	repetitions: number,
+	options?: {
+		type?: OscillatorType;
+		peakGain?: number;
+		duration?: number;
+		gap?: number;
+	}
+): void {
+	const AudioContextCtor = window.AudioContext ?? (window as typeof window & {
+		webkitAudioContext?: typeof AudioContext;
+	}).webkitAudioContext;
+	if (!AudioContextCtor) {
+		return;
+	}
+	const ctx = audioContextRef.current ?? new AudioContextCtor();
+	audioContextRef.current = ctx;
+	void ctx.resume().catch(() => {});
+	const startAt = ctx.currentTime + 0.005;
+	const duration = options?.duration ?? 0.07;
+	const gap = options?.gap ?? 0.05;
+	const peakGain = options?.peakGain ?? 0.3;
+	const oscType = options?.type ?? 'sine';
+	for (let i = 0; i < repetitions; i += 1) {
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		const t0 = startAt + i * (duration + gap);
+		osc.type = oscType;
+		osc.frequency.setValueAtTime(frequencyHz, t0);
+		gain.gain.setValueAtTime(0.0001, t0);
+		gain.gain.exponentialRampToValueAtTime(peakGain, t0 + 0.008);
+		gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.start(t0);
+		osc.stop(t0 + duration);
+	}
+}
+
+function playTutorOutlierTone(
+	audioContextRef: React.MutableRefObject<AudioContext | null>,
+): void {
+	const AudioContextCtor = window.AudioContext ?? (window as typeof window & {
+		webkitAudioContext?: typeof AudioContext;
+	}).webkitAudioContext;
+	if (!AudioContextCtor) {
+		return;
+	}
+	const ctx = audioContextRef.current ?? new AudioContextCtor();
+	audioContextRef.current = ctx;
+	void ctx.resume().catch(() => {});
+	const startAt = ctx.currentTime + 0.005;
+	const duration = 0.04;
+	const gap = 0.03;
+	for (const [idx, frequencyHz] of [520, 610].entries()) {
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		const t0 = startAt + idx * (duration + gap);
+		osc.type = 'square';
+		osc.frequency.setValueAtTime(frequencyHz, t0);
+		gain.gain.setValueAtTime(0.0001, t0);
+		gain.gain.exponentialRampToValueAtTime(0.32, t0 + 0.006);
+		gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.start(t0);
+		osc.stop(t0 + duration);
+	}
+}
+
 function V3Page() {
 	const [snapshot, setSnapshot] = useState<ExpandedSnapshot | null>(null);
 	const [timers, setTimers] = useState<VisibleNodeTimerMap>({});
@@ -290,6 +373,7 @@ function V3Page() {
 	const sessionRef = useRef<BayesianSession | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
 	const likelihoodModelRef = useRef(likelihoodModel);
+	const audioContextRef = useRef<AudioContext | null>(null);
 	const bootstrapPromiseRef = useRef<Promise<void> | null>(null);
 	const predictionLogIdRef = useRef(0);
 	const sessionOpQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -303,6 +387,8 @@ function V3Page() {
 	const [showAll, setShowAll] = useState(false);
 	const [blinkToClick, setBlinkToClick] = useState(readStoredBlinkToClick);
 	const [showPracticePhrase, setShowPracticePhrase] = useState(false);
+	const [useVisualTutor, setUseVisualTutor] = useState(false);
+	const [useAudioTutor, setUseAudioTutor] = useState(false);
 	const [practicePhrase, setPracticePhrase] = useState(() => randomPracticePhrase());
 	const [expansionThreshold, setExpansionThreshold] = useState<number>(Number.NEGATIVE_INFINITY);
 	const [scrollOffset, setScrollOffset] = useState(0);
@@ -311,6 +397,19 @@ function V3Page() {
 	const scrollOffsetRef = useRef(0);
 	const scrollRootRef = useRef('^');
 	const scrollAncestorKeysRef = useRef<string[]>([]);
+
+	const tutorTargetKey = useMemo(() => {
+		if (!showPracticePhrase || !snapshot) {
+			return null;
+		}
+		return findTutorTargetKey(
+			snapshot,
+			expansionThreshold,
+			scrollRoot,
+			showAll,
+			practicePhrase,
+		);
+	}, [expansionThreshold, practicePhrase, scrollRoot, showAll, showPracticePhrase, snapshot]);
 
 	useEffect(() => {
 		try {
@@ -339,6 +438,17 @@ function V3Page() {
 	useEffect(() => {
 		likelihoodModelRef.current = likelihoodModel;
 	}, [likelihoodModel]);
+
+	useEffect(() => {
+		if (!showPracticePhrase) {
+			if (useVisualTutor) {
+				setUseVisualTutor(false);
+			}
+			if (useAudioTutor) {
+				setUseAudioTutor(false);
+			}
+		}
+	}, [showPracticePhrase, useAudioTutor, useVisualTutor]);
 
 	const shufflePracticePhrase = useCallback(() => {
 		setPracticePhrase((current) => randomPracticePhrase(current));
@@ -729,6 +839,28 @@ function V3Page() {
 					return;
 				}
 
+				if (showPracticePhrase && useAudioTutor && tutorTargetKey) {
+					const targetTimer = timers[tutorTargetKey];
+					const predictiveStddev = likelihoodModelRef.current.stddev_delay;
+					if (targetTimer && predictiveStddev > 0) {
+						const x = moduloDelay(timeSeconds, targetTimer.phase, likelihoodModelRef.current.period);
+						const offsetStddevs = (x - likelihoodModelRef.current.mu_delay) / predictiveStddev;
+						if (Math.abs(offsetStddevs) > 3) {
+							playTutorOutlierTone(audioContextRef);
+						} else if (offsetStddevs > 2) {
+							playTutorTone(audioContextRef, 1760, 2);
+						} else if (offsetStddevs > 1) {
+							playTutorTone(audioContextRef, 1760, 1);
+						} else if (offsetStddevs < -2) {
+							playTutorTone(audioContextRef, 330, 2);
+						} else if (offsetStddevs < -1) {
+							playTutorTone(audioContextRef, 330, 1);
+						} else {
+							playTutorTone(audioContextRef, 660, 1);
+						}
+					}
+				}
+
 				const nodes: Record<string, { l: number, phase: number }> = {};
 				for (const [fullString, timer] of Object.entries(timers)) {
 					if (!(fullString in snapshot)) {
@@ -808,7 +940,7 @@ function V3Page() {
 				setError(err instanceof Error ? err.message : String(err));
 			});
 		},
-		[applySnapshot, currentViBefore, enqueueSessionOp, snapshot, timers],
+		[applySnapshot, currentViBefore, enqueueSessionOp, showPracticePhrase, snapshot, timers, tutorTargetKey, useAudioTutor],
 	);
 
 	useEffect(() => {
@@ -987,6 +1119,26 @@ function V3Page() {
 								/>
 								Practice
 							</label>
+							<label className={`flex select-none items-center gap-1.5 text-xs ${showPracticePhrase ? 'cursor-pointer text-slate-600 dark:text-gray-300' : 'cursor-not-allowed text-slate-400 dark:text-gray-500'}`}>
+								<input
+									type="checkbox"
+									checked={useVisualTutor}
+									disabled={!showPracticePhrase}
+									onChange={(e) => setUseVisualTutor(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 disabled:cursor-not-allowed dark:accent-blue-500"
+								/>
+								Visual tutor
+							</label>
+							<label className={`flex select-none items-center gap-1.5 text-xs ${showPracticePhrase ? 'cursor-pointer text-slate-600 dark:text-gray-300' : 'cursor-not-allowed text-slate-400 dark:text-gray-500'}`}>
+								<input
+									type="checkbox"
+									checked={useAudioTutor}
+									disabled={!showPracticePhrase}
+									onChange={(e) => setUseAudioTutor(e.target.checked)}
+									className="h-3.5 w-3.5 accent-blue-600 disabled:cursor-not-allowed dark:accent-blue-500"
+								/>
+								Audio tutor
+							</label>
 							<button
 								type="button"
 								onClick={() => setColorMode((m) => (m === 'dark' ? 'light' : 'dark'))}
@@ -1115,6 +1267,8 @@ function V3Page() {
 									scrollOffset={scrollOffset}
 									scrollRoot={scrollRoot}
 									firstForkDepth={firstForkDepth}
+								useVisualTutor={showPracticePhrase && useVisualTutor}
+								targetPhrase={practicePhrase}
 									showAll={showAll}
 									lightBackground={colorMode === 'light'}
 									showBoxes={showBoxes}

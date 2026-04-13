@@ -54,6 +54,8 @@ interface TrieSnapshotVisualizerProps {
 	scrollRoot: string;
 	firstForkDepth: number | null;
 	showAll?: boolean;
+	useVisualTutor?: boolean;
+	targetPhrase?: string;
 	/** When true, bright timer strokes (space, root, etc.) are shifted darker for a light canvas. */
 	lightBackground?: boolean;
 	/** Semi-transparent node background rectangles (default on). */
@@ -111,7 +113,11 @@ function offscreenPrefixText(scrollRoot: string): string {
 	if (scrollRoot === '^') {
 		return '';
 	}
-	return scrollRoot.slice(1).replaceAll('_', ' ');
+	return scrollRoot.slice(1).split('_').join(' ');
+}
+
+export function phraseToTrieString(targetPhrase: string): string {
+	return `^${targetPhrase.split(' ').join('_')}`;
 }
 
 function nodeDepth(fullString: string): number {
@@ -304,6 +310,29 @@ function subtreeKeys(
 	return included;
 }
 
+export function findTutorTargetKey(
+	snapshot: ExpandedSnapshot,
+	expansionThreshold: number,
+	scrollRoot: string,
+	showAll: boolean,
+	targetPhrase: string,
+): string | null {
+	const targetTrieString = phraseToTrieString(targetPhrase);
+	const baseNodes = showAll ? buildTree(snapshot) : buildVisibleTree(snapshot, expansionThreshold);
+	const visibleKeys = subtreeKeys(baseNodes, scrollRoot);
+	const nodes = filterNodesByKeySet(baseNodes, visibleKeys);
+	let best: string | null = null;
+	for (const node of Object.values(nodes)) {
+		if (!targetTrieString.startsWith(node.fullString)) {
+			continue;
+		}
+		if (best === null || node.fullString.length > best.length) {
+			best = node.fullString;
+		}
+	}
+	return best;
+}
+
 function firstForkNode(
 	nodes: Record<string, VisualNode>,
 ): VisualNode | null {
@@ -480,6 +509,8 @@ function TrieSnapshotVisualizer({
 	scrollRoot,
 	firstForkDepth,
 	showAll = false,
+	useVisualTutor = false,
+	targetPhrase = '',
 	lightBackground = false,
 	showBoxes = true,
 	showDebugStats = false,
@@ -616,6 +647,13 @@ function TrieSnapshotVisualizer({
 		};
 	}, [laidOutNodes, showDebugStats, viewportSize]);
 
+	const tutorTargetKey = useMemo(() => {
+		if (!useVisualTutor || !laidOutNodes) {
+			return null;
+		}
+		return findTutorTargetKey(snapshot, expansionThreshold, scrollRoot, showAll, targetPhrase);
+	}, [expansionThreshold, laidOutNodes, scrollRoot, showAll, snapshot, targetPhrase, useVisualTutor]);
+
 	useLayoutEffect(() => {
 		laidOutNodesRef.current = laidOutNodes;
 		if (!laidOutNodes) {
@@ -683,6 +721,7 @@ function TrieSnapshotVisualizer({
 				const y = getTweenedValue(node.fullString, 'y', currentTime);
 				const w = getTweenedValue(node.fullString, 'width', currentTime);
 				const h = getTweenedValue(node.fullString, 'height', currentTime);
+				const isTutorTarget = tutorTargetKey === node.fullString;
 				ctx.beginPath();
 				ctx.rect(
 					scaleX(x + 3, node.fullString),
@@ -690,7 +729,9 @@ function TrieSnapshotVisualizer({
 					Math.max(0, scaleSize(w - 6)),
 					Math.max(0, h - 6),
 				);
-				ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.13)`;
+				ctx.fillStyle = isTutorTarget
+					? `rgba(${r}, ${g}, ${b}, 0.24)`
+					: `rgba(${r}, ${g}, ${b}, 0.13)`;
 				ctx.fill();
 				ctx.closePath();
 			}
@@ -728,13 +769,25 @@ function TrieSnapshotVisualizer({
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const timer = timers[node.fullString];
 			const timerFrac = timer ? timerFraction(time, timer.phase, period) : 0;
-			const timerFontSize = TIMER_FONT_SIZE;
-			const { cx, cy, r: timerRadius } = timerCircleGeometry(
+			const isTutorTarget = tutorTargetKey === node.fullString;
+			const timerFontSize = isTutorTarget ? TIMER_FONT_SIZE * 1.8 : TIMER_FONT_SIZE;
+			const { cx, cy, r: baseTimerRadius } = timerCircleGeometry(
 				node,
 				currentTime,
 				getTweenedValue,
 				scaleX,
 			);
+			const timerRadius = isTutorTarget ? baseTimerRadius * 1.8 : baseTimerRadius;
+
+			if (isTutorTarget) {
+				ctx.beginPath();
+				ctx.arc(cx, cy, timerRadius * 1.55, 0, 2 * Math.PI);
+				ctx.fillStyle = lightBackground
+					? `rgba(${r}, ${g}, ${b}, 0.12)`
+					: 'rgba(255, 255, 255, 0.12)';
+				ctx.fill();
+				ctx.closePath();
+			}
 
 			ctx.beginPath();
 			ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 1)`;
@@ -752,7 +805,7 @@ function TrieSnapshotVisualizer({
 			ctx.beginPath();
 			ctx.arc(cx, cy, timerRadius, 0, 2 * Math.PI * timerFrac);
 			ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${timerFrac * 0.9 + 0.1})`;
-			ctx.lineWidth = TIMER_STROKE_WIDTH;
+			ctx.lineWidth = isTutorTarget ? TIMER_STROKE_WIDTH * 2 : TIMER_STROKE_WIDTH;
 			ctx.stroke();
 			ctx.closePath();
 
@@ -799,6 +852,9 @@ function TrieSnapshotVisualizer({
 		showAll,
 		showBoxes,
 		showDebugStats,
+		targetPhrase,
+		tutorTargetKey,
+		useVisualTutor,
 	]);
 
 	return (
