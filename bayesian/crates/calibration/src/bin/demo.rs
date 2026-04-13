@@ -1,15 +1,13 @@
 use statrs::distribution::{Beta, ContinuousCDF};
-use calibration::optimize_online;
+use calibration::{optimize_online, VariationalParams};
 
-fn print_prior(prior_params: &[f64; 6], label: &str) {
-    let mu_m = prior_params[0];
-    let sigma_m = prior_params[1];
-    let mu_s = prior_params[2];
-    let sigma_s = prior_params[3];
-    let a = prior_params[4];
-    let b = prior_params[5];
-    let alpha = a.exp();
-    let beta = b.exp();
+fn print_prior(prior_params: &VariationalParams, label: &str) {
+    let mu_m = prior_params.mu_m;
+    let sigma_m = prior_params.sigma_m;
+    let mu_s = prior_params.mu_s;
+    let sigma_s = prior_params.sigma_s;
+    let alpha = prior_params.alpha();
+    let beta = prior_params.beta();
     
     let m_lower = mu_m - 1.96 * sigma_m;
     let m_upper = mu_m + 1.96 * sigma_m;
@@ -37,18 +35,14 @@ fn main() {
         (0.15, 1.2),
     ];
     
-    let mut current_prior = [
-        0.0, 0.080,
-        -5.5, 1.0,
-        2.5f64.ln(), 25.0f64.ln()
-    ];
+    let mut current_prior = VariationalParams::default_calibration();
     
     print_prior(&current_prior, "Initial Prior");
     println!("{:-<75}", "");
     
     for (idx, (x, p_val)) in dummy_data.iter().enumerate() {
         println!("Observation {}: x = {:.4}, P = {:.2}", idx + 1, x, p_val);
-        current_prior = calibration::optimize_online(*x, *p_val, &current_prior);
+        current_prior = optimize_online(*x, *p_val, &current_prior);
         
         print_prior(&current_prior, "Updated Prior");
         println!("{:-<75}", "");

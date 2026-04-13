@@ -5,7 +5,12 @@ import initBayesianWasm, {
 	initPanicHook,
 } from '../wasm_pkg/bayesian';
 import practicePhrasesText from './v3-practice-phrases.txt?raw';
-import CalibrationSettings, { type LikelihoodModel, type AutoCalibrationState } from '../components/CalibrationSettings';
+import CalibrationSettings, {
+	type LikelihoodModel,
+	type AutoCalibrationState,
+	type VariationalParams,
+	type CalibrationPair,
+} from '../components/CalibrationSettings';
 import Eye from '../components/Eye';
 import TrieSnapshotVisualizer, {
 	SCROLL_CENTERING_WEIGHT,
@@ -18,40 +23,37 @@ import type {
 } from '../components/TrieSnapshotVisualizer';
 import { jStat } from 'jstat';
 
-const OSCAR_DEFAULT: [number, number, number, number, number, number] = [
-	0.150011, 0.005779, -6.902864, 0.268396, 1.042674, 4.214543,
-];
-
-const INITIAL_VARIATIONAL_PRIOR = OSCAR_DEFAULT;
-const ORIGINAL_INITIAL_VARIATIONAL_PRIOR = [
-	0.0, 0.080,
-	-5.5, 1.0,
-	Math.log(2.5), Math.log(25.0)
-];
-void ORIGINAL_INITIAL_VARIATIONAL_PRIOR;
-const INITIAL_VARIATIONAL_PRIOR_JSON = JSON.stringify(INITIAL_VARIATIONAL_PRIOR);
+const DEFAULT_PERIOD = 1.1;
+const V3_USERNAME_STORAGE_KEY = 'dotter-v3-username';
 
 function predictiveStddev(muS: number, sigmaS: number, sigmaM: number): number {
 	return Math.sqrt(Math.exp(muS + (sigmaS ** 2) / 2) + sigmaM ** 2);
 }
 
+function variationalParamsToLikelihoodModel(params: VariationalParams, period: number): LikelihoodModel {
+	const alpha = Math.exp(params.log_alpha);
+	const beta = Math.exp(params.log_beta);
+	return {
+		mu_delay: params.mu_m,
+		stddev_delay: predictiveStddev(params.mu_s, params.sigma_s, params.sigma_m),
+		outliers: jStat.beta.inv(0.5, alpha, beta),
+		period,
+		intervals: {
+			mu_delay: [params.mu_m - 1.96 * params.sigma_m, params.mu_m + 1.96 * params.sigma_m],
+			stddev_delay: [
+				predictiveStddev(params.mu_s - 1.96 * params.sigma_s, params.sigma_s, params.sigma_m),
+				predictiveStddev(params.mu_s + 1.96 * params.sigma_s, params.sigma_s, params.sigma_m),
+			],
+			outliers: [jStat.beta.inv(0.025, alpha, beta), jStat.beta.inv(0.975, alpha, beta)],
+		},
+	};
+}
+
 const DEFAULT_LIKELIHOOD_MODEL: LikelihoodModel = {
-	mu_delay: INITIAL_VARIATIONAL_PRIOR[0],
-	stddev_delay: predictiveStddev(
-		INITIAL_VARIATIONAL_PRIOR[2],
-		INITIAL_VARIATIONAL_PRIOR[3],
-		INITIAL_VARIATIONAL_PRIOR[1],
-	),
-	outliers: jStat.beta.inv(0.5, Math.exp(INITIAL_VARIATIONAL_PRIOR[4]), Math.exp(INITIAL_VARIATIONAL_PRIOR[5])),
-	period: 1.1,
-	intervals: {
-		mu_delay: [INITIAL_VARIATIONAL_PRIOR[0] - 1.96 * INITIAL_VARIATIONAL_PRIOR[1], INITIAL_VARIATIONAL_PRIOR[0] + 1.96 * INITIAL_VARIATIONAL_PRIOR[1]],
-		stddev_delay: [
-			predictiveStddev(INITIAL_VARIATIONAL_PRIOR[2] - 1.96 * INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[1]),
-			predictiveStddev(INITIAL_VARIATIONAL_PRIOR[2] + 1.96 * INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[3], INITIAL_VARIATIONAL_PRIOR[1]),
-		],
-		outliers: [jStat.beta.inv(0.025, Math.exp(INITIAL_VARIATIONAL_PRIOR[4]), Math.exp(INITIAL_VARIATIONAL_PRIOR[5])), jStat.beta.inv(0.975, Math.exp(INITIAL_VARIATIONAL_PRIOR[4]), Math.exp(INITIAL_VARIATIONAL_PRIOR[5]))]
-	}
+	mu_delay: 0.0,
+	stddev_delay: 0.064,
+	outliers: 0.08,
+	period: DEFAULT_PERIOD,
 };
 const N_SKIP_PRACTICE_PHRASES = 6;
 const PRACTICE_PHRASES = practicePhrasesText
@@ -216,6 +218,14 @@ function readStoredBlinkToClick(): boolean {
 	}
 }
 
+function readStoredUsername(): string {
+	try {
+		return localStorage.getItem(V3_USERNAME_STORAGE_KEY) ?? '';
+	} catch {
+		return '';
+	}
+}
+
 function readStoredColorMode(): 'light' | 'dark' {
 	try {
 		const raw = localStorage.getItem(V3_THEME_STORAGE_KEY);
@@ -270,8 +280,11 @@ function V3Page() {
 	});
 	const [autoCalibrationLikelihoodModel, setAutoCalibrationLikelihoodModel] = useState<LikelihoodModel>(DEFAULT_LIKELIHOOD_MODEL);
 	const [calibrationSampleCount, setCalibrationSampleCount] = useState(0);
-	const [rawVariationalParams, setRawVariationalParams] = useState<[number, number, number, number, number, number] | null>(null);
-	const [recentCalibrationPairs, setRecentCalibrationPairs] = useState<Array<[number, number]>>([]);
+	const [rawVariationalParams, setRawVariationalParams] = useState<VariationalParams | null>(null);
+	const [recentCalibrationPairs, setRecentCalibrationPairs] = useState<CalibrationPair[]>([]);
+	const [usernameInput, setUsernameInput] = useState(() => readStoredUsername());
+	const [activeUsername, setActiveUsername] = useState<string | null>(null);
+	const [currentViBefore, setCurrentViBefore] = useState<VariationalParams | null>(null);
 	const [showPredictionLogPanel, setShowPredictionLogPanel] = useState(false);
 	const [showCalibrationDebugPanel, setShowCalibrationDebugPanel] = useState(false);
 	const sessionRef = useRef<BayesianSession | null>(null);
@@ -314,6 +327,14 @@ function V3Page() {
 			// ignore
 		}
 	}, [blinkToClick]);
+
+	useEffect(() => {
+		try {
+			localStorage.setItem(V3_USERNAME_STORAGE_KEY, usernameInput);
+		} catch {
+			// ignore
+		}
+	}, [usernameInput]);
 
 	useEffect(() => {
 		likelihoodModelRef.current = likelihoodModel;
@@ -434,7 +455,16 @@ function V3Page() {
 		})();
 	}, [enqueueSessionOp]);
 
-	const resetLocalSession = useCallback(async () => {
+	const applyViBeforeToUi = useCallback((viBefore: VariationalParams) => {
+		const nextModel = variationalParamsToLikelihoodModel(viBefore, likelihoodModelRef.current.period);
+		setCurrentViBefore(viBefore);
+		setCalibrationSampleCount(0);
+		setRawVariationalParams(viBefore);
+		setRecentCalibrationPairs([]);
+		setAutoCalibrationLikelihoodModel(nextModel);
+	}, []);
+
+	const startLocalString = useCallback(async (viBefore: VariationalParams) => {
 		const snapshotJson = await enqueueSessionOp(() => {
 			if (sessionTrappedRef.current || !sessionRef.current) {
 				try {
@@ -453,6 +483,7 @@ function V3Page() {
 				throw new Error('BayesianSession is not initialized after reset');
 			}
 			session.reset();
+			session.set_current_prior_json(JSON.stringify(viBefore));
 			try {
 				return session.expand_to_threshold();
 			} catch (err) {
@@ -460,19 +491,52 @@ function V3Page() {
 			}
 		});
 		applySnapshot(JSON.parse(snapshotJson) as ExpandedSnapshot, true);
+		applyViBeforeToUi(viBefore);
+	}, [applySnapshot, applyViBeforeToUi, enqueueSessionOp]);
+
+	const startSessionOnBackend = useCallback(async (username: string) => {
+		const ws = socketRef.current;
+		if (!ws || ws.readyState !== WebSocket.OPEN) {
+			throw new Error('WebSocket must be connected before starting a session');
+		}
+		const trimmed = username.trim();
+		if (!trimmed) {
+			throw new Error('Username must be non-empty');
+		}
+		setActiveUsername(null);
+		setPredictionLog([]);
+		setCurrentViBefore(null);
 		setCalibrationSampleCount(0);
 		setRawVariationalParams(null);
 		setRecentCalibrationPairs([]);
-	}, [applySnapshot, enqueueSessionOp]);
+		ws.send(JSON.stringify({ type: 'start_session', content: { username: trimmed } }));
+	}, []);
 
 	const resetBothSides = useCallback(async () => {
 		const ws = socketRef.current;
 		if (!ws || ws.readyState !== WebSocket.OPEN) {
 			throw new Error('WebSocket must be connected before resetting');
 		}
-		await resetLocalSession();
+		if (!currentViBefore) {
+			throw new Error('Session has no current calibration prior; start a session first');
+		}
+		const recalibrationJson = await enqueueSessionOp(() => {
+			const session = sessionRef.current;
+			if (!session) {
+				throw new Error('BayesianSession is not initialized');
+			}
+			try {
+				return session.recalibrate(JSON.stringify(currentViBefore));
+			} catch (err) {
+				throw new Error(formatStepError('recalibrate before reset failed', err));
+			}
+		});
+		const recalibrationResult = JSON.parse(recalibrationJson) as {
+			prior_params: VariationalParams;
+		};
+		await startLocalString(recalibrationResult.prior_params);
 		ws.send(JSON.stringify({ type: 'reset' }));
-	}, [resetLocalSession]);
+	}, [currentViBefore, enqueueSessionOp, startLocalString]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -556,14 +620,10 @@ function V3Page() {
 			setWsStatus('Connected');
 			setWarning(null);
 			setPredictionLog([]);
-			void (async () => {
-				try {
-					await resetLocalSession();
-					ws.send(JSON.stringify({ type: 'reset' }));
-				} catch (err) {
-					setError(err instanceof Error ? err.message : String(err));
-				}
-			})();
+			const trimmed = usernameInput.trim();
+			if (trimmed) {
+				ws.send(JSON.stringify({ type: 'start_session', content: { username: trimmed } }));
+			}
 		});
 
 		ws.addEventListener('close', () => {
@@ -580,10 +640,27 @@ function V3Page() {
 				const message = JSON.parse(event.data as string) as {
 					type: string;
 					content_json?: string;
-					content?: { message?: string };
+					content?: {
+						message?: string;
+						username?: string;
+						variational_params?: VariationalParams;
+					};
 				};
 
 				if (message.type === 'reset_ack') {
+					setError(null);
+					setPredictionLog([]);
+					return;
+				}
+
+				if (
+					message.type === 'session_started' &&
+					typeof message.content?.username === 'string' &&
+					message.content.variational_params
+				) {
+					setActiveUsername(message.content.username);
+					await startLocalString(message.content.variational_params);
+					ws.send(JSON.stringify({ type: 'request_next_prior' }));
 					setError(null);
 					setPredictionLog([]);
 					return;
@@ -632,12 +709,16 @@ function V3Page() {
 			socketRef.current = null;
 			ws.close();
 		};
-	}, [applySnapshot, enqueueSessionOp, recordPredictionLog, resetLocalSession, wasmReady]);
+	}, [applySnapshot, enqueueSessionOp, recordPredictionLog, startLocalString, usernameInput, wasmReady]);
 
 	const runLikelihoodPulse = useCallback(
 		(timeSeconds: number) => {
 			void (async () => {
 				if (!snapshot) {
+					return;
+				}
+				if (!currentViBefore) {
+					setError('Start a session before sending likelihood updates');
 					return;
 				}
 				if (sessionTrappedRef.current) {
@@ -706,44 +787,28 @@ function V3Page() {
 						throw new Error('BayesianSession is not initialized');
 					}
 					try {
-						return session.recalibrate(INITIAL_VARIATIONAL_PRIOR_JSON);
+						return session.recalibrate(JSON.stringify(currentViBefore));
 					} catch (err) {
 						throw new Error(formatStepError('recalibrate failed', err));
 					}
 				});
 				const recalibrationResult = JSON.parse(metricsJson) as {
-					prior_params: [number, number, number, number, number, number];
+					prior_params: VariationalParams;
 					used_likelihood_updates: number;
-					recent_pairs: Array<[number, number]>;
+					recent_pairs: CalibrationPair[];
 				};
 				const priorParams = recalibrationResult.prior_params;
-				const [mu_m, sigma_m, mu_s, sigma_s, a, b] = priorParams;
-				const alpha = Math.exp(a);
-				const beta = Math.exp(b);
 				setCalibrationSampleCount(recalibrationResult.used_likelihood_updates);
 				setRawVariationalParams(priorParams);
 				setRecentCalibrationPairs(recalibrationResult.recent_pairs);
-				setAutoCalibrationLikelihoodModel({
-					mu_delay: mu_m,
-					stddev_delay: predictiveStddev(mu_s, sigma_s, sigma_m),
-					outliers: jStat.beta.inv(0.5, alpha, beta),
-					period,
-					intervals: {
-						mu_delay: [mu_m - 1.96 * sigma_m, mu_m + 1.96 * sigma_m],
-						stddev_delay: [
-							predictiveStddev(mu_s - 1.96 * sigma_s, sigma_s, sigma_m),
-							predictiveStddev(mu_s + 1.96 * sigma_s, sigma_s, sigma_m),
-						],
-						outliers: [jStat.beta.inv(0.025, alpha, beta), jStat.beta.inv(0.975, alpha, beta)]
-					}
-				});
+				setAutoCalibrationLikelihoodModel(variationalParamsToLikelihoodModel(priorParams, period));
 				setLastBatchSize(Object.keys(nodes).length);
 				setError(null);
 			})().catch((err) => {
 				setError(err instanceof Error ? err.message : String(err));
 			});
 		},
-		[applySnapshot, enqueueSessionOp, snapshot, timers],
+		[applySnapshot, currentViBefore, enqueueSessionOp, snapshot, timers],
 	);
 
 	useEffect(() => {
@@ -849,6 +914,34 @@ function V3Page() {
 							)}
 						</div>
 						<div className="flex shrink-0 items-center gap-3">
+							<div className="flex items-center gap-2 text-xs text-slate-600 dark:text-gray-300">
+								<input
+									type="text"
+									value={usernameInput}
+									onChange={(e) => setUsernameInput(e.target.value)}
+									placeholder="username"
+									className="w-32 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800 dark:border-white/20 dark:bg-white/10 dark:text-white"
+								/>
+								<button
+									type="button"
+									onClick={() => {
+										void (async () => {
+											try {
+												await startSessionOnBackend(usernameInput);
+												setError(null);
+											} catch (err) {
+												setError(err instanceof Error ? err.message : String(err));
+											}
+										})();
+									}}
+									className="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-800 transition hover:bg-slate-50 dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20"
+								>
+									Start session
+								</button>
+								<span className="text-slate-500 dark:text-gray-400">
+									{activeUsername ? `active: ${activeUsername}` : 'no active session'}
+								</span>
+							</div>
 							<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
 								<input
 									type="checkbox"

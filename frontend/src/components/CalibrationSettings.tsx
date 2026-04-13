@@ -18,6 +18,20 @@ export type AutoCalibrationState = {
 	outliers: boolean;
 };
 
+export interface VariationalParams {
+	mu_m: number;
+	sigma_m: number;
+	mu_s: number;
+	sigma_s: number;
+	log_alpha: number;
+	log_beta: number;
+}
+
+export interface CalibrationPair {
+	x: number;
+	period: number;
+}
+
 interface CalibrationSettingsProps {
 	useAutomaticCalibration: AutoCalibrationState;
 	setUseAutomaticCalibration: React.Dispatch<React.SetStateAction<AutoCalibrationState>>;
@@ -25,8 +39,8 @@ interface CalibrationSettingsProps {
 	setLikelihoodModel: (updater: (prev: LikelihoodModel) => LikelihoodModel) => void;
 	autoCalibrationLikelihoodModel: LikelihoodModel;
 	calibrationSampleCount: number;
-	rawVariationalParams: [number, number, number, number, number, number] | null;
-	recentCalibrationPairs: Array<[number, number]>;
+	rawVariationalParams: VariationalParams | null;
+	recentCalibrationPairs: CalibrationPair[];
 	showCalibrationDebug: boolean;
 }
 
@@ -78,7 +92,12 @@ function CalibrationSettings({
 				<div className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs dark:border-white/8 dark:bg-black/20">
 					<div className="mb-1 font-semibold text-slate-700 dark:text-gray-200">Variational params</div>
 					<div className="font-mono text-slate-600 dark:text-gray-300">
-						<div>{`[${rawVariationalParams.map((v) => v.toFixed(6)).join(', ')}]`}</div>
+						<div>{`mu_m=${rawVariationalParams.mu_m.toFixed(6)}`}</div>
+						<div>{`sigma_m=${rawVariationalParams.sigma_m.toFixed(6)}`}</div>
+						<div>{`mu_s=${rawVariationalParams.mu_s.toFixed(6)}`}</div>
+						<div>{`sigma_s=${rawVariationalParams.sigma_s.toFixed(6)}`}</div>
+						<div>{`log_alpha=${rawVariationalParams.log_alpha.toFixed(6)}`}</div>
+						<div>{`log_beta=${rawVariationalParams.log_beta.toFixed(6)}`}</div>
 					</div>
 				</div>
 			)}
@@ -86,7 +105,7 @@ function CalibrationSettings({
 				<div className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs dark:border-white/8 dark:bg-black/20">
 					<div className="mb-1 font-semibold text-slate-700 dark:text-gray-200">Recent calibration pairs</div>
 					<div className="font-mono text-slate-600 dark:text-gray-300">
-						{recentCalibrationPairs.map(([x, period], idx) => (
+						{recentCalibrationPairs.map(({ x, period }, idx) => (
 							<div key={`${idx}-${x}-${period}`}>{`x=${x.toFixed(6)}, period=${period.toFixed(6)}`}</div>
 						))}
 					</div>

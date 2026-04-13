@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use bpe::TokenLexIndex;
+use calibration::VariationalParams;
 use trie::safe_float::{Float, into_f32};
 use trie::symbol::{Symbol, RADIX};
 use trie::core::{XBayes, RecalcType, RecalcResult};
@@ -113,17 +114,38 @@ struct NHash {
     phase: f64,
 }
 
+#[derive(Serialize)]
+struct CalibrationSample {
+    x: f64,
+    period: f64,
+}
+
+#[derive(Serialize)]
+struct RecalibrationResult {
+    prior_params: VariationalParams,
+    used_likelihood_updates: usize,
+    recent_pairs: Vec<CalibrationSample>,
+}
+
 #[cfg_attr(feature = "python", pyclass)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
     pub(crate) trie: XBayes,
     observability: Mutex<SessionObservability>,
     likelihood_history: Vec<LikelihoodUpdatePayload>,
-    current_prior: [f64; 6],
+    current_prior: VariationalParams,
 }
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
+    fn certain_prefix_nodes(&mut self) -> Vec<Hash> {
+        let threshold = (-0.0100503f32).into(); // ln(0.99)
+        match self.trie.recalc_to_frontier(trie::core::RecalcType::Expand { threshold }) {
+            trie::core::RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
+            _ => panic!("Expected Expanded"),
+        }
+    }
+
     fn push_json_payload(&self, json: String) -> usize {
         let mut observability = self.observability.lock().unwrap();
         let ix = observability.json_payloads.len();
@@ -146,11 +168,7 @@ impl BayesianSession {
             trie: XBayes::new(),
             observability: Mutex::new(SessionObservability::default()),
             likelihood_history: Vec::new(),
-            current_prior: [
-                0.0, 0.080,
-                -5.5, 1.0,
-                2.5f64.ln(), 25.0f64.ln()
-            ],
+            current_prior: VariationalParams::default_calibration(),
         };
         session.record_event("new", start, None);
         session
@@ -160,11 +178,7 @@ impl BayesianSession {
         let start = timing_start();
         self.trie = XBayes::new();
         self.likelihood_history.clear();
-        self.current_prior = [
-            0.0, 0.080,
-            -5.5, 1.0,
-            2.5f64.ln(), 25.0f64.ln()
-        ];
+        self.current_prior = VariationalParams::default_calibration();
         let mut observability = self.observability.lock().unwrap();
         observability.json_payloads.clear();
         observability.event_log.clear();
@@ -230,17 +244,14 @@ impl BayesianSession {
             self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1,
             "recalibrate called with unprocessed trie updates"
         );
-        
-        let threshold = (-0.0100503f32).into(); // ln(0.99)
-        let certain_prefix_nodes = match self.trie.recalc_to_frontier(trie::core::RecalcType::Expand { threshold }) {
-            trie::core::RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
-            _ => panic!("Expected Expanded"),
-        };
+
+        let certain_prefix_nodes = self.certain_prefix_nodes();
         assert!(!certain_prefix_nodes.is_empty(), "recalibrate expected at least the root node in certain_prefix_nodes");
-        
-        let mut prior: [f64; 6] = serde_json::from_str(&initial_prior_json).expect("Invalid initial prior JSON");
+
+        let mut prior: VariationalParams =
+            serde_json::from_str(&initial_prior_json).expect("Invalid initial prior JSON");
         let mut used_likelihood_updates = 0usize;
-        let mut recent_pairs: Vec<(f64, f64)> = Vec::new();
+        let mut recent_pairs: Vec<CalibrationSample> = Vec::new();
         
         if let Some(&last_certain) = certain_prefix_nodes.last() {
             for payload in &self.likelihood_history {
@@ -267,22 +278,16 @@ impl BayesianSession {
                     x = ((x % payload.period) + payload.period) % payload.period;
                     prior = calibration::optimize_online(x, payload.period, &prior);
                     used_likelihood_updates += 1;
-                    recent_pairs.push((x, payload.period));
+                    recent_pairs.push(CalibrationSample { x, period: payload.period });
                     if recent_pairs.len() > 5 {
                         recent_pairs.remove(0);
                     }
                 }
             }
         }
-        
+
         self.current_prior = prior;
-        
-        #[derive(Serialize)]
-        struct RecalibrationResult {
-            prior_params: [f64; 6],
-            used_likelihood_updates: usize,
-            recent_pairs: Vec<(f64, f64)>,
-        }
+
         let metrics_json = serde_json::to_string(&RecalibrationResult {
             prior_params: self.current_prior,
             used_likelihood_updates,
@@ -290,6 +295,51 @@ impl BayesianSession {
         }).unwrap();
         self.record_event("recalibrate", start, None);
         metrics_json
+    }
+
+    pub fn current_prior_json(&self) -> String {
+        let start = timing_start();
+        let json = serde_json::to_string(&self.current_prior).unwrap();
+        self.record_event("current_prior_json", start, None);
+        json
+    }
+
+    pub fn set_current_prior_json(&mut self, prior_json: String) {
+        let start = timing_start();
+        self.current_prior = serde_json::from_str(&prior_json).expect("Invalid variational prior JSON");
+        self.record_event("set_current_prior_json", start, None);
+    }
+
+    pub fn certain_prefix_string(&mut self) -> String {
+        let start = timing_start();
+        let certain_prefix_nodes = self.certain_prefix_nodes();
+        let target_hash = *certain_prefix_nodes
+            .last()
+            .expect("certain_prefix_string expected at least the root node");
+        let certain_set = certain_prefix_nodes.into_iter().collect::<std::collections::HashSet<_>>();
+        let mut current_hash = trie::ROOT_HASH;
+        let mut out = String::from(trie::ROOT_STRING);
+
+        loop {
+            if current_hash == target_hash {
+                break;
+            }
+            let mut next_child = None;
+            for slot in 0..RADIX {
+                let byte = Symbol::slot_to_byte(slot);
+                let child_hash = rh::append_right(current_hash, byte);
+                if certain_set.contains(&child_hash) {
+                    assert!(next_child.is_none(), "certain_prefix_string expected a unique certain child");
+                    next_child = Some((child_hash, byte));
+                }
+            }
+            let (child_hash, byte) = next_child.expect("certain_prefix_string could not descend to deepest certain node");
+            out.push(byte as char);
+            current_hash = child_hash;
+        }
+
+        self.record_event("certain_prefix_string", start, None);
+        out
     }
 
     #[cfg(feature = "tokentrie")]
@@ -549,6 +599,26 @@ impl BayesianSession {
     #[pyo3(name = "expand_to_threshold")]
     fn py_expand_to_threshold(&mut self) -> String {
         BayesianSession::expand_to_threshold(self)
+    }
+
+    #[pyo3(name = "recalibrate")]
+    fn py_recalibrate(&mut self, initial_prior_json: String) -> String {
+        BayesianSession::recalibrate(self, initial_prior_json)
+    }
+
+    #[pyo3(name = "current_prior_json")]
+    fn py_current_prior_json(&self) -> String {
+        BayesianSession::current_prior_json(self)
+    }
+
+    #[pyo3(name = "set_current_prior_json")]
+    fn py_set_current_prior_json(&mut self, prior_json: String) {
+        BayesianSession::set_current_prior_json(self, prior_json);
+    }
+
+    #[pyo3(name = "certain_prefix_string")]
+    fn py_certain_prefix_string(&mut self) -> String {
+        BayesianSession::certain_prefix_string(self)
     }
 
     #[pyo3(name = "lexicographic_tokens_json")]

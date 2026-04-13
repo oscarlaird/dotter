@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
@@ -26,8 +27,10 @@ HF_SPACE_MARKER = "▁"
 ROOT_MARKER = "^"
 STOP_MARKER = "$"
 PIDFILE_PATH = Path("/tmp/dotter_new_lm.pid")
+CALIBRATION_DB_PATH = Path(__file__).with_name("calibration.sqlite3")
 START_TS = time.monotonic()
 PRIORS_PER_LIKELIHOOD_CYCLE = 5
+VariationalParams = dict[str, float]
 
 
 def _log(msg: str) -> None:
@@ -254,6 +257,62 @@ class PriorModel:
         return _json_dumps(payload)
 
 
+class CalibrationStore:
+    def __init__(self, db_path: Path) -> None:
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS strings (
+                username TEXT NOT NULL,
+                time INTEGER NOT NULL,
+                string TEXT NOT NULL,
+                VI_before TEXT NOT NULL,
+                VI_after TEXT NOT NULL
+            )
+            """
+        )
+        self.conn.commit()
+
+    def latest_vi_after(self, username: str) -> VariationalParams | None:
+        row = self.conn.execute(
+            """
+            SELECT VI_after
+            FROM strings
+            WHERE username = ?
+            ORDER BY time DESC, rowid DESC
+            LIMIT 1
+            """,
+            (username,),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0])
+
+    def insert_string(
+        self,
+        *,
+        username: str,
+        time_ms: int,
+        string_value: str,
+        vi_before: VariationalParams,
+        vi_after: VariationalParams,
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO strings (username, time, string, VI_before, VI_after)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                username,
+                time_ms,
+                string_value,
+                _json_dumps(vi_before),
+                _json_dumps(vi_after),
+            ),
+        )
+        self.conn.commit()
+
+
 class BackendRuntime:
     def __init__(self) -> None:
         _log("BackendRuntime init start")
@@ -262,12 +321,41 @@ class BackendRuntime:
         lexicographic_tokens = json.loads(self.session.lexicographic_tokens_json())
         _log(f"loaded lexicographic tokens count={len(lexicographic_tokens)}")
         self.prior_model = PriorModel(lexicographic_tokens)
+        self.calibration_store = CalibrationStore(CALIBRATION_DB_PATH)
+        self.default_variational_params: VariationalParams = json.loads(self.session.current_prior_json())
+        self.current_username: str | None = None
+        self.current_vi_before: VariationalParams | None = None
         self.lock = asyncio.Lock()
         _log("BackendRuntime init complete")
 
     def reset(self) -> None:
         self.session.reset()
         self.prior_model.reset_cache()
+
+    def _require_started_session(self) -> tuple[str, VariationalParams]:
+        if self.current_username is None or self.current_vi_before is None:
+            raise RuntimeError("session must be started with a username before updates or resets")
+        return self.current_username, self.current_vi_before
+
+    def _set_session_prior(self, prior_params: VariationalParams) -> None:
+        self.session.set_current_prior_json(_json_dumps(prior_params))
+
+    def _finalize_current_string(self) -> VariationalParams | None:
+        if self.current_username is None or self.current_vi_before is None:
+            return None
+        username = self.current_username
+        vi_before = self.current_vi_before
+        recalibration_result = json.loads(self.session.recalibrate(_json_dumps(vi_before)))
+        vi_after = recalibration_result["prior_params"]
+        string_value = self.session.certain_prefix_string()
+        self.calibration_store.insert_string(
+            username=username,
+            time_ms=int(time.time() * 1000),
+            string_value=string_value,
+            vi_before=vi_before,
+            vi_after=vi_after,
+        )
+        return vi_after
 
     def _advance_one_prior(self) -> str:
         requested_prior_json = self.session.next_requested_prior()
@@ -276,15 +364,54 @@ class BackendRuntime:
         self.session.apply_updates()
         return prior_json
 
+    async def start_session(self, websocket: WebSocket, username: str) -> None:
+        async with self.lock:
+            username = username.strip()
+            if not username:
+                raise ValueError("username must be non-empty")
+            if self.current_username is not None and self.current_vi_before is not None:
+                self._finalize_current_string()
+            self.current_username = username
+            self.current_vi_before = (
+                self.calibration_store.latest_vi_after(username) or self.default_variational_params
+            )
+            self.reset()
+            self._set_session_prior(self.current_vi_before)
+            session_started = {
+                "type": "session_started",
+                "content": {
+                    "username": self.current_username,
+                    "variational_params": self.current_vi_before,
+                },
+            }
+        await websocket.send_text(_json_dumps(session_started))
+
     async def reset_and_emit_prior(self, websocket: WebSocket) -> None:
         async with self.lock:
+            self._require_started_session()
+            vi_after = self._finalize_current_string()
+            if vi_after is None:
+                raise RuntimeError("reset expected an active session to finalize")
+            self.current_vi_before = vi_after
             self.reset()
+            self._set_session_prior(self.current_vi_before)
             prior_json = self._advance_one_prior()
         await websocket.send_text(_json_dumps({"type": "reset_ack"}))
         await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
 
+    async def finalize_on_disconnect(self) -> None:
+        async with self.lock:
+            if self.current_username is None or self.current_vi_before is None:
+                return
+            vi_after = self._finalize_current_string()
+            self.current_vi_before = vi_after
+            self.current_username = None
+            self.current_vi_before = None
+            self.reset()
+
     async def emit_next_prior(self, websocket: WebSocket) -> None:
         async with self.lock:
+            self._require_started_session()
             prior_json = self._advance_one_prior()
         await websocket.send_text(_json_dumps({"type": "prior_update", "content_json": prior_json}))
 
@@ -294,6 +421,7 @@ class BackendRuntime:
         likelihood_json: str,
     ) -> None:
         async with self.lock:
+            self._require_started_session()
             self.session.receive_likelihood_update(likelihood_json)
             self.session.apply_updates()
             prior_jsons = [self._advance_one_prior() for _ in range(PRIORS_PER_LIKELIHOOD_CYCLE)]
@@ -315,14 +443,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             data = await websocket.receive_text()
             message = json.loads(data)
         except starlette.websockets.WebSocketDisconnect:
+            await runtime.finalize_on_disconnect()
             break
 
         msg_type = message.get("type")
+        if msg_type == "start_session":
+            username = message.get("content", {}).get("username")
+            if not isinstance(username, str):
+                raise TypeError("start_session requires content.username")
+            await runtime.start_session(websocket, username)
+            continue
+
         if msg_type == "reset":
             prompt = message.get("content", {}).get("prompt")
             if prompt not in (None, ""):
                 _log("received legacy reset prompt; ignoring because priors are trie-driven")
             await runtime.reset_and_emit_prior(websocket)
+            continue
+
+        if msg_type == "request_next_prior":
+            await runtime.emit_next_prior(websocket)
             continue
 
         if msg_type == "likelihood_update":

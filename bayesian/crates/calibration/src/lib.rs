@@ -1,6 +1,38 @@
 use num_dual::*;
 use nalgebra::{Const, OVector, SVector};
+use serde::{Deserialize, Serialize};
 use std::f64;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct VariationalParams {
+    pub mu_m: f64,
+    pub sigma_m: f64,
+    pub mu_s: f64,
+    pub sigma_s: f64,
+    pub log_alpha: f64,
+    pub log_beta: f64,
+}
+
+impl VariationalParams {
+    pub fn default_calibration() -> Self {
+        Self {
+            mu_m: 0.0,
+            sigma_m: 0.080,
+            mu_s: -5.5,
+            sigma_s: 1.0,
+            log_alpha: 2.5f64.ln(),
+            log_beta: 25.0f64.ln(),
+        }
+    }
+
+    pub fn alpha(self) -> f64 {
+        self.log_alpha.exp()
+    }
+
+    pub fn beta(self) -> f64 {
+        self.log_beta.exp()
+    }
+}
 
 trait CustomFuncs {
     fn my_lgamma(&self) -> Self;
@@ -46,7 +78,7 @@ fn logsumexp(slice: &[Dual2SVec64<6>]) -> Dual2SVec64<6> {
     sum_exp.ln() + max_val_dual
 }
 
-fn evaluate_j(params: OVector<Dual2SVec64<6>, Const<6>>, x: f64, p_val: f64, prior_params: &[f64; 6]) -> Dual2SVec64<6> {
+fn evaluate_j(params: OVector<Dual2SVec64<6>, Const<6>>, x: f64, p_val: f64, prior_params: &VariationalParams) -> Dual2SVec64<6> {
     let mu_m_q = params[0];
     let sigma_m_q = params[1].exp();
     let mu_s_q = params[2];
@@ -57,12 +89,12 @@ fn evaluate_j(params: OVector<Dual2SVec64<6>, Const<6>>, x: f64, p_val: f64, pri
     let alpha_q = a_q.exp();
     let beta_q = b_q.exp();
     
-    let mu_m_p = prior_params[0];
-    let sigma_m_p = prior_params[1];
-    let mu_s_p = prior_params[2];
-    let sigma_s_p = prior_params[3];
-    let alpha_p = prior_params[4].exp();
-    let beta_p = prior_params[5].exp();
+    let mu_m_p = prior_params.mu_m;
+    let sigma_m_p = prior_params.sigma_m;
+    let mu_s_p = prior_params.mu_s;
+    let sigma_s_p = prior_params.sigma_s;
+    let alpha_p = prior_params.alpha();
+    let beta_p = prior_params.beta();
 
     let e_log_rho = alpha_q.my_digamma() - (alpha_q + beta_q).my_digamma();
     let e_log_1_minus_rho = beta_q.my_digamma() - (alpha_q + beta_q).my_digamma();
@@ -120,14 +152,14 @@ fn evaluate_j(params: OVector<Dual2SVec64<6>, Const<6>>, x: f64, p_val: f64, pri
     likelihood_bound - kl_m - kl_s - kl_beta
 }
 
-pub fn optimize_online(x: f64, p_val: f64, prior_params: &[f64; 6]) -> [f64; 6] {
+pub fn optimize_online(x: f64, p_val: f64, prior_params: &VariationalParams) -> VariationalParams {
     let mut q_params = SVector::<f64, 6>::new(
-        prior_params[0],
-        prior_params[1].ln(),
-        prior_params[2],
-        prior_params[3].ln(),
-        prior_params[4],
-        prior_params[5]
+        prior_params.mu_m,
+        prior_params.sigma_m.ln(),
+        prior_params.mu_s,
+        prior_params.sigma_s.ln(),
+        prior_params.log_alpha,
+        prior_params.log_beta,
     );
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -136,7 +168,7 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &[f64; 6]) -> [f64; 6] 
     for i in 0..20 {
         #[cfg(not(target_arch = "wasm32"))]
         let start = std::time::Instant::now();
-        let (loss, grad, mut hessian) = num_dual::hessian(
+        let (loss, grad, hessian) = num_dual::hessian(
             |p| -evaluate_j(p, x, p_val, prior_params),
             q_params,
         );
@@ -159,12 +191,10 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &[f64; 6]) -> [f64; 6] 
         let mut alpha = 1.0;
         let c = 1e-4;
         let mut new_params = q_params;
-        let mut new_loss = 0.0;
         
         while alpha > 1e-6 {
             new_params = q_params + alpha * step;
-            let (nl, _, _) = num_dual::hessian(|p| -evaluate_j(p, x, p_val, prior_params), new_params);
-            new_loss = nl;
+            let (new_loss, _, _) = num_dual::hessian(|p| -evaluate_j(p, x, p_val, prior_params), new_params);
             if new_loss <= loss + c * alpha * grad.dot(&step) {
                 break;
             }
@@ -191,13 +221,12 @@ pub fn optimize_online(x: f64, p_val: f64, prior_params: &[f64; 6]) -> [f64; 6] 
         }
     }
     
-    [
-        q_params[0],
-        q_params[1].exp(),
-        q_params[2],
-        q_params[3].exp(),
-        q_params[4],
-        q_params[5],
-    ]
+    VariationalParams {
+        mu_m: q_params[0],
+        sigma_m: q_params[1].exp(),
+        mu_s: q_params[2],
+        sigma_s: q_params[3].exp(),
+        log_alpha: q_params[4],
+        log_beta: q_params[5],
+    }
 }
-
