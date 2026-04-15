@@ -8,20 +8,20 @@ interface LikelihoodPayloadNode {
 	phase: number;
 }
 
-function effectiveWeights(snapshot: ExpandedSnapshot, keys: readonly string[]): number[] {
+function selectionMasses(snapshot: ExpandedSnapshot, keys: readonly string[]): number[] {
 	const rootZ = snapshot['^']?.z ?? 0;
 	const expZ: Record<string, number> = {};
 	for (const key of keys) {
 		expZ[key] = Math.exp(snapshot[key].z - rootZ);
 	}
-	const linearZ = { ...expZ };
+	const residualMass = { ...expZ };
 	for (const key of keys) {
 		const parent = closestRenderedParentKey(key, keys);
 		if (parent) {
-			linearZ[parent] = Math.max(0, linearZ[parent] - expZ[key]);
+			residualMass[parent] = Math.max(0, residualMass[parent] - expZ[key]);
 		}
 	}
-	return keys.map((key) => Math.max(0, linearZ[key]));
+	return keys.map((key) => Math.max(0, residualMass[key]));
 }
 
 export function closestRenderedParentKey(key: string, keys: readonly string[]): string {
@@ -147,7 +147,7 @@ export function timersForSnapshot(
 	}
 
 	const sortedKeys = phaseOrderedKeys(snapshot, keysInSnapshot);
-	const weights = effectiveWeights(snapshot, sortedKeys);
+	const weights = selectionMasses(snapshot, sortedKeys);
 	const phasesJson = optimizeTimerPhases(
 		JSON.stringify(weights),
 		model.stddev_delay,

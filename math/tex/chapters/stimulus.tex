@@ -177,6 +177,26 @@ $I=25$ iterations of L-BFGS.
 \end{figure}
 
 
+\subsubsection{Selection\_Mass}
+The mixture weights $\pi_n$ are not the ordinary masses of the rendered nodes.
+Instead, they are what we will call the \texttt{selection\_mass} values, because
+they represent the user's probability of selecting those nodes.
+
+Let the ordinary mass of visible node $n$ be
+$$
+m_n = \exp(z_n - z_r),
+$$
+where $r$ is the rendered root. Let $C(n)$ be the set of directly rendered
+children of $n$, meaning those rendered descendants whose nearest rendered
+ancestor is $n$. Then the selection\_mass of $n$ is
+$$
+\pi_n = m_n - \sum_{c \in C(n)} m_c.
+$$
+Equivalently, $\pi_n$ is the residual mass that stops at $n$ rather than
+continuing into one of its directly rendered children. This is the correct
+weight for timer placement because it is exactly the user's probability of
+selecting node $n$.
+
 \section{User Parameters}
 \subsection{The Likelihood Model}
 % We identify two random variables in the user's behavior: $T$, the "scan time" required for
@@ -474,22 +494,35 @@ $$
 P(x | m, s, \rho) = \rho \frac{1}{P} + (1 - \rho)\sum_{k \in \{-1, 0, 1\}} \frac{1}{\sqrt{2 \pi s}} \exp\left( -\frac{(x - m - k P)^2}{2 s} \right)
 $$
 
-The regularization on the update is the distance between the prior and posterior variational distributions.
-This quantity, $D_{KL}(q || p)$, may be decomposed into three terms because we are making a mean-field approximation.
-Let $p$ represent the prior distribution over the parameters from the previous step, and $q$ represent our new variational distribution.
-The two normal KL divergence terms are
+Let $p$ denote the prior variational factors from the previous step and $q$ the updated factors.
+Under mean field, write the (differential) entropy of $q$ as $H(q)$ and the cross-entropy of $q$ relative to $p$ as $H_x(q,p)$, so that $D_{\mathrm{KL}}(q\Vert p) = H_x(q,p) - H(q)$.
+The online objective is
+\begin{equation*}
+    J(q) = \mathbb{E}_{q}\bigl[\log P(x \mid \theta)\bigr] + H(q) - \lambda\, H_x(q,p),
+\end{equation*}
+where $\lambda \in (0,1]$ is the \texttt{cross\_entropy\_discount} on the cross-entropy toward $p$.
+When $\lambda = 1$, this is $\mathbb{E}_q[\log P(x\mid\theta)] - D_{\mathrm{KL}}(q\Vert p)$; when $\lambda < 1$, only the alignment term $H_x(q,p)$ is relaxed, while the entropy bonus $H(q)$ remains at full strength.
+
+It is important to be explicit about what was wrong with an earlier shortcut: \emph{discounting the full $\mathrm{KL}(q\Vert p)$} incorrectly scales both the entropy and the cross-entropy pieces together.
+That weakens proper entropy regularization in the same proportion as forgetting, which is not what we want.
+\emph{Discounting only the cross-entropy term} $H_x(q,p)$ is the correct way to implement a forgetting heuristic while keeping full entropy regularization.
+
+Because the factors are independent,
 \begin{align*}
-    & \log \frac{\sigma_{m,p}}{\sigma_{m,q}} + \frac{\sigma_{m,q}^2 + (\mu_{m,q} - \mu_{m,p})^2}{2 \sigma_{m,p}^2} - \frac{1}{2} \\
-   +& \log \frac{\sigma_{s,p}}{\sigma_{s,q}} + \frac{\sigma_{s,q}^2 + (\mu_{s,q} - \mu_{s,p})^2}{2 \sigma_{s,p}^2} - \frac{1}{2}
+    H(q) &= H(q_m) + H(q_{\log s}) + H(q_\rho), \\
+    H_x(q,p) &= H_x(q_m, p_m) + H_x(q_{\log s}, p_{\log s}) + H_x(q_\rho, p_\rho).
 \end{align*}
-while the beta KL divergence term is (letting $\alpha_p = \exp(a_p)$ and $\beta_p = \exp(b_p)$, and similarly for $q$):
+For $m \sim \mathcal{N}(\mu_{m,q}, \sigma_{m,q})$ in the same standard-deviation parameterization as above (and identically for $\log s$ with $(\mu_{s,\cdot}, \sigma_{s,\cdot})$),
 \begin{align*}
-    \ln \frac{B(\alpha_p, \beta_p)}{B(\alpha_q, \beta_q)}
-    + (\alpha_q - \alpha_p) \psi(\alpha_q)
-    + (\beta_q - \beta_p) \psi(\beta_q)
-    - \left[(\alpha_q + \beta_q) - (\alpha_p + \beta_p)\right] \psi(\alpha_q + \beta_q)
+    H(q_m) &= \ln \sigma_{m,q} + \tfrac{1}{2}\ln(2\pi e), \\
+    H_x(q_m, p_m) &= \ln \sigma_{m,p} + \tfrac{1}{2}\ln(2\pi) + \frac{\sigma_{m,q}^2 + (\mu_{m,q} - \mu_{m,p})^2}{2\sigma_{m,p}^2}.
 \end{align*}
-where $B$ is the Beta function and $\psi$ is the digamma function.
+For $\rho \sim \mathrm{Beta}(\alpha_q, \beta_q)$ with $\alpha_q = \exp(a_q)$, $\beta_q = \exp(b_q)$ (and similarly $p$),
+\begin{align*}
+    H(q_\rho) &= \ln B(\alpha_q, \beta_q) - (\alpha_q - 1)\psi(\alpha_q) - (\beta_q - 1)\psi(\beta_q) + (\alpha_q + \beta_q - 2)\psi(\alpha_q + \beta_q), \\
+    H_x(q_\rho, p_\rho) &= \ln B(\alpha_p, \beta_p) - (\alpha_p - 1)\mathbb{E}_q[\ln \rho] - (\beta_p - 1)\mathbb{E}_q[\ln(1-\rho)],
+\end{align*}
+where $B$ is the Beta function, $\psi$ is the digamma function, and $\mathbb{E}_q[\ln \rho] = \psi(\alpha_q) - \psi(\alpha_q + \beta_q)$, $\mathbb{E}_q[\ln(1-\rho)] = \psi(\beta_q) - \psi(\alpha_q + \beta_q)$.
 
 We will approximate optimizing the log likelihood by optimizing
 a lower bound derived by using Jensen's inequality
@@ -507,21 +540,22 @@ We will use the facts that
     \mathbb{E}_q \left[ \log(1 - \rho) \right] &= \psi(\beta_q) - \psi(\alpha_q + \beta_q)
 \end{align*}
 
-Using the shorthand $\theta$ to denote the parameters $(m, \log s, \rho)$, our full variational objective $J$
-may be written as:
-\begin{align*}
-    J(q) &= \mathbb{E}_{\theta \sim q} \left[ \log P(x | \theta) \right] - D_{KL}(q || p)
-\end{align*}
-It is incorrect to use any kind of discount factor in the distance term (though in practice a small discount factor may be useful as an adaptation heuristic, allowing the estimate to forget old evidence slightly faster).
+Using the shorthand $\theta$ to denote the parameters $(m, \log s, \rho)$, combining the Jensen lower bound on $\mathbb{E}_q[\log P(x\mid\theta)]$ with the closed forms for $H(q)$ and $H_x(q,p)$ yields a tractable surrogate to maximize.
 
 To make the expected likelihood component concrete, we substitute our earlier derivations into the lower bound.
 We use the fact that if $\log s \sim \mathcal{N}(\mu_{s,q}, \sigma_{s,q})$, then $\mathbb{E}_q[s^{-1}] = \exp(-\mu_{s,q} + \sigma_{s,q}^2 / 2)$.
-Thus, the fully broken-down objective is given by:
+Thus, a fully broken-down lower bound on $J(q)$ is given by:
 \begin{align*}
     J(q) &\geq \log \left( \exp\left( \psi(\alpha_q) - \psi(\alpha_q + \beta_q) - \log P \right) + \sum_{k \in \{-1, 0, 1\}} \exp\left( L_k \right) \right) \\
-    &\quad - \left( \log \frac{\sigma_{m,p}}{\sigma_{m,q}} + \frac{\sigma_{m,q}^2 + (\mu_{m,q} - \mu_{m,p})^2}{2 \sigma_{m,p}^2} - \frac{1}{2} \right) \\
-    &\quad - \left( \log \frac{\sigma_{s,p}}{\sigma_{s,q}} + \frac{\sigma_{s,q}^2 + (\mu_{s,q} - \mu_{s,p})^2}{2 \sigma_{s,p}^2} - \frac{1}{2} \right) \\
-    &\quad - \left( \ln \frac{B(\alpha_p, \beta_p)}{B(\alpha_q, \beta_q)} + (\alpha_q - \alpha_p) \psi(\alpha_q) + (\beta_q - \beta_p) \psi(\beta_q) - \left(\alpha_q + \beta_q - \alpha_p - \beta_p\right) \psi(\alpha_q + \beta_q) \right)
+    &\quad + \ln \sigma_{m,q} + \tfrac{1}{2}\ln(2\pi e)
+    + \ln \sigma_{s,q} + \tfrac{1}{2}\ln(2\pi e) \\
+    &\quad + \ln B(\alpha_q, \beta_q) - (\alpha_q - 1)\psi(\alpha_q) - (\beta_q - 1)\psi(\beta_q) + (\alpha_q + \beta_q - 2)\psi(\alpha_q + \beta_q) \\
+    &\quad - \lambda \Biggl(
+        \ln \sigma_{m,p} + \tfrac{1}{2}\ln(2\pi) + \frac{\sigma_{m,q}^2 + (\mu_{m,q} - \mu_{m,p})^2}{2\sigma_{m,p}^2}
+        + \ln \sigma_{s,p} + \tfrac{1}{2}\ln(2\pi) + \frac{\sigma_{s,q}^2 + (\mu_{s,q} - \mu_{s,p})^2}{2\sigma_{s,p}^2} \\
+    &\qquad + \ln B(\alpha_p, \beta_p) - (\alpha_p - 1)\bigl(\psi(\alpha_q) - \psi(\alpha_q + \beta_q)\bigr)
+        - (\beta_p - 1)\bigl(\psi(\beta_q) - \psi(\alpha_q + \beta_q)\bigr)
+    \Biggr)
 \end{align*}
 where $L_k$ is the log-likelihood component for each wrapped normal mode:
 \begin{align*}

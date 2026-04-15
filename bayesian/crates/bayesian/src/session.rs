@@ -238,7 +238,7 @@ impl BayesianSession {
         self.record_event("receive_likelihood_update", start, Some(json_payload_ix));
     }
 
-    pub fn recalibrate(&mut self, initial_prior_json: String, use_discount_factor: bool) -> String {
+    pub fn recalibrate(&mut self, initial_prior_json: String, use_cross_entropy_discount: bool) -> String {
         let start = timing_start();
         assert!(
             self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1,
@@ -276,7 +276,12 @@ impl BayesianSession {
                     let phase = target.phase;
                     let mut x = payload.y - phase;
                     x = ((x % payload.period) + payload.period) % payload.period;
-                    prior = calibration::optimize_online(x, payload.period, &prior, use_discount_factor);
+                    prior = calibration::optimize_online(
+                        x,
+                        payload.period,
+                        &prior,
+                        use_cross_entropy_discount,
+                    );
                     used_likelihood_updates += 1;
                     recent_pairs.push(CalibrationSample { x, period: payload.period });
                     if recent_pairs.len() > 5 {
@@ -602,8 +607,8 @@ impl BayesianSession {
     }
 
     #[pyo3(name = "recalibrate")]
-    fn py_recalibrate(&mut self, initial_prior_json: String, use_discount_factor: bool) -> String {
-        BayesianSession::recalibrate(self, initial_prior_json, use_discount_factor)
+    fn py_recalibrate(&mut self, initial_prior_json: String, use_cross_entropy_discount: bool) -> String {
+        BayesianSession::recalibrate(self, initial_prior_json, use_cross_entropy_discount)
     }
 
     #[pyo3(name = "current_prior_json")]

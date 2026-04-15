@@ -41,8 +41,38 @@ export function useBackendSocket({
 	onErrorMessage,
 }: UseBackendSocketOptions) {
 	const socketRef = useRef<WebSocket | null>(null);
+	const autoStartUsernameRef = useRef(autoStartUsername);
+	const onOpenRef = useRef(onOpen);
+	const onResetAckRef = useRef(onResetAck);
+	const onSessionStartedRef = useRef(onSessionStarted);
+	const onPriorUpdateRef = useRef(onPriorUpdate);
+	const onErrorMessageRef = useRef(onErrorMessage);
 	const [wsStatus, setWsStatus] = useState('Connecting...');
 	const [warning, setWarning] = useState<string | null>(null);
+
+	useEffect(() => {
+		autoStartUsernameRef.current = autoStartUsername;
+	}, [autoStartUsername]);
+
+	useEffect(() => {
+		onOpenRef.current = onOpen;
+	}, [onOpen]);
+
+	useEffect(() => {
+		onResetAckRef.current = onResetAck;
+	}, [onResetAck]);
+
+	useEffect(() => {
+		onSessionStartedRef.current = onSessionStarted;
+	}, [onSessionStarted]);
+
+	useEffect(() => {
+		onPriorUpdateRef.current = onPriorUpdate;
+	}, [onPriorUpdate]);
+
+	useEffect(() => {
+		onErrorMessageRef.current = onErrorMessage;
+	}, [onErrorMessage]);
 
 	useEffect(() => {
 		if (!enabled) {
@@ -55,8 +85,8 @@ export function useBackendSocket({
 		ws.addEventListener('open', () => {
 			setWsStatus('Connected');
 			setWarning(null);
-			onOpen?.();
-			const trimmed = autoStartUsername.trim();
+			onOpenRef.current?.();
+			const trimmed = autoStartUsernameRef.current.trim();
 			if (trimmed) {
 				ws.send(JSON.stringify({ type: 'start_session', content: { username: trimmed } }));
 			}
@@ -77,7 +107,7 @@ export function useBackendSocket({
 				const message = JSON.parse(event.data as string) as BackendMessage;
 
 				if (message.type === 'reset_ack') {
-					await onResetAck?.();
+					await onResetAckRef.current?.();
 					return;
 				}
 
@@ -86,7 +116,7 @@ export function useBackendSocket({
 					typeof message.content?.username === 'string' &&
 					message.content.variational_params
 				) {
-					await onSessionStarted?.({
+					await onSessionStartedRef.current?.({
 						username: message.content.username,
 						variational_params: message.content.variational_params,
 					});
@@ -94,15 +124,15 @@ export function useBackendSocket({
 				}
 
 				if (message.type === 'prior_update' && typeof message.content_json === 'string') {
-					await onPriorUpdate?.(message.content_json);
+					await onPriorUpdateRef.current?.(message.content_json);
 					return;
 				}
 
 				if (message.type === 'error' && message.content?.message) {
-					onErrorMessage?.(message.content.message);
+					onErrorMessageRef.current?.(message.content.message);
 				}
 			})().catch((err) => {
-				onErrorMessage?.(err instanceof Error ? err.message : String(err));
+				onErrorMessageRef.current?.(err instanceof Error ? err.message : String(err));
 			});
 		});
 
@@ -110,7 +140,7 @@ export function useBackendSocket({
 			socketRef.current = null;
 			ws.close();
 		};
-	}, [autoStartUsername, enabled, onErrorMessage, onOpen, onPriorUpdate, onResetAck, onSessionStarted]);
+	}, [enabled]);
 
 	const startSession = useCallback((username: string): void => {
 		const trimmed = username.trim();

@@ -110,6 +110,7 @@ function MainPage() {
 	const [scrollAncestorKeys, setScrollAncestorKeys] = useState<string[]>([]);
 	const [firstForkDepth, setFirstForkDepth] = useState<number | null>(null);
 	const scrollOffsetRef = useRef(0);
+	const likelihoodModelRef = useRef(likelihoodModel);
 
 	const {
 		loading,
@@ -122,6 +123,7 @@ function MainPage() {
 		recalibrate,
 		downloadSessionDebugDump,
 	} = useBayesianSession();
+	const expansionThresholdRef = useRef(expansionThreshold);
 
 	const socketActionsRef = useRef<{ requestNextPrior: () => void } | null>(null);
 
@@ -141,7 +143,7 @@ function MainPage() {
 		(nextSnapshot: ExpandedSnapshot, resetAllTimers: boolean) => {
 			const nextScrollLayout = computeScrollLayoutState(
 				nextSnapshot,
-				expansionThreshold,
+				expansionThresholdRef.current,
 				scrollOffsetRef.current,
 			);
 			scrollOffsetRef.current = nextScrollLayout.scrollOffset;
@@ -153,14 +155,14 @@ function MainPage() {
 			setTimers((currentTimers) =>
 				timersForSnapshot(
 					nextSnapshot,
-					likelihoodModel,
+					likelihoodModelRef.current,
 					currentTimers,
 					resetAllTimers,
 					nextScrollLayout.renderedNodeKeys,
 				),
 			);
 		},
-		[expansionThreshold, likelihoodModel],
+		[],
 	);
 
 	const recordPredictionLog = useCallback((contentJson: string) => {
@@ -234,6 +236,14 @@ function MainPage() {
 	useEffect(() => {
 		socketActionsRef.current = { requestNextPrior };
 	}, [requestNextPrior]);
+
+	useEffect(() => {
+		likelihoodModelRef.current = likelihoodModel;
+	}, [likelihoodModel]);
+
+	useEffect(() => {
+		expansionThresholdRef.current = expansionThreshold;
+	}, [expansionThreshold]);
 
 	const startSessionOnBackend = useCallback(
 		(username: string) => {

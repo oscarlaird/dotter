@@ -34,11 +34,11 @@ impl VariationalParams {
     }
 }
 
-pub const DISCOUNTED_KL_FACTOR: f64 = 0.995;
+pub const CROSS_ENTROPY_DISCOUNT: f64 = 0.98;
 
-fn kl_discount(use_discount_factor: bool) -> f64 {
-    if use_discount_factor {
-        DISCOUNTED_KL_FACTOR
+fn cross_entropy_discount(use_cross_entropy_discount: bool) -> f64 {
+    if use_cross_entropy_discount {
+        CROSS_ENTROPY_DISCOUNT
     } else {
         1.0
     }
@@ -93,7 +93,7 @@ fn evaluate_j(
     x: f64,
     p_val: f64,
     prior_params: &VariationalParams,
-    use_discount_factor: bool,
+    use_cross_entropy_discount: bool,
 ) -> Dual2SVec64<6> {
     let mu_m_q = params[0];
     let sigma_m_q = params[1].exp();
@@ -135,45 +135,56 @@ fn evaluate_j(
     }
     
     let likelihood_bound = logsumexp(&terms);
-    
+
     let half = Dual2SVec64::from_re(0.5);
-    
+    let ln_2pi_e = Dual2SVec64::from_re((2.0 * f64::consts::PI * f64::consts::E).ln());
+    let ln_2pi = Dual2SVec64::from_re((2.0 * f64::consts::PI).ln());
+
     let sigma_m_p_dual = Dual2SVec64::from_re(sigma_m_p);
     let mu_m_p_dual = Dual2SVec64::from_re(mu_m_p);
-    let kl_m = (sigma_m_p_dual / sigma_m_q).ln() 
-             + (sigma_m_q * sigma_m_q + (mu_m_q - mu_m_p_dual) * (mu_m_q - mu_m_p_dual)) 
-               / (sigma_m_p_dual * sigma_m_p_dual * Dual2SVec64::from_re(2.0)) 
-             - half;
-             
+    let entropy_m = sigma_m_q.ln() + half * ln_2pi_e;
+    let cross_entropy_m = Dual2SVec64::from_re(sigma_m_p.ln())
+        + half * ln_2pi
+        + half * (sigma_m_q * sigma_m_q + (mu_m_q - mu_m_p_dual) * (mu_m_q - mu_m_p_dual))
+            / (sigma_m_p_dual * sigma_m_p_dual);
+
     let sigma_s_p_dual = Dual2SVec64::from_re(sigma_s_p);
     let mu_s_p_dual = Dual2SVec64::from_re(mu_s_p);
-    let kl_s = (sigma_s_p_dual / sigma_s_q).ln() 
-             + (sigma_s_q * sigma_s_q + (mu_s_q - mu_s_p_dual) * (mu_s_q - mu_s_p_dual)) 
-               / (sigma_s_p_dual * sigma_s_p_dual * Dual2SVec64::from_re(2.0)) 
-             - half;
-             
-    let log_b_p = statrs::function::gamma::ln_gamma(alpha_p) + statrs::function::gamma::ln_gamma(beta_p) - statrs::function::gamma::ln_gamma(alpha_p + beta_p);
+    let entropy_s = sigma_s_q.ln() + half * ln_2pi_e;
+    let cross_entropy_s = Dual2SVec64::from_re(sigma_s_p.ln())
+        + half * ln_2pi
+        + half * (sigma_s_q * sigma_s_q + (mu_s_q - mu_s_p_dual) * (mu_s_q - mu_s_p_dual))
+            / (sigma_s_p_dual * sigma_s_p_dual);
+
+    let log_b_p = statrs::function::gamma::ln_gamma(alpha_p)
+        + statrs::function::gamma::ln_gamma(beta_p)
+        - statrs::function::gamma::ln_gamma(alpha_p + beta_p);
     let log_b_p_dual = Dual2SVec64::from_re(log_b_p);
-    
+
     let log_b_q = alpha_q.my_lgamma() + beta_q.my_lgamma() - (alpha_q + beta_q).my_lgamma();
-    
     let alpha_p_dual = Dual2SVec64::from_re(alpha_p);
     let beta_p_dual = Dual2SVec64::from_re(beta_p);
-    
-    let kl_beta = log_b_p_dual - log_b_q 
-                + (alpha_q - alpha_p_dual) * alpha_q.my_digamma()
-                + (beta_q - beta_p_dual) * beta_q.my_digamma()
-                - (alpha_q + beta_q - alpha_p_dual - beta_p_dual) * (alpha_q + beta_q).my_digamma();
-                
-    let kl_weight = Dual2SVec64::from_re(kl_discount(use_discount_factor));
-    likelihood_bound - kl_weight * (kl_m + kl_s + kl_beta)
+    let entropy_beta = log_b_q
+        - (alpha_q - Dual2SVec64::from_re(1.0)) * alpha_q.my_digamma()
+        - (beta_q - Dual2SVec64::from_re(1.0)) * beta_q.my_digamma()
+        + (alpha_q + beta_q - Dual2SVec64::from_re(2.0)) * (alpha_q + beta_q).my_digamma();
+    let cross_entropy_beta = log_b_p_dual
+        - (alpha_p_dual - Dual2SVec64::from_re(1.0)) * e_log_rho
+        - (beta_p_dual - Dual2SVec64::from_re(1.0)) * e_log_1_minus_rho;
+
+    let entropy = entropy_m + entropy_s + entropy_beta;
+    let cross_entropy = cross_entropy_m + cross_entropy_s + cross_entropy_beta;
+
+    let cross_entropy_weight =
+        Dual2SVec64::from_re(cross_entropy_discount(use_cross_entropy_discount));
+    likelihood_bound + entropy - cross_entropy_weight * cross_entropy
 }
 
 pub fn optimize_online(
     x: f64,
     p_val: f64,
     prior_params: &VariationalParams,
-    use_discount_factor: bool,
+    use_cross_entropy_discount: bool,
 ) -> VariationalParams {
     let mut q_params = SVector::<f64, 6>::new(
         prior_params.mu_m,
@@ -191,7 +202,7 @@ pub fn optimize_online(
         #[cfg(not(target_arch = "wasm32"))]
         let start = std::time::Instant::now();
         let (loss, grad, hessian) = num_dual::hessian(
-            |p| -evaluate_j(p, x, p_val, prior_params, use_discount_factor),
+            |p| -evaluate_j(p, x, p_val, prior_params, use_cross_entropy_discount),
             q_params,
         );
         #[cfg(not(target_arch = "wasm32"))]
@@ -217,7 +228,7 @@ pub fn optimize_online(
         while alpha > 1e-6 {
             new_params = q_params + alpha * step;
             let (new_loss, _, _) = num_dual::hessian(
-                |p| -evaluate_j(p, x, p_val, prior_params, use_discount_factor),
+                |p| -evaluate_j(p, x, p_val, prior_params, use_cross_entropy_discount),
                 new_params,
             );
             if new_loss <= loss + c * alpha * grad.dot(&step) {
