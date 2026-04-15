@@ -53,61 +53,65 @@ pub struct OptimizationResult {
     pub loss: f64,
 }
 
-#[derive(Debug, Clone)]
+// Internal workspace using f32 and column-major blocked layout.
+// Buffers with "block" in the name are laid out [j * phase_count + i]
+// so that the inner loops over phases are contiguous.
 struct Workspace {
-    weights: Vec<f64>,
-    alpha: Vec<f64>,
-    base_mag2: Vec<f64>,
-    block_size: usize,
-    theta: Vec<f64>,
-    cos_theta: Vec<f64>,
-    sin_theta: Vec<f64>,
-    cos_base: Vec<f64>,
-    sin_base: Vec<f64>,
-    block_cos: Vec<f64>,
-    block_sin: Vec<f64>,
-    cos_batch: Vec<f64>,
-    sin_batch: Vec<f64>,
-    a: Vec<f64>,
-    b: Vec<f64>,
-    grad: Vec<f64>,
-    mode_tmp1: Vec<f64>,
-    mode_tmp2: Vec<f64>,
+    weights: Vec<f32>,
+    alpha: Vec<f32>,
+    base_mag2: Vec<f32>,
+    fourier_modes: usize,
+    phase_count: usize,
+    cos_theta: Vec<f32>,
+    sin_theta: Vec<f32>,
+    block_cos: Vec<f32>, // [j * phase_count + i]
+    block_sin: Vec<f32>,
+    cos_base: Vec<f32>,
+    sin_base: Vec<f32>,
+    cos_batch: Vec<f32>, // [j * phase_count + i]
+    sin_batch: Vec<f32>,
+    a: Vec<f32>,
+    b: Vec<f32>,
+    grad_f32: Vec<f32>,
+    mode1: Vec<f32>,
+    mode2: Vec<f32>,
 }
 
 impl Workspace {
     fn new(params: &TimerSpacingParams, phase_count: usize) -> Self {
-        let block_size = params.block_size.min(params.fourier_modes.max(1));
-        let mut alpha = vec![0.0; params.fourier_modes + 1];
-        let mut base_mag2 = vec![0.0; params.fourier_modes + 1];
-        for n in 0..=params.fourier_modes {
+        let b8 = DEFAULT_BLOCK_SIZE;
+        let f = params.fourier_modes;
+
+        let mut alpha = vec![0.0f32; f + 1];
+        let mut base_mag2 = vec![0.0f32; f + 1];
+        for n in 0..=f {
             let n_f = n as f64;
-            alpha[n] = 2.0 * std::f64::consts::PI * n_f / params.period;
+            alpha[n] = (2.0 * std::f64::consts::PI * n_f / params.period) as f32;
             base_mag2[n] = (-2.0 * params.period.ln()
                 - 4.0 * std::f64::consts::PI.powi(2) * n_f.powi(2) * params.sigma.powi(2)
                     / params.period.powi(2))
-            .exp();
+            .exp() as f32;
         }
 
         Self {
-            weights: params.weights.clone(),
+            weights: params.weights.iter().map(|&x| x as f32).collect(),
             alpha,
             base_mag2,
-            block_size,
-            theta: vec![0.0; phase_count],
+            fourier_modes: f,
+            phase_count,
             cos_theta: vec![0.0; phase_count],
             sin_theta: vec![0.0; phase_count],
+            block_cos: vec![0.0; b8 * phase_count],
+            block_sin: vec![0.0; b8 * phase_count],
             cos_base: vec![0.0; phase_count],
             sin_base: vec![0.0; phase_count],
-            block_cos: vec![0.0; phase_count * block_size],
-            block_sin: vec![0.0; phase_count * block_size],
-            cos_batch: vec![0.0; phase_count * block_size],
-            sin_batch: vec![0.0; phase_count * block_size],
-            a: vec![0.0; params.fourier_modes + 1],
-            b: vec![0.0; params.fourier_modes + 1],
-            grad: vec![0.0; phase_count],
-            mode_tmp1: vec![0.0; block_size],
-            mode_tmp2: vec![0.0; block_size],
+            cos_batch: vec![0.0; b8 * phase_count],
+            sin_batch: vec![0.0; b8 * phase_count],
+            a: vec![0.0; f + 1],
+            b: vec![0.0; f + 1],
+            grad_f32: vec![0.0; phase_count],
+            mode1: vec![0.0; b8],
+            mode2: vec![0.0; b8],
         }
     }
 }
@@ -117,63 +121,32 @@ pub fn constant_phases(count: usize, period: f64) -> Vec<f64> {
     (0..count).map(|i| (i as f64 + 0.5) * step).collect()
 }
 
-fn dot(lhs: &[f64], rhs: &[f64]) -> f64 {
-    lhs.iter().zip(rhs.iter()).map(|(a, b)| a * b).sum()
-}
+// Fills workspace.grad_f32 and returns the loss.
+// Uses f32 internals, sin_cos, column-major blocked layout, B=8 unrolled dot.
+fn eval_inplace(phases: &[f64], workspace: &mut Workspace) -> f64 {
+    let k = workspace.phase_count;
+    // alpha[1] = 2π / P, so we can use it as the per-phase angle scale
+    let phase_scale = workspace.alpha[1];
 
-fn prepare_block_trig(workspace: &mut Workspace, phases: &[f64], period: f64) {
-    let n = phases.len();
-    for i in 0..n {
-        workspace.theta[i] = 2.0 * std::f64::consts::PI * phases[i] / period;
-        workspace.cos_theta[i] = workspace.theta[i].cos();
-        workspace.sin_theta[i] = workspace.theta[i].sin();
+    for i in 0..k {
+        let (s, c) = (phase_scale * phases[i] as f32).sin_cos();
+        workspace.cos_theta[i] = c;
+        workspace.sin_theta[i] = s;
+        workspace.block_cos[i] = c; // m=0 column
+        workspace.block_sin[i] = s;
     }
 
-    if workspace.block_size == 0 {
-        return;
-    }
-
-    for i in 0..n {
-        workspace.block_cos[i * workspace.block_size] = workspace.cos_theta[i];
-        workspace.block_sin[i * workspace.block_size] = workspace.sin_theta[i];
-    }
-
-    for m in 1..workspace.block_size {
-        for i in 0..n {
-            let prev = i * workspace.block_size + (m - 1);
-            let idx = i * workspace.block_size + m;
-            let prev_cos = workspace.block_cos[prev];
-            let prev_sin = workspace.block_sin[prev];
-            let cos_theta = workspace.cos_theta[i];
-            let sin_theta = workspace.sin_theta[i];
-            workspace.block_cos[idx] = prev_cos * cos_theta - prev_sin * sin_theta;
-            workspace.block_sin[idx] = prev_sin * cos_theta + prev_cos * sin_theta;
+    // Build the block trig table in column-major order
+    for m in 1..DEFAULT_BLOCK_SIZE {
+        let prev_off = (m - 1) * k;
+        let off = m * k;
+        for i in 0..k {
+            let pc = workspace.block_cos[prev_off + i];
+            let ps = workspace.block_sin[prev_off + i];
+            workspace.block_cos[off + i] = pc * workspace.cos_theta[i] - ps * workspace.sin_theta[i];
+            workspace.block_sin[off + i] = ps * workspace.cos_theta[i] + pc * workspace.sin_theta[i];
         }
     }
-}
-
-fn build_batches(workspace: &mut Workspace, width: usize) {
-    let n = workspace.theta.len();
-    for i in 0..n {
-        let cos_base = workspace.cos_base[i];
-        let sin_base = workspace.sin_base[i];
-        let row = i * workspace.block_size;
-        for j in 0..width {
-            let cos_f = workspace.block_cos[row + j];
-            let sin_f = workspace.block_sin[row + j];
-            workspace.cos_batch[row + j] = cos_base * cos_f - sin_base * sin_f;
-            workspace.sin_batch[row + j] = sin_base * cos_f + cos_base * sin_f;
-        }
-    }
-}
-
-fn loss_and_grad_for_phases_inplace(
-    phases: &[f64],
-    params: &TimerSpacingParams,
-    workspace: &mut Workspace,
-) -> f64 {
-    let phase_count = phases.len();
-    prepare_block_trig(workspace, phases, params.period);
 
     workspace.a[0] = workspace.weights.iter().sum();
     workspace.b[0] = 0.0;
@@ -181,61 +154,83 @@ fn loss_and_grad_for_phases_inplace(
 
     workspace.cos_base.fill(1.0);
     workspace.sin_base.fill(0.0);
-    workspace.grad.fill(0.0);
+    workspace.grad_f32.fill(0.0);
 
-    for start in (1..=params.fourier_modes).step_by(params.block_size) {
-        let stop = (start + params.block_size).min(params.fourier_modes + 1);
-        let width = stop - start;
-        build_batches(workspace, width);
-
-        for j in 0..width {
-            let mut a_val = 0.0;
-            let mut b_val = 0.0;
-            for i in 0..phase_count {
-                let idx = i * workspace.block_size + j;
-                a_val += workspace.weights[i] * workspace.cos_batch[idx];
-                b_val += workspace.weights[i] * workspace.sin_batch[idx];
+    for start in (1..=workspace.fourier_modes).step_by(DEFAULT_BLOCK_SIZE) {
+        // Build batches in col-major order and fuse a/b accumulation
+        let stop = (start + DEFAULT_BLOCK_SIZE).min(workspace.fourier_modes + 1);
+        let width_pre = stop - start;
+        for j in 0..width_pre {
+            let off = j * k;
+            let mut av = 0.0f32;
+            let mut bv = 0.0f32;
+            for i in 0..k {
+                let cf = workspace.block_cos[off + i];
+                let sf = workspace.block_sin[off + i];
+                let c = workspace.cos_base[i] * cf - workspace.sin_base[i] * sf;
+                let s = workspace.sin_base[i] * cf + workspace.cos_base[i] * sf;
+                workspace.cos_batch[off + i] = c;
+                workspace.sin_batch[off + i] = s;
+                av += workspace.weights[i] * c;
+                bv += workspace.weights[i] * s;
             }
-            workspace.a[start + j] = a_val;
-            workspace.b[start + j] = b_val;
+            let idxm = start + j;
+            workspace.a[idxm] = av;
+            workspace.b[idxm] = bv;
+            loss += 2.0 * workspace.base_mag2[idxm] * (av * av + bv * bv);
+            workspace.mode1[j] = 4.0 * workspace.alpha[idxm] * workspace.base_mag2[idxm] * bv;
+            workspace.mode2[j] = 4.0 * workspace.alpha[idxm] * workspace.base_mag2[idxm] * av;
         }
 
-        let mut block_loss = 0.0;
-        for j in 0..width {
-            let idx = start + j;
-            block_loss += workspace.base_mag2[idx]
-                * (workspace.a[idx] * workspace.a[idx] + workspace.b[idx] * workspace.b[idx]);
+        // Gradient accumulation: unrolled for full B=8 blocks, generic fallback otherwise
+        let width = (workspace.fourier_modes + 1).saturating_sub(start).min(DEFAULT_BLOCK_SIZE);
+        if width == DEFAULT_BLOCK_SIZE {
+            for i in 0..k {
+                let acc1 = workspace.cos_batch[i] * workspace.mode1[0]
+                    + workspace.cos_batch[k + i] * workspace.mode1[1]
+                    + workspace.cos_batch[2 * k + i] * workspace.mode1[2]
+                    + workspace.cos_batch[3 * k + i] * workspace.mode1[3]
+                    + workspace.cos_batch[4 * k + i] * workspace.mode1[4]
+                    + workspace.cos_batch[5 * k + i] * workspace.mode1[5]
+                    + workspace.cos_batch[6 * k + i] * workspace.mode1[6]
+                    + workspace.cos_batch[7 * k + i] * workspace.mode1[7];
+                let acc2 = workspace.sin_batch[i] * workspace.mode2[0]
+                    + workspace.sin_batch[k + i] * workspace.mode2[1]
+                    + workspace.sin_batch[2 * k + i] * workspace.mode2[2]
+                    + workspace.sin_batch[3 * k + i] * workspace.mode2[3]
+                    + workspace.sin_batch[4 * k + i] * workspace.mode2[4]
+                    + workspace.sin_batch[5 * k + i] * workspace.mode2[5]
+                    + workspace.sin_batch[6 * k + i] * workspace.mode2[6]
+                    + workspace.sin_batch[7 * k + i] * workspace.mode2[7];
+                workspace.grad_f32[i] += workspace.weights[i] * (acc1 - acc2);
+            }
+        } else {
+            for i in 0..k {
+                let mut acc1 = 0.0f32;
+                let mut acc2 = 0.0f32;
+                for j in 0..width {
+                    acc1 += workspace.cos_batch[j * k + i] * workspace.mode1[j];
+                    acc2 += workspace.sin_batch[j * k + i] * workspace.mode2[j];
+                }
+                workspace.grad_f32[i] += workspace.weights[i] * (acc1 - acc2);
+            }
         }
-        loss += 2.0 * block_loss;
 
-        for j in 0..width {
-            let idx = start + j;
-            workspace.mode_tmp1[j] = 4.0 * workspace.alpha[idx] * workspace.base_mag2[idx] * workspace.b[idx];
-            workspace.mode_tmp2[j] = 4.0 * workspace.alpha[idx] * workspace.base_mag2[idx] * workspace.a[idx];
-        }
-
-        for i in 0..phase_count {
-            let row = i * workspace.block_size;
-            let cos_vec = &workspace.cos_batch[row..row + width];
-            let sin_vec = &workspace.sin_batch[row..row + width];
-            workspace.grad[i] += workspace.weights[i]
-                * (dot(cos_vec, &workspace.mode_tmp1[..width]) - dot(sin_vec, &workspace.mode_tmp2[..width]));
-        }
-
-        for i in 0..phase_count {
-            let row = i * workspace.block_size;
-            workspace.cos_base[i] = workspace.cos_batch[row + width - 1];
-            workspace.sin_base[i] = workspace.sin_batch[row + width - 1];
+        let last_off = (width - 1) * k;
+        for i in 0..k {
+            workspace.cos_base[i] = workspace.cos_batch[last_off + i];
+            workspace.sin_base[i] = workspace.sin_batch[last_off + i];
         }
     }
 
-    loss
+    loss as f64
 }
 
 pub fn loss_and_grad(phases: &[f64], params: &TimerSpacingParams) -> (f64, Vec<f64>) {
     let mut workspace = Workspace::new(params, phases.len());
-    let loss = loss_and_grad_for_phases_inplace(phases, params, &mut workspace);
-    (loss, workspace.grad.clone())
+    let loss = eval_inplace(phases, &mut workspace);
+    let grad = workspace.grad_f32.iter().map(|&x| x as f64).collect();
+    (loss, grad)
 }
 
 pub fn j(phases: &[f64], params: &TimerSpacingParams) -> f64 {
@@ -290,8 +285,10 @@ pub fn optimize(
         }
 
         if (TASK_FG..=TASK_FG_END).contains(&task) {
-            f = loss_and_grad_for_phases_inplace(&x, params, &mut workspace);
-            g.copy_from_slice(&workspace.grad);
+            f = eval_inplace(&x, &mut workspace);
+            for (dst, src) in g.iter_mut().zip(workspace.grad_f32.iter()) {
+                *dst = *src as f64;
+            }
         } else if task == TASK_NEW_X {
             if isave[29] >= max_iter as i64 {
                 break;

@@ -473,6 +473,108 @@ fn optimize_col_major(weights: &[f64], initial_phases: &[f64]) -> (Vec<f64>, f64
     })
 }
 
+fn optimize_combined(weights: &[f64], initial_phases: &[f64]) -> (Vec<f64>, f64) {
+    let (alpha64, base64) = precompute_base();
+    let alpha: Vec<f32> = alpha64.iter().map(|x| *x as f32).collect();
+    let base_mag2: Vec<f32> = base64.iter().map(|x| *x as f32).collect();
+    let weights32: Vec<f32> = weights.iter().map(|x| *x as f32).collect();
+    const BLOCK: usize = 8;
+    let k = weights.len();
+    let mut cos_theta = vec![0f32; k];
+    let mut sin_theta = vec![0f32; k];
+    let mut block_cos = vec![0f32; BLOCK * k]; // col-major [j * k + i]
+    let mut block_sin = vec![0f32; BLOCK * k];
+    let mut cos_base = vec![0f32; k];
+    let mut sin_base = vec![0f32; k];
+    let mut cos_batch = vec![0f32; BLOCK * k]; // col-major [j * k + i]
+    let mut sin_batch = vec![0f32; BLOCK * k];
+    let mut a = vec![0f32; F + 1];
+    let mut b = vec![0f32; F + 1];
+    let mut grad = vec![0f32; k];
+    let mut mode1 = [0f32; BLOCK];
+    let mut mode2 = [0f32; BLOCK];
+
+    optimize_with_eval(initial_phases, MAX_ITER, |x, gx| {
+        let scale = 2.0f32 * std::f32::consts::PI / P as f32;
+        for i in 0..k {
+            let (s, c) = (scale * x[i] as f32).sin_cos();
+            cos_theta[i] = c;
+            sin_theta[i] = s;
+            block_cos[i] = c; // m=0 column
+            block_sin[i] = s;
+        }
+        for m in 1..BLOCK {
+            let prev_off = (m - 1) * k;
+            let off = m * k;
+            for i in 0..k {
+                let pc = block_cos[prev_off + i];
+                let ps = block_sin[prev_off + i];
+                block_cos[off + i] = pc * cos_theta[i] - ps * sin_theta[i];
+                block_sin[off + i] = ps * cos_theta[i] + pc * sin_theta[i];
+            }
+        }
+        a[0] = weights32.iter().sum();
+        b[0] = 0.0;
+        let mut loss = base_mag2[0] * a[0] * a[0];
+        cos_base.fill(1.0);
+        sin_base.fill(0.0);
+        grad.fill(0.0);
+        for start in (1..=F).step_by(BLOCK) {
+            // build batches col-major, fusing batch + a/b accumulation
+            for j in 0..BLOCK {
+                let off = j * k;
+                let mut av = 0.0f32;
+                let mut bv = 0.0f32;
+                for i in 0..k {
+                    let cf = block_cos[off + i];
+                    let sf = block_sin[off + i];
+                    let c = cos_base[i] * cf - sin_base[i] * sf;
+                    let s = sin_base[i] * cf + cos_base[i] * sf;
+                    cos_batch[off + i] = c;
+                    sin_batch[off + i] = s;
+                    av += weights32[i] * c;
+                    bv += weights32[i] * s;
+                }
+                let idxm = start + j;
+                a[idxm] = av;
+                b[idxm] = bv;
+                loss += 2.0 * base_mag2[idxm] * (av * av + bv * bv);
+                mode1[j] = 4.0 * alpha[idxm] * base_mag2[idxm] * bv;
+                mode2[j] = 4.0 * alpha[idxm] * base_mag2[idxm] * av;
+            }
+            // unrolled B=8 grad accumulation
+            for i in 0..k {
+                let acc1 = cos_batch[i] * mode1[0]
+                    + cos_batch[k + i] * mode1[1]
+                    + cos_batch[2 * k + i] * mode1[2]
+                    + cos_batch[3 * k + i] * mode1[3]
+                    + cos_batch[4 * k + i] * mode1[4]
+                    + cos_batch[5 * k + i] * mode1[5]
+                    + cos_batch[6 * k + i] * mode1[6]
+                    + cos_batch[7 * k + i] * mode1[7];
+                let acc2 = sin_batch[i] * mode2[0]
+                    + sin_batch[k + i] * mode2[1]
+                    + sin_batch[2 * k + i] * mode2[2]
+                    + sin_batch[3 * k + i] * mode2[3]
+                    + sin_batch[4 * k + i] * mode2[4]
+                    + sin_batch[5 * k + i] * mode2[5]
+                    + sin_batch[6 * k + i] * mode2[6]
+                    + sin_batch[7 * k + i] * mode2[7];
+                grad[i] += weights32[i] * (acc1 - acc2);
+            }
+            let last_off = 7 * k;
+            for i in 0..k {
+                cos_base[i] = cos_batch[last_off + i];
+                sin_base[i] = sin_batch[last_off + i];
+            }
+        }
+        for (dst, src) in gx.iter_mut().zip(grad.iter()) {
+            *dst = *src as f64;
+        }
+        loss as f64
+    })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cases = sample_cases();
 
@@ -531,6 +633,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         col_losses.push(loss);
     }
 
+    let mut combined_times = Vec::new();
+    let mut combined_losses = Vec::new();
+    let _ = optimize_combined(&cases[0].weights, &cases[0].initial_phases); // warmup
+    for case in &cases {
+        let start = std::time::Instant::now();
+        let (_, loss) = optimize_combined(&case.weights, &case.initial_phases);
+        combined_times.push(start.elapsed().as_secs_f64());
+        combined_losses.push(loss);
+    }
+
     let mean = |xs: &[f64]| xs.iter().sum::<f64>() / xs.len() as f64;
     println!("ABLATION K={K} F={F} sigma={SIGMA} max_iter={MAX_ITER}");
     println!("baseline_f64_cached: {:.6}s loss={:.9}", mean(&baseline_times), mean(&baseline_losses));
@@ -557,6 +669,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         mean(&col_times),
         mean(&col_losses),
         mean(&col_losses) - mean(&baseline_losses),
+    );
+    println!(
+        "combined_all_four:   {:.6}s loss={:.9} gap={:.3e}  speedup={:.2}x",
+        mean(&combined_times),
+        mean(&combined_losses),
+        mean(&combined_losses) - mean(&baseline_losses),
+        mean(&baseline_times) / mean(&combined_times),
     );
     Ok(())
 }
