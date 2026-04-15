@@ -3,6 +3,7 @@ import math
 import pathlib
 
 import matplotlib
+import numpy as np
 import torch
 
 matplotlib.use("Agg")
@@ -10,7 +11,7 @@ import matplotlib.pyplot as plt
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
-TPLACE_PATH = ROOT / "tplace.py"
+TPLACE_PATH = ROOT / "tplace_scipy_fast.py"
 OUTPUT_PATH = ROOT / "tplace_sample_plot.png"
 
 spec = importlib.util.spec_from_file_location("tplace", TPLACE_PATH)
@@ -23,21 +24,22 @@ SEED = 0
 P = 1.0
 K = 300
 SIGMA = 0.020
-F = 100
+F = tplace.DEFAULT_F
 PLOT_POINTS = 2000
-PLOT_OPTIMIZE_ITERS = 30
+PLOT_OPTIMIZE_ITERS = 25
 
 
 def sample_case():
     generator = torch.Generator().manual_seed(SEED)
     weight_logits = torch.randn(K, generator=generator)
     weights = torch.softmax(weight_logits, dim=0)
-    initial_constant_phases = tplace.constant_phases(K, P, dtype=weights.dtype, device=weights.device)
+    initial_constant_phases = tplace.constant_phases(K, P)
     params = tplace.TPlaceParams(weights=weights, sigma=SIGMA, P=P, F=F)
     return params, initial_constant_phases
 
 
 def weighted_bells(phases: torch.Tensor, params: tplace.TPlaceParams, x: torch.Tensor):
+    phases = torch.as_tensor(phases, dtype=x.dtype, device=x.device)
     dists = x[None, :] - phases[:, None]
     inv_sigma_sq = 1 / (2 * params.sigma**2)
     log_norm = -0.5 * math.log(2 * math.pi * params.sigma**2)
@@ -70,7 +72,7 @@ def main():
     optimized_phases_30 = optimize_for_plot(
         params,
         initial_constant_phases,
-        max_iter=30,
+        max_iter=25,
     )
     optimized_phases_100 = optimize_for_plot(
         params,
@@ -83,7 +85,7 @@ def main():
     scenarios = [
         ("Initial constant", initial_constant_phases),
         ("After optimize (max_iter=10)", optimized_phases_10),
-        ("After optimize (max_iter=30)", optimized_phases_30),
+        ("After optimize (max_iter=25)", optimized_phases_30),
         ("After optimize (max_iter=100)", optimized_phases_100),
     ]
 
@@ -103,7 +105,7 @@ def main():
             f"frequency-domain loss={objective:.4f}\n"
             f"differential entropy={differential_entropy:.4f}\n"
             f"usable entropy={usable_entropy:.4f}\n"
-            f"min phase={float(phases.min()):.5f}, max phase={float(phases.max()):.5f}"
+            f"min phase={float(np.min(phases)):.5f}, max phase={float(np.max(phases)):.5f}"
         )
         ax.set_xlim(0.0, params.P)
         ax.set_ylabel("weighted density")
