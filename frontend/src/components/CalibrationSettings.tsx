@@ -1,36 +1,10 @@
 import { useEffect } from 'react';
-
-export interface LikelihoodModel {
-	mu_delay: number;
-	stddev_delay: number;
-	outliers: number;
-	period: number;
-	intervals?: {
-		mu_delay: [number, number];
-		stddev_delay: [number, number];
-		outliers: [number, number];
-	};
-}
-
-export type AutoCalibrationState = {
-	mu_delay: boolean;
-	stddev_delay: boolean;
-	outliers: boolean;
-};
-
-export interface VariationalParams {
-	mu_m: number;
-	sigma_m: number;
-	mu_s: number;
-	sigma_s: number;
-	log_alpha: number;
-	log_beta: number;
-}
-
-export interface CalibrationPair {
-	x: number;
-	period: number;
-}
+import type {
+	AutoCalibrationState,
+	CalibrationPair,
+	LikelihoodModel,
+	VariationalParams,
+} from '../domain/likelihoodModel';
 
 interface CalibrationSettingsProps {
 	useAutomaticCalibration: AutoCalibrationState;

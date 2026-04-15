@@ -16,3 +16,77 @@ This approach resembles that row and column selection method of many communicati
 Although this is less cluttered, it requires the use of global attention.
 By letting each node carry its own timer, the user does not need to be aware of any part of the screen
 outside of their foveal vision.
+
+
+\subsection{Phase Ordering}
+When we optimize the timer phases, we must choose an order in which the visible
+nodes are presented to the phase optimizer. This ordering is \emph{not} a visual
+ordering. Its purpose is instead to keep each parent timer close to the timers of
+its children, so that local regions of the trie tend to remain locally coherent
+in phase.
+
+To do this, we assign to each visible node $n$ an \emph{order vector}
+\[
+\mathbf{o}(n) \in \mathbb{Z}^*,
+\]
+where $\mathbb{Z}^*$ denotes the set of finite integer sequences. The root is
+assigned the empty vector,
+\[
+\mathbf{o}(r) = [].
+\]
+These vectors induce a total order by lexicographic comparison, except that when
+one vector is a prefix of the other, termination is taken to lie strictly
+between negative and positive continuations. Thus for any prefix $\mathbf{p}$ and
+any positive integer $k$,
+\[
+[\mathbf{p}, -k] \;<\; \mathbf{p} \;<\; [\mathbf{p}, k].
+\]
+Equivalently, one may imagine a special end-of-vector symbol $\bot$ satisfying
+\[
+\cdots < -2 < -1 < \bot < 1 < 2 < \cdots
+\]
+at the first position where two vectors differ. The important consequence is
+that every parent lies between its negative-side children and its positive-side
+children, which tends to keep descendants close to the parent in the induced
+one-dimensional ordering.
+
+We now define the vectors recursively. Let
+\[
+m(n) = \exp(z_n - z_r)
+\]
+be the mass of visible node $n$, where $z_r$ is the log mass of the visible root.
+This is the ordinary mass, not the ``strict'' mass used elsewhere for timer
+weights.
+
+For each visible node $n$, consider its visible children. We first choose an
+auxiliary order of those children. Conceptually this order is random so that the
+construction does not inherit an arbitrary lexical bias; in implementation it may
+be realized by any deterministic pseudorandom permutation derived from the
+current snapshot.
+
+We then sweep through the children in that auxiliary order while maintaining two
+running totals:
+\[
+M_-(n), \qquad M_+(n),
+\]
+the total mass already assigned to the negative side and positive side,
+respectively. Initially both are zero. When the next child $c$ is processed, we
+greedily assign it to the side with smaller accumulated mass. If it is assigned
+to the negative side, and this is the $j$-th child placed on that side, then we
+set
+\[
+\mathbf{o}(c) = [\mathbf{o}(n), -j].
+\]
+If it is assigned to the positive side, and this is the $j$-th child placed on
+that side, then we set
+\[
+\mathbf{o}(c) = [\mathbf{o}(n), j].
+\]
+After the assignment we add $m(c)$ to the corresponding running total.
+
+This construction has two useful properties. First, it balances mass to the left
+and right of each parent, which helps the phase optimizer avoid placing a large
+fraction of the local posterior mass on only one side of the parent. Second,
+because the parent sorts between its two signed families of descendants, a
+parent's timer remains near the timers of its children. This is the primary
+motivation for the ordering.

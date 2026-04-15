@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'path';
 
 export default defineConfig({
 	plugins: [react()],
@@ -17,9 +16,4 @@ export default defineConfig({
 		},
 	},
 	publicDir: 'static',
-	resolve: {
-		alias: {
-			$lib: resolve(__dirname, './src/lib'),
-		},
-	},
 });
