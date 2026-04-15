@@ -25,6 +25,7 @@ K = 300
 SIGMA = 0.020
 F = 100
 PLOT_POINTS = 2000
+PLOT_OPTIMIZE_ITERS = 30
 
 
 def sample_case():
@@ -34,6 +35,11 @@ def sample_case():
     initial_constant_widths = torch.full((K,), P / K)
     params = tplace.TPlaceParams(weights=weights, sigma=SIGMA, P=P, F=F)
     return params, initial_constant_widths
+
+
+def schroeder_power_widths(params: tplace.TPlaceParams):
+    powers = params.weights.pow(2)
+    return params.P * powers / powers.sum()
 
 
 def weighted_bells(widths: torch.Tensor, params: tplace.TPlaceParams, x: torch.Tensor):
@@ -55,21 +61,53 @@ def differential_entropy_from_pdf(pdf: torch.Tensor, x: torch.Tensor):
     return float(-torch.trapezoid(pdf * pdf.log(), x))
 
 
+def optimize_for_plot(params: tplace.TPlaceParams, initial_widths: torch.Tensor, *, max_iter: int):
+    initial_log_widths = torch.log(initial_widths)
+    log_widths = torch.nn.Parameter(initial_log_widths.clone())
+    optimizer = torch.optim.LBFGS(
+        [log_widths],
+        max_iter=max_iter,
+        line_search_fn="strong_wolfe",
+    )
+
+    def closure():
+        optimizer.zero_grad()
+        loss = tplace.J(log_widths, params)
+        loss.backward()
+        return loss
+
+    optimizer.step(closure)
+    with torch.no_grad():
+        return torch.softmax(log_widths, dim=0) * params.P
+
+
 def main():
     torch.set_num_threads(1)
     params, initial_constant_widths = sample_case()
-    optimized_constant_widths = tplace.optimize(params, initial_constant_widths)
+    initial_power_widths = schroeder_power_widths(params)
+    optimized_constant_widths = optimize_for_plot(
+        params,
+        initial_constant_widths,
+        max_iter=PLOT_OPTIMIZE_ITERS,
+    )
+    optimized_power_widths = optimize_for_plot(
+        params,
+        initial_power_widths,
+        max_iter=PLOT_OPTIMIZE_ITERS,
+    )
     noise_entropy = 0.5 * math.log(2 * math.pi * math.e * params.sigma**2)
 
     x = torch.linspace(0, params.P, PLOT_POINTS, dtype=params.weights.dtype, device=params.weights.device)
     scenarios = [
         ("Initial constant", initial_constant_widths),
-        ("After optimize", optimized_constant_widths),
+        ("Schroeder-style init (widths ∝ weights^2)", initial_power_widths),
+        (f"Constant + optimize ({PLOT_OPTIMIZE_ITERS})", optimized_constant_widths),
+        (f"Power init + optimize ({PLOT_OPTIMIZE_ITERS})", optimized_power_widths),
     ]
 
     order = torch.argsort(params.weights, descending=True)
     colors = plt.cm.nipy_spectral(torch.linspace(0.02, 0.98, K).numpy())
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharex=True, sharey=True, constrained_layout=True)
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10), sharex=True, sharey=True, constrained_layout=True)
 
     for ax, (title, widths) in zip(axes.flatten(), scenarios):
         weighted, total = weighted_bells(widths, params, x)
@@ -90,8 +128,8 @@ def main():
         ax.grid(alpha=0.2)
         ax.legend(loc="upper right")
 
-    axes[0].set_xlabel("x")
-    axes[1].set_xlabel("x")
+    axes[1, 0].set_xlabel("x")
+    axes[1, 1].set_xlabel("x")
     fig.suptitle(
         f"tplace sample | seed={SEED}, K={K}, P={P}, sigma={SIGMA}, F={F}\n"
         "Real-space wrapped Gaussian visualization\n"

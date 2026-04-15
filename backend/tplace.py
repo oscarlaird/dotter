@@ -12,38 +12,43 @@ class TPlaceParams(NamedTuple):
     P: float
     F: int
 
-def total_distrib_for_phases(phases: torch.Tensor, params: TPlaceParams):
-    # here phase \in [0, P)
+
+def loss_for_phases(phases: torch.Tensor, params: TPlaceParams):
+    # For each nonnegative Fourier mode n, the wrapped-Gaussian coefficient is
+    # a fixed Gaussian envelope term times a phase-interference term:
+    #   c_n = base_c_n * sum_k w_k * exp(i * 2*pi*n*phase_k / P)
+    # We only need |c_n|^2, so compute the interference power directly from
+    # real cos/sin components.
     ns = torch.arange(
-        -params.F,
+        0,
         params.F + 1,
         dtype=phases.dtype,
         device=phases.device,
     )
-    logP = math.log(params.P)
-    base_log_c_n = -logP - 2 * math.pi**2 * ns**2 * params.sigma**2 / params.P**2
-    phase_angles = 1j * (2 * math.pi) * (phases[:, None] / params.P) * ns[None, :]
-    all_log_c_n = phase_angles + base_log_c_n[None, :]
-    all_c_n = torch.exp(all_log_c_n)
-    return torch.einsum(
-        'kf,k->f',
-        all_c_n,
-        params.weights.to(dtype=all_c_n.dtype, device=all_c_n.device),
-    )
+    base_log_c_n = -math.log(params.P) - 2 * math.pi**2 * ns**2 * params.sigma**2 / params.P**2
+    # Real phases imply c_-n = conj(c_n), so the omitted negative frequencies
+    # contribute the same squared magnitude as the positive ones.
+    base_mag2 = torch.exp(2 * base_log_c_n)
+    angles = (2 * math.pi / params.P) * phases[:, None] * ns[None, :]
+    weights = params.weights.to(dtype=phases.dtype, device=phases.device)
+    real_part = weights @ torch.cos(angles)
+    imag_part = weights @ torch.sin(angles)
+    interference_mag2 = real_part.pow(2) + imag_part.pow(2)
+    return base_mag2[0] * interference_mag2[0] + 2 * (
+        base_mag2[1:] * interference_mag2[1:]
+    ).sum()
 
-def loss_for_total_distrib(total_distrib: torch.Tensor):
-    # justified from renyi entropy approximation
-    return total_distrib.abs().pow(2).sum()
 
 def widths_to_phases(widths: torch.Tensor):
     half_widths = 0.5 * widths
     return widths.cumsum(dim=0) - half_widths
 
+
 def J(log_widths: torch.Tensor, params: TPlaceParams):
     widths = torch.softmax(log_widths, dim=0) * params.P
     phases = widths_to_phases(widths)
-    total_distrib = total_distrib_for_phases(phases, params)
-    return loss_for_total_distrib(total_distrib)
+    return loss_for_phases(phases, params)
+
 
 def optimize(params: TPlaceParams, initial_widths: torch.Tensor):
     initial_log_widths = torch.log(initial_widths)
