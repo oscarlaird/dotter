@@ -167,11 +167,11 @@ fn build_batches(workspace: &mut Workspace, width: usize) {
     }
 }
 
-fn loss_and_grad_for_phases(
+fn loss_and_grad_for_phases_inplace(
     phases: &[f64],
     params: &TimerSpacingParams,
     workspace: &mut Workspace,
-) -> (f64, Vec<f64>) {
+) -> f64 {
     let phase_count = phases.len();
     prepare_block_trig(workspace, phases, params.period);
 
@@ -229,12 +229,13 @@ fn loss_and_grad_for_phases(
         }
     }
 
-    (loss, workspace.grad.clone())
+    loss
 }
 
 pub fn loss_and_grad(phases: &[f64], params: &TimerSpacingParams) -> (f64, Vec<f64>) {
     let mut workspace = Workspace::new(params, phases.len());
-    loss_and_grad_for_phases(phases, params, &mut workspace)
+    let loss = loss_and_grad_for_phases_inplace(phases, params, &mut workspace);
+    (loss, workspace.grad.clone())
 }
 
 pub fn j(phases: &[f64], params: &TimerSpacingParams) -> f64 {
@@ -289,9 +290,8 @@ pub fn optimize(
         }
 
         if (TASK_FG..=TASK_FG_END).contains(&task) {
-            let (loss, grad) = loss_and_grad_for_phases(&x, params, &mut workspace);
-            f = loss;
-            g.copy_from_slice(&grad);
+            f = loss_and_grad_for_phases_inplace(&x, params, &mut workspace);
+            g.copy_from_slice(&workspace.grad);
         } else if task == TASK_NEW_X {
             if isave[29] >= max_iter as i64 {
                 break;
