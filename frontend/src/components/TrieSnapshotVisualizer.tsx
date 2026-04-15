@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { colorFromLetter } from '../utils/colors';
 
-// Match TrieVisualizer (v2 canvas): layout transitions over 300ms.
+// Layout transitions over 300ms.
 const TWEEN_DURATION_MS = 300;
 
 function interpolate(start: number, end: number, progress: number): number {
@@ -135,7 +135,7 @@ function snapshotNodePassesThreshold(
 	return node.z - rootZ > expansionThreshold;
 }
 
-/** Timer circle center and radius — fixed CSS px like V2 TrieVisualizer (not scaled with fit-to-width). */
+/** Timer circle center and radius — fixed CSS px, not scaled with fit-to-width. */
 function timerCircleGeometry(
 	node: VisualNode,
 	currentTime: number,

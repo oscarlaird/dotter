@@ -4,7 +4,7 @@ import initBayesianWasm, {
 	debugPanicTest,
 	initPanicHook,
 } from '../wasm_pkg/bayesian';
-import practicePhrasesText from './v3-practice-phrases.txt?raw';
+import practicePhrasesText from './practice-phrases.txt?raw';
 import CalibrationSettings, {
 	type LikelihoodModel,
 	type AutoCalibrationState,
@@ -25,7 +25,7 @@ import type {
 import { jStat } from 'jstat';
 
 const DEFAULT_PERIOD = 1.1;
-const V3_USERNAME_STORAGE_KEY = 'dotter-v3-username';
+const APP_USERNAME_STORAGE_KEY = 'dotter-app-username';
 
 function predictiveStddev(muS: number, sigmaS: number, sigmaM: number): number {
 	return Math.sqrt(Math.exp(muS + (sigmaS ** 2) / 2) + sigmaM ** 2);
@@ -128,7 +128,7 @@ function randomTimersForSnapshot(
 
 function formatStepError(step: string, err: unknown): string {
 	const message = err instanceof Error ? err.message : String(err);
-	console.error(`[V3Page] ${step}`, err);
+	console.error(`[MainPage] ${step}`, err);
 	return `${step}: ${message}`;
 }
 
@@ -212,12 +212,12 @@ interface SessionDebugDump {
 	}>;
 }
 
-const V3_THEME_STORAGE_KEY = 'dotter-v3-theme';
-const V3_BLINK_TO_CLICK_STORAGE_KEY = 'dotter-v3-blink-to-click';
+const APP_THEME_STORAGE_KEY = 'dotter-app-theme';
+const APP_BLINK_TO_CLICK_STORAGE_KEY = 'dotter-app-blink-to-click';
 
 function readStoredBlinkToClick(): boolean {
 	try {
-		return localStorage.getItem(V3_BLINK_TO_CLICK_STORAGE_KEY) === 'true';
+		return localStorage.getItem(APP_BLINK_TO_CLICK_STORAGE_KEY) === 'true';
 	} catch {
 		return false;
 	}
@@ -225,7 +225,7 @@ function readStoredBlinkToClick(): boolean {
 
 function readStoredUsername(): string {
 	try {
-		return localStorage.getItem(V3_USERNAME_STORAGE_KEY) ?? '';
+		return localStorage.getItem(APP_USERNAME_STORAGE_KEY) ?? '';
 	} catch {
 		return '';
 	}
@@ -233,7 +233,7 @@ function readStoredUsername(): string {
 
 function readStoredColorMode(): 'light' | 'dark' {
 	try {
-		const raw = localStorage.getItem(V3_THEME_STORAGE_KEY);
+		const raw = localStorage.getItem(APP_THEME_STORAGE_KEY);
 		if (raw === 'light' || raw === 'dark') {
 			return raw;
 		}
@@ -343,7 +343,7 @@ function playTutorOutlierTone(
 	}
 }
 
-function V3Page() {
+function MainPage() {
 	const [snapshot, setSnapshot] = useState<ExpandedSnapshot | null>(null);
 	const [timers, setTimers] = useState<VisibleNodeTimerMap>({});
 	const [error, setError] = useState<string | null>(null);
@@ -413,7 +413,7 @@ function V3Page() {
 
 	useEffect(() => {
 		try {
-			localStorage.setItem(V3_THEME_STORAGE_KEY, colorMode);
+			localStorage.setItem(APP_THEME_STORAGE_KEY, colorMode);
 		} catch {
 			// ignore
 		}
@@ -421,7 +421,7 @@ function V3Page() {
 
 	useEffect(() => {
 		try {
-			localStorage.setItem(V3_BLINK_TO_CLICK_STORAGE_KEY, blinkToClick ? 'true' : 'false');
+			localStorage.setItem(APP_BLINK_TO_CLICK_STORAGE_KEY, blinkToClick ? 'true' : 'false');
 		} catch {
 			// ignore
 		}
@@ -429,7 +429,7 @@ function V3Page() {
 
 	useEffect(() => {
 		try {
-			localStorage.setItem(V3_USERNAME_STORAGE_KEY, usernameInput);
+			localStorage.setItem(APP_USERNAME_STORAGE_KEY, usernameInput);
 		} catch {
 			// ignore
 		}
@@ -1299,4 +1299,4 @@ function V3Page() {
 	);
 }
 
-export default V3Page;
+export default MainPage;

@@ -306,14 +306,14 @@ fn repro_backend_style_five_prior_cycle() {
     }
 }
 
-/// Replay of `testdata/frontend_prior_panic/` with the same ordering as V3: after each successful
+/// Replay of `testdata/frontend_prior_panic/` with the same ordering as the current frontend: after each successful
 /// `apply_updates()`, call `expand_to_threshold()` (and start with `reset` + expand like the page).
 ///
 /// This is the canonical Rust replay of the captured WebSocket JSON. On the host target it
 /// **passes**; the browser `RuntimeError: unreachable` from `apply_updates` after a prior is not
 /// reproduced here yet. Use it as a regression fixture and extend it once a host panic is found.
 #[test]
-fn repro_captured_frontend_prior_cycle_v3_fixture_replay() {
+fn repro_captured_frontend_prior_cycle_fixture_replay() {
     let mut session = crate::BayesianSession::new();
     session.reset();
     let _ = session.expand_to_threshold();

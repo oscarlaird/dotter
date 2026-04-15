@@ -13,10 +13,9 @@ The large historical server at **`ARCHIVE_language_server/lm.py`** is kept in
 the tree as an **archive** only; do not extend it for new features and do not
 treat it as the process to run for current development.
 
-**Client.** Ongoing UI work targets **`frontend/` route `/v3`** (`V3Page` and
-related components). **`frontend/` route `/v2`** (`V2Page` and the legacy trie
-visualizer stack) is an **archive** for reference; new product behavior should
-land in v3.
+**Client.** Ongoing UI work targets the main frontend app under **`frontend/`**
+(`MainPage` and related components). The historical trie visualizer stack has
+been retired from the active frontend codepath.
 
 ## Overview
 
