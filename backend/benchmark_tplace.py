@@ -17,10 +17,10 @@ spec.loader.exec_module(tplace)
 def sample_case(k: int, p: float, sigma: float, n: int, generator: torch.Generator):
     weight_logits = torch.randn(k, generator=generator)
     weights = torch.softmax(weight_logits, dim=0)
-    initial_widths = torch.full((k,), p / k)
+    initial_phases = tplace.constant_phases(k, p)
 
     params = tplace.TPlaceParams(weights=weights, sigma=sigma, P=p, F=n)
-    return params, initial_widths
+    return params, initial_phases
 
 
 def run_benchmark(
@@ -35,20 +35,20 @@ def run_benchmark(
     torch.set_num_threads(1)
     generator = torch.Generator().manual_seed(seed)
 
-    warmup_params, warmup_initial_widths = sample_case(k, p, sigma, n, generator)
-    tplace.optimize(warmup_params, warmup_initial_widths)
+    warmup_params, warmup_initial_phases = sample_case(k, p, sigma, n, generator)
+    tplace.optimize(warmup_params, warmup_initial_phases)
 
     trial_times = []
     loss_deltas = []
     for trial_idx in range(trials):
-        params, initial_widths = sample_case(k, p, sigma, n, generator)
-        initial_loss = float(tplace.J(torch.log(initial_widths), params))
+        params, initial_phases = sample_case(k, p, sigma, n, generator)
+        initial_loss = float(tplace.J(initial_phases, params))
 
         start = time.perf_counter()
-        widths = tplace.optimize(params, initial_widths)
+        phases = tplace.optimize(params, initial_phases)
         elapsed = time.perf_counter() - start
 
-        final_loss = float(tplace.J(torch.log(widths), params))
+        final_loss = float(tplace.J(phases, params))
         loss_delta = final_loss - initial_loss
 
         trial_times.append(elapsed)
@@ -59,7 +59,7 @@ def run_benchmark(
         )
 
     print("SUMMARY")
-    print(f"K={k} N={n} sigma={sigma} trials={trials} seed={seed}")
+    print(f"K={k} F={n} sigma={sigma} trials={trials} seed={seed}")
     print(f"mean_elapsed_s={statistics.mean(trial_times):.6f}")
     print(f"median_elapsed_s={statistics.median(trial_times):.6f}")
     print(f"min_elapsed_s={min(trial_times):.6f}")
