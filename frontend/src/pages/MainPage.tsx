@@ -3,6 +3,7 @@ import initBayesianWasm, {
 	BayesianSession,
 	debugPanicTest,
 	initPanicHook,
+	optimizeTimerPhases,
 } from '../wasm_pkg/bayesian';
 import practicePhrasesText from './practice-phrases.txt?raw';
 import CalibrationSettings, {
@@ -103,7 +104,38 @@ function timerLikelihood(time: number, phase: number, model: LikelihoodModel): n
 	);
 }
 
-function randomTimersForSnapshot(
+// Returns effective linear-probability weight for each rendered node.
+// z is in log space, so we exponentiate first, then subtract the linear
+// probability of each directly-rendered child. The residual is the probability
+// mass that "stops" at this node rather than passing through to a visible
+// descendant.
+// Returns effective linear-probability weight for each key in `keys` (all must
+// be present in snapshot). Each node's weight is exp(z - rootZ) minus the sum
+// of exp(z - rootZ) of its directly-rendered children, i.e. the probability
+// mass that "stops" at this node rather than passing through to a visible
+// descendant. Subtracting rootZ before exponentiating avoids overflow/underflow
+// since z values are log-probabilities that can be large in magnitude.
+function effectiveWeights(
+	snapshot: ExpandedSnapshot,
+	keys: readonly string[],
+): number[] {
+	const rootZ = snapshot['^']?.z ?? 0;
+	const expZ: Record<string, number> = {};
+	for (const key of keys) expZ[key] = Math.exp(snapshot[key].z - rootZ);
+	const linearZ = { ...expZ };
+	for (const key of keys) {
+		// Find the closest rendered ancestor = longest rendered proper prefix of key
+		let parent = '';
+		for (const candidate of keys) {
+			if (candidate !== key && key.startsWith(candidate) && candidate.length > parent.length)
+				parent = candidate;
+		}
+		if (parent) linearZ[parent] = Math.max(0, linearZ[parent] - expZ[key]);
+	}
+	return keys.map(k => Math.max(0, linearZ[k]));
+}
+
+function timersForSnapshot(
 	snapshot: ExpandedSnapshot,
 	model: LikelihoodModel,
 	existingTimers: VisibleNodeTimerMap,
@@ -111,17 +143,40 @@ function randomTimersForSnapshot(
 	renderedNodeKeys: readonly string[],
 ): VisibleNodeTimerMap {
 	const nextTimers: VisibleNodeTimerMap = {};
-	for (const fullString of renderedNodeKeys) {
-		if (!(fullString in snapshot)) {
-			continue;
+	const keysInSnapshot = renderedNodeKeys.filter(k => k in snapshot);
+
+	// Preserve timers for nodes that haven't been reset
+	if (!resetAll) {
+		for (const key of keysInSnapshot) {
+			if (existingTimers[key]) nextTimers[key] = existingTimers[key];
 		}
-		if (!resetAll && existingTimers[fullString]) {
-			nextTimers[fullString] = existingTimers[fullString];
-			continue;
+		// New nodes created by prior updates inherit the phase of their nearest
+		// visible ancestor so expansions preserve local timing structure.
+		const newKeys = keysInSnapshot
+			.filter(k => !nextTimers[k])
+			.sort((a, b) => a.length - b.length || a.localeCompare(b));
+		for (const key of newKeys) {
+			let parent = '';
+			for (const candidate of keysInSnapshot) {
+				if (candidate !== key && key.startsWith(candidate) && candidate.length > parent.length) {
+					parent = candidate;
+				}
+			}
+			nextTimers[key] = { phase: parent ? nextTimers[parent].phase : 0.5 * model.period };
 		}
-		nextTimers[fullString] = {
-			phase: Math.random() * model.period,
-		};
+		return nextTimers;
+	}
+
+	// Full reset: compute optimized phases via timer_spacing WASM.
+	// Sort lexicographically so the optimizer sees a consistent canonical ordering.
+	const sortedKeys = [...keysInSnapshot].sort();
+	const weights = effectiveWeights(snapshot, sortedKeys);
+	const weightsJson = JSON.stringify(weights);
+	const phasesJson = optimizeTimerPhases(weightsJson, model.stddev_delay, model.period);
+	const phases: number[] = JSON.parse(phasesJson);
+
+	for (let i = 0; i < sortedKeys.length; i++) {
+		nextTimers[sortedKeys[i]] = { phase: phases[i] ?? (i + 0.5) * model.period / sortedKeys.length };
 	}
 	return nextTimers;
 }
@@ -468,7 +523,7 @@ function MainPage() {
 		setFirstForkDepth(nextScrollLayout.firstForkDepth);
 		setSnapshot(nextSnapshot);
 		setTimers((currentTimers) =>
-			randomTimersForSnapshot(
+			timersForSnapshot(
 				nextSnapshot,
 				likelihoodModelRef.current,
 				currentTimers,

@@ -76,12 +76,18 @@ poetry.lock
 
 # LaTeX build artifacts
 *.aux
+*.bbl
+*.blg
 *.fdb_latexmk
 *.fls
 *.log
 *.out
 *.synctex.gz
 *.toc
+
+# Generated backend analysis plots
+backend/*.png
+backend/*.pdf
 
 # Local generated project outputs
 demos/lean_python_demo/build/

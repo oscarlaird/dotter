@@ -44,6 +44,7 @@ dependencies = [
  "rolling_hash",
  "serde",
  "serde_json",
+ "timer_spacing",
  "trie",
  "wasm-bindgen",
  "web-sys",

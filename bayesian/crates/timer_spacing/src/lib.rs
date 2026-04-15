@@ -1,12 +1,17 @@
+#[cfg(feature = "lbfgsb-sys")]
 use lbfgsb::{setulb, LbfgsbParameter};
 
 pub const DEFAULT_F: usize = 32;
 pub const DEFAULT_BLOCK_SIZE: usize = 8;
 pub const DEFAULT_MAX_ITER: u32 = 25;
 
+#[cfg(feature = "lbfgsb-sys")]
 const TASK_START: i64 = 1;
+#[cfg(feature = "lbfgsb-sys")]
 const TASK_NEW_X: i64 = 2;
+#[cfg(feature = "lbfgsb-sys")]
 const TASK_FG: i64 = 10;
+#[cfg(feature = "lbfgsb-sys")]
 const TASK_FG_END: i64 = 15;
 
 #[derive(Debug, Clone)]
@@ -237,6 +242,7 @@ pub fn j(phases: &[f64], params: &TimerSpacingParams) -> f64 {
     loss_and_grad(phases, params).0
 }
 
+#[cfg(feature = "lbfgsb-sys")]
 pub fn optimize(
     params: &TimerSpacingParams,
     initial_phases: &[f64],
@@ -298,10 +304,99 @@ pub fn optimize(
         }
     }
 
-    Ok(OptimizationResult {
-        phases: x,
-        loss: f,
-    })
+    let phases = x.iter().map(|&p| p.rem_euclid(params.period)).collect();
+    Ok(OptimizationResult { phases, loss: f })
+}
+
+/// Pure-Rust L-BFGS used when the `lbfgsb-sys` feature is disabled (e.g. WASM targets).
+///
+/// Implements unconstrained L-BFGS with a backtracking Armijo line search and
+/// a history of `M=10` curvature pairs.
+#[cfg(not(feature = "lbfgsb-sys"))]
+pub fn optimize(
+    params: &TimerSpacingParams,
+    initial_phases: &[f64],
+    max_iter: u32,
+) -> Result<OptimizationResult, String> {
+    const M: usize = 10;
+    const C1: f64 = 1e-4;
+    const MIN_STEP: f64 = 1e-16;
+
+    let n = initial_phases.len();
+    let mut x = initial_phases.to_vec();
+    let mut workspace = Workspace::new(params, n);
+
+    let mut f = eval_inplace(&x, &mut workspace);
+    let mut g: Vec<f64> = workspace.grad_f32.iter().map(|&v| v as f64).collect();
+
+    // Circular history buffers for (s, y) pairs and rho = 1/dot(y,s)
+    let mut s_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
+    let mut y_hist: Vec<Vec<f64>> = Vec::with_capacity(M);
+    let mut rho_hist: Vec<f64> = Vec::with_capacity(M);
+
+    for _ in 0..max_iter {
+        // Two-loop L-BFGS recursion to compute search direction d = -H*g
+        let m_cur = s_hist.len();
+        let mut q = g.clone();
+        let mut alphas = vec![0.0f64; m_cur];
+        for i in (0..m_cur).rev() {
+            alphas[i] = rho_hist[i] * dot(&s_hist[i], &q);
+            for j in 0..n { q[j] -= alphas[i] * y_hist[i][j]; }
+        }
+        // Initial Hessian scaling: gamma = dot(s_last, y_last) / dot(y_last, y_last)
+        let gamma = if m_cur > 0 {
+            let last = m_cur - 1;
+            dot(&s_hist[last], &y_hist[last]) / dot(&y_hist[last], &y_hist[last])
+        } else {
+            1.0
+        };
+        let mut r: Vec<f64> = q.iter().map(|&v| gamma * v).collect();
+        for i in 0..m_cur {
+            let beta = rho_hist[i] * dot(&y_hist[i], &r);
+            for j in 0..n { r[j] += s_hist[i][j] * (alphas[i] - beta); }
+        }
+        // d = -r (descent direction)
+        let d: Vec<f64> = r.iter().map(|&v| -v).collect();
+
+        let dg = dot(&d, &g);
+        if dg >= 0.0 { break; } // not a descent direction; convergence or numerical issue
+
+        // Backtracking Armijo line search
+        let mut alpha = 1.0f64;
+        loop {
+            let x_new: Vec<f64> = x.iter().zip(d.iter()).map(|(&xi, &di)| xi + alpha * di).collect();
+            let f_new = eval_inplace(&x_new, &mut workspace);
+            if f_new <= f + C1 * alpha * dg {
+                let g_new: Vec<f64> = workspace.grad_f32.iter().map(|&v| v as f64).collect();
+                let s: Vec<f64> = d.iter().map(|&di| alpha * di).collect();
+                let y: Vec<f64> = g_new.iter().zip(g.iter()).map(|(&gn, &go)| gn - go).collect();
+                let sy = dot(&s, &y);
+                if sy > 0.0 {
+                    if s_hist.len() == M {
+                        s_hist.remove(0); y_hist.remove(0); rho_hist.remove(0);
+                    }
+                    rho_hist.push(1.0 / sy);
+                    s_hist.push(s);
+                    y_hist.push(y);
+                }
+                x = x_new;
+                f = f_new;
+                g = g_new;
+                break;
+            }
+            alpha *= 0.5;
+            if alpha < MIN_STEP { break; }
+        }
+        if alpha < MIN_STEP { break; }
+    }
+
+    let phases = x.iter().map(|&p| p.rem_euclid(params.period)).collect();
+    Ok(OptimizationResult { phases, loss: f })
+}
+
+#[cfg(not(feature = "lbfgsb-sys"))]
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b.iter()).map(|(&x, &y)| x * y).sum()
 }
 
 #[cfg(test)]

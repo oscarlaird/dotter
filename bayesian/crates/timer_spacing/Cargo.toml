@@ -3,10 +3,15 @@ name = "timer_spacing"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["lbfgsb-sys", "bin-utils"]
+lbfgsb-sys = ["dep:lbfgsb"]
+bin-utils = ["dep:rand", "dep:rand_distr", "dep:rayon"]
+
 [dependencies]
-lbfgsb = "0.1"
-rayon = "1"
-rand = "0.9"
-rand_distr = "0.5"
+lbfgsb = { version = "0.1", optional = true }
+rand = { version = "0.9", optional = true }
+rand_distr = { version = "0.5", optional = true }
+rayon = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

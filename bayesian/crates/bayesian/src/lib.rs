@@ -26,6 +26,27 @@ pub fn debug_panic_test() {
     panic!("debug wasm panic (intentional; remove ?wasmPanic=1 from URL)");
 }
 
+/// Compute optimally-spaced timer phases for a set of weighted nodes.
+///
+/// `weights_json` is a JSON array of non-negative f64 weights (one per timer node).
+/// `sigma` is the timer stddev (use `likelihoodModel.stddev_delay`).
+/// `period` is the timer period.
+///
+/// Returns a JSON array of f64 phases in [0, period), same length and order as the input weights.
+#[cfg(feature = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = optimizeTimerPhases)]
+pub fn optimize_timer_phases(weights_json: &str, sigma: f64, period: f64) -> String {
+    let weights: Vec<f64> = serde_json::from_str(weights_json).expect("weights_json must be a JSON array of numbers");
+    if weights.is_empty() {
+        return "[]".to_string();
+    }
+    let params = timer_spacing::TimerSpacingParams::new(weights.clone(), sigma, period);
+    let initial = timer_spacing::constant_phases(weights.len(), period);
+    let result = timer_spacing::optimize(&params, &initial, timer_spacing::DEFAULT_MAX_ITER)
+        .expect("timer_spacing::optimize failed");
+    serde_json::to_string(&result.phases).expect("phases serialization failed")
+}
+
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 

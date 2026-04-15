@@ -3,6 +3,10 @@ description: Development-stage expectations for API and tests
 alwaysApply: true
 ---
 
+# Architecture
+
+Make sure to read architecture.md
+
 # Development Stage
 
 This project is actively in development. Optimize for making progress over preserving temporary interfaces or test scaffolding.

@@ -76,173 +76,105 @@ as expected.)
 \section{Periodic Signals}
 % Discuss maximizing the rate in practice
 \subsection{Random Scan Times}
-\subsection{Periodic signals}
+\subsection{Periodic Signals}
 % Discuss the advantages of making D a periodic variable
 % - velocity is constant / doesn't need to be estimated (though this could be avoided)
 % - info gain does not depend on the distribution of T
-\subsection{Approximating A Uniform Distribution with a Gaussian Mixture}
-UNFINISHED
+\subsection{Approximating a Uniform Distribution with a Gaussian Mixture}
 
-We have considered the ideal timing distribution and the periodic timing distribution. 
-How can we induce a uniform distribution on the user's signal?
-There are several targets that the user may aim for, corresponding to all
-the prefixes displayed.
-Each target has an assigned signal time, $\mu_i$ and a fixed and known (mixing) probability, $\pi_i$. Given the noise $\mathcal{E} \sim \mathcal{N}(0, \sigma)$,
-the distribution of the observed signal is a mixture of gaussians with means $mu_i$ and
-constant variance $\sigma^2$.
-Given the mixing probabilities, $\pi_i$, how should we position the $\mu_i$ to maximize the entropy of the signal?
+If every prefix is assigned a periodic timer, with
+a period of $P$, and a phase of $\phi_n$, then the phase
+of the user's signal will be a mixture of wrapped Gaussians,
+$$
+P(x) = \sum_{n=1}^N \pi_n \mathcal{W}(x \mid \phi_n, \sigma^2)
+$$
+where $\mathcal{W}$ is the wrapped normal distribution,
+and $\sigma^2$ is a constant, describing the user's
+imprecision in timing their signals.
+Our goal is to set the phases of the timers, $\phi_n$,
+to maximize the entropy of this mixture.
 
-Intuitively we want to space apart the $\mu_i$ to approximate a uniform distribution.
-Those components with higher $pi_i$ should receive more space.
+We will perform this routine after the user makes a signal,
+and before showing the new timers. Hence this computation
+should run on the order of a millisecond or less.
 
-As soon as we receive a signal we recompute the posterior probabilities of the targets
-and must assign new phases to them. Hence this computation is on the critical path
-and ought to be computed in a few milliseconds. This rules out heavier techniques
-like gradient descent on a numerical approximation of the entropy.
+Our approach is to optimize (with a quasi-Newton method)
+an approximation to the entropy of the mixture
+in the frequency domain.
 
-We discuss two heuristic approaches to the problem
-as well as an approximation for the entropy which may computed efficiently.
+First, we choose to use the collision entropy to
+approximate the Shannon entropy of the mixture.
+This is justified because, near the uniform distribution,
+both objectives are maximized at the same point, and
+their leading deviation from the optimum is proportional
+to the same quadratic functional, namely the squared
+$L^2$ distance from uniform. Thus, in the regime relevant
+here, maximizing Shannon entropy is well
+approximated by maximizing collision entropy.
+This objective of maximizing $-\log \int P(x)^2 dx$
+is equivalent to minimizing the power, $\int P(x)^2 dx$.
+We will choose to minimize the power in the frequency domain.
 
-\subsubsection{Two Heuristics}
-UNFINISHED
-We wish to space the components of the mixture as to approximate a uniform distribution.
-One heuristic is to determine (by binary search) a value $C$ such that
-$$\sum_i 2w_i = P$$
-where the widths allotted to each component, $w_i$, are given by
-$$w_i = \operatorname{Re}\left(\sigma \sqrt{2 \left( \ln \left( \frac{\pi_i}{\sqrt{2\pi}\sigma} \right) - C \right)}\right)$$
-where $P$ is the length of the interval.
-The means are then given by $\mu_i = w_i + \sum_{j=1}^{i-1} 2w_j$.
+The Fourier expansion of a wrapped normal distribution
+centered at $0$ is given by
+$$
+a_m = \frac{1}{P} \exp\left(-\frac{2\pi^2 m^2 \sigma^2}{P^2}\right)
+$$
+Thus the coefficients of the mixture are,
+$$
+C_m = a_m s_m,
+$$
+where $s_m$ are the interference coefficients, given by
+$$
+s_m = \sum_{n=1}^N \pi_n \exp(i 2\pi m \phi_n / P).
+$$
+The objective function to minimize is then,
+$$
+J = \sum_{m=1}^F |C_m|^2
+$$
+where $F$ is the number of terms in the Fourier expansion.
+Because the terms, $a_m$, fall off rapidly, we may
+truncate to a small number of terms, $F$. For a given precision,
+$\epsilon$, we may choose $F$ so that the first omitted coefficient satisfies
+$$
+(a_m)^2 < \epsilon.
+$$
+For reasonable values of $P = 1.0$, $\sigma = 0.020$,
+and $\epsilon = 10^{-6}$, a value of $F = 30$ suffices.
+(In the current implementation we always use the hardcoded constant $F = 32$.)
+This justifies our choice to calculate the power in the frequency domain.
+It is not necessarily computationally cheaper per term relative to the time domain,
+but we may use far fewer terms, $F$, than the number of discretized bins
+that would be required in the time domain.
 
-This heuristic is derived from approximating the entropy of the mixture as
-$h(X) \approx - \ln f_{\min}$ where $f_{\min}$ is the minimum value of the mixture density,
-and approximating the mixture by its greatest component at a given point,
-$$f(x) \approx \max_i f_i(x)$$
-The value of $C$ represents the minimum log density of the approximated mixture, i.e.,
-the minimum over the interval of the maximum log density of the components.
-The width $2w_i$ is the range over which the $i$th component may provide a log
-density greater than $C$. If $\ln f_i(\mu_i) < C$, where $f_i(\mu_i)$ denotes the maximum density of the $i$th component at $x=0$, then clearly $w_i = 0$, otherwise it is as given above.
-Our algorithm thus maximizes the minimum density of the maximum component over the interval.
-Although somewhat crude, this heuristic is efficient.
+In our implementation, we then optimize the phases against this objective
+starting from initial equally spaced phases, using
+the L-BFGS algorithm. To reduce latency, we stop before convergence,
+at a fixed number of iterations, $I$ (in our implementation, $I = 25$).
+This allows our implementation to run over $N=300$ components in $500\mu$s.
 
-A refinement may be made by instead approximating the mixture by the sum of its two greatest components,
-and continuing to try to maximize the minimum density of the distribution.
-% TODO: This is not technically accurate since a sub-C component could still be locally
-% the greatest component.
-In this case, adjacent components should be spaced apart such that the log of the sum of their densities
-attains a minimum value of $C$.
-Given two adjacent components, $i$ and $i+1$, we are interested in their separation, $l_i$.
-Letting $\mu_i = 0$ and $\mu_{i+1} = l_i$, we may
-solve for the minimum value of the two-component mixture:
-$$f(x) = \pi_i \frac{1}{\sqrt{2 \pi \sigma^2}} \exp\left( - \frac{x^2}{2 \sigma^2} \right) + \pi_{i+1} \frac{1}{\sqrt{2 \pi \sigma^2}} \exp\left( - \frac{(x - l_i)^2}{2 \sigma^2} \right)$$
-Note that completing the square for the sum of squared distances gives:
-$$(x - \mu_1)^2 + (x - \mu_2)^2 = 2\left(x - \frac{\mu_1 + \mu_2}{2}\right)^2 + \frac{(\mu_1 - \mu_2)^2}{2}$$
-Taking the derivative with respect to $x$ and setting it to zero we have,
-$$\frac{d}{dx} f(x) = \frac{1}{\sqrt{2 \pi \sigma^2}} \left( \frac{-2x\pi_i}{2\sigma^2} \exp\left( - \frac{x^2}{2 \sigma^2} \right) - \frac{-2(x - l_i)\pi_{i+1}}{2\sigma^2} \exp\left( - \frac{(x - l_i)^2}{2 \sigma^2} \right) \right) = 0$$
-Algebra yields,
-$$\ln \left( \frac{R x}{l_i - x} \right) = \frac{x l_i}{\sigma^2} - \frac{l_i^2}{2 \sigma^2}$$,
-where $R = \pi_i / \pi_{i+1}$.
-Taken with the condition that $\ln f(x) = C$
-the two variables, $C$ and $R$, implicitly determine $l_i$. So, using
-a precomputed table of $l_i$ values for a range of $C$ and $R$ values, we can proceed as before,
-using binary search to find the value of $C$ such that $\sum_i l_i = P$.
-As before, we will exclude components with $\ln f_i(\mu_i) < C$ from calculations.
-As long as each adjacent component has a maximum log density greater than $C$, it will be possible
-to space them such that the log of their sum attains a minimum value of $C$.
+These choices of parameters are illustrated in figure \ref{fig:tplace-sample-plot},
+which shows visible artifacts when the number of Fourier terms is too small
+($F=16$), and no discernible difference between $F=32$ and $F=100$.
+It also shows that there is little improvement in differential entropy after
+$I=25$ iterations of L-BFGS.
 
-% widths (max)
-% widths (sum)
-% cramer, renyi (quite simplex; approx ln z ~= z - 1)
-% numerical integration (reasonable for low D)
 
-\subsubsection{Approximations to the entropy based on pairwise distances}
-
-In order to optimize the placement of the means to maximize entropy, we may minimize a proxy objective $J$ based on pairwise distances between the components. We consider approximations to the entropy for both Gaussian and von Mises mixture models. 
-
-\paragraph{Gaussian Mixture Model with Rényi Entropy}
-The Rényi 2-entropy, also known as collision entropy, is defined as $H_2(X) = -\ln \int p(x)^2 dx$. Maximizing this entropy is equivalent to minimizing the information potential $J = \int p(x)^2 dx$.
-For a mixture of Gaussians $p(x) = \sum_{i=1}^N \pi_i \mathcal{N}(x | \mu_i, \sigma^2)$, the integral of the squared density is:
-$$ J = \int \left( \sum_{i=1}^N \pi_i \mathcal{N}(x | \mu_i, \sigma^2) \right)^2 dx = \sum_{i=1}^N \sum_{j=1}^N \pi_i \pi_j \int \mathcal{N}(x | \mu_i, \sigma^2) \mathcal{N}(x | \mu_j, \sigma^2) dx $$
-The integral of the product of two Gaussians is itself a Gaussian evaluated at the difference of their means:
-$$ \int \mathcal{N}(x | \mu_i, \sigma^2) \mathcal{N}(x | \mu_j, \sigma^2) dx = \mathcal{N}(0 | \mu_i - \mu_j, 2\sigma^2) = \frac{1}{\sqrt{4\pi\sigma^2}} \exp\left( - \frac{(\mu_i - \mu_j)^2}{4\sigma^2} \right) $$
-By dropping the leading scalar and the self-interaction terms ($i=j$) since they are constant with respect to the optimal placement of the means, the objective to minimize simplifies to the pairwise sum:
-$$ J = \sum_{i < j} \pi_i \pi_j \exp\left( - \frac{(\mu_i - \mu_j)^2}{4\sigma^2} \right) $$
-
-\paragraph{Gaussian Mixture Model with Kolchinsky Objective}
-Kolchinsky and Tracey \cite{Kolchinsky_2017} introduced a family of computationally efficient estimators for mixture entropy that rely on calculating pairwise distances between component distributions, proving they form a strict lower bound on the true mixture entropy.
-For homoskedastic Gaussian mixtures, maximizing this lower bound utilizing the Bhattacharyya distance yields a similar pairwise objective. The effective variance in the penalty term is simply doubled compared to the Rényi objective:
-$$ J = \sum_{i < j} \pi_i \pi_j \exp\left( - \frac{(\mu_i - \mu_j)^2}{8\sigma^2} \right) $$
-
-\paragraph{Von Mises Mixture Model with Rényi Entropy}
-When the components are distributed on the unit circle as von Mises distributions with homoskedastic concentration $\kappa$, we again aim to minimize the integral of the squared density. The integral of the cross-term of two von Mises components evaluates to a modified Bessel function of the first kind of order zero, $I_0$. Stripping out constants and self-terms, the objective becomes:
-$$ J = \sum_{i < j} \pi_i \pi_j I_0\left( 2\kappa \cos\left( \frac{\mu_i - \mu_j}{2} \right) \right) $$
-
-\paragraph{Von Mises Mixture Model with Kolchinsky Objective}
-Applying Kolchinsky's lower bound using the Bhattacharyya coefficient to the von Mises mixture model yields an objective with an identical structure to the Rényi case. The difference lies solely in the concentration parameter, which is halved:
-$$ J = \sum_{i < j} \pi_i \pi_j I_0\left( \kappa \cos\left( \frac{\mu_i - \mu_j}{2} \right) \right) $$
-
-\paragraph{Wrapped Gaussian Mixture Model with Rényi Entropy}
-For a true wrapped Gaussian distribution on a periodic domain with period $P$, the density of the $i$-th component is given by the infinite sum $p_i(x) = \sum_{k=-\infty}^\infty \mathcal{N}(x | \mu_i + kP, \sigma^2)$.
-When evaluating the information potential $J = \int_0^P p(x)^2 dx$ for the mixture over one period, the cross-term between component $i$ and component $j$ can be evaluated exactly. Using the unfolding property of wrapped distributions, the integral of the periodic product simplifies to a single infinite sum of Gaussian evaluations:
-$$ \int_0^P p_i(x) p_j(x) dx = \sum_{k=-\infty}^\infty \mathcal{N}(0 | \mu_i - \mu_j + kP, 2\sigma^2) $$
-Dropping the leading scalar and the self-interaction terms, the exact pairwise objective to minimize becomes:
-$$ J = \sum_{i < j} \pi_i \pi_j \sum_{k=-\infty}^\infty \exp\left( - \frac{(\mu_i - \mu_j + kP)^2}{4\sigma^2} \right) $$
-This infinite sum corresponds to the Jacobi theta function $\vartheta_3$. In practice, due to the rapid decay of the Gaussian tails, this series converges extremely quickly. For computationally efficient optimization with reasonably small $\sigma$, truncating the sum to just the nearest shifts $k \in \{-1, 0, 1\}$ provides a highly accurate approximation of the true wrapped entropy without introducing the artifactual weighting that arises from integrating finite spatial approximations over the real line.
-
-\subsubsection{An approximation for the entropy via Cramér's theorem}
-UNFINISHED
-Here we discuss a closed form approximation for the entropy in terms of the
-mixing weights, $\pi_i$, and the chosen means, $\mu_i$.
-This enables efficient gradient descent on the means $\mu_i$.
-We take a geometric approach and consider a large sample, $\mathbf{X}$,
-in $N$-dimensional space.
-Let $A_i$ be a discrete random variable taking on the values of $\mu_i$,
-with respective probabilities $\pi_i$. Let $\mathcal{E}_i \sim \mathcal{N}(0, \sigma^2)$ be
-random noise on the $i$th component. Then we have that 
-$$\mathbf{X} = \mathbf{A} + \mathbf{\mathcal{E}}$$
-And
-\begin{align*}
-    H(\mathbf{X}) &= H(\mathbf{A}, \mathbf{X}) - H(\mathbf{A} | \mathbf{X}) \\
-    &= H(\mathbf{A}, \mathbf{\mathcal{E}}) - H(\mathbf{A} | \mathbf{X})  \quad \text{If $\mathbf{A}$ is fixed, $\mathbf{X}$ and $\mathbf{\mathcal{E}}$ differ only be a translation} \\
-    &= H(\mathbf{\mathcal{E}}) + H(\mathbf{A}) - H(\mathbf{A} | \mathbf{X}) \\
-    &= H(\mathbf{\mathcal{E}}) + I(\mathbf{A}; \mathbf{X})
-\end{align*}
-% NOTE: Since, A, is the transmitted signal
-% TODO: we can think of this as positioning codeword centers
-% (the spheres will differ in size because of the pi_i)
-Since the entropy of the noise is constant, our objective is to maximize the mutual information
-between $\mathbf{X}$ and the component choice, $\mathbf{A}$.
-We frame this in terms of trying to infer the true component choice, $\mathbf{A}$, from the observed sample, $\mathbf{X}$.
-To this end, we consider the prior distribution of the vertices' distances to the sample, $D = \|\mathbf{X} - \mathbf{B}\|_2^2$,
-where $\mathbf{B}$ represents a candidate component choice and is distributed identically to $\mathbf{A}$.
-% This needs to be A_i - B_i
-Noting that, $D = \sum_i D_i$ where $D_i = (A_i + \mathcal{E}_i - B_i)^2$, we have that
-$$P(\bar{D} = d) \approx \exp\left( - N I(d) \right)$$
-and the likelihood for $\bar{D}$ is
-$$P(\mathbf{X} | \bar{D} = d) = \exp\left( - \frac{1}{2\sigma^2} N d \right)$$
-Thus the posterior mode of $\bar{D}$ is attained where
-$N(I(d) + \frac{d}{2\sigma^2})$ is minimized,
-which occurs when $I'(d) = - \frac{1}{2\sigma^2}$.
-At this point, the prior probability of the posterior mode will be $\exp( - N I(d))$,
-meaning that the observation delivers $N I(d)$ bits of information about the component choice,
-or $I(d)$ bits per sample.
-
-$I(d)$ had a closed form expression, although its derivation is a somewhat formidable piece of algebra.
-We begin by defining the random variable $C_i = A_i - B_i$, which is also a discrete random variable
-taking on the values of $d_{ij} = \mu_i - \mu_j$ with probabilities $\rho_{ij} = \pi_i \pi_j$.
-
-Solving for $I$ in terms of its derivative, and setting it to $-\frac{1}{2\sigma^2}$, we have that
-
-$$\mathbf{I\left(\theta = -\frac{1}{2\sigma^2}\right) = \frac{1}{2} \ln(2) - \frac{1}{4} - \ln(Z) - \frac{1}{8\sigma^2} \frac{Y}{Z}}$$
-
-where
-
-$$\mathbf{Z = \sum_{i,j} \rho_{ij} \exp\left( -\frac{d_{ij}^2}{4\sigma^2} \right)}$$
-
-and
-
-$$\mathbf{Y = \sum_{i,j} \rho_{ij} d_{ij}^2 \exp\left( -\frac{d_{ij}^2}{4\sigma^2} \right)}$$.
-
-The final term may be recognized as the expected squared distance of $C_i$ under a Boltzmann distribution.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/tplace_sample_plot.png}
+    \caption{
+        \textbf{Phase Optimization for Different Values of $F$ and $I$.}
+        This figure shows a wrapped normal mixture distribution with
+        $N=300$ components and synthetic weights, $\pi_n$, taken
+        as the softmax of a normal distribution.
+        The top plot, "Equally Spaced Phases", shows the mixture if we
+        assign phases as $\phi_n = n / N$.
+        The lower plots show the mixture after the optimization of $\phi_n$,
+        for different values of $F$ and $I$.
+    }
+    \label{fig:tplace-sample-plot}
+\end{figure}
 
 
 \section{User Parameters}
