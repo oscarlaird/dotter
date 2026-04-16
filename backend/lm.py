@@ -22,7 +22,7 @@ from fastapi import FastAPI, WebSocket
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-EXPECTED_FILTERED_TOKEN_COUNT = 17_236
+EXPECTED_FILTERED_TOKEN_COUNT = 17_268
 HF_SPACE_MARKER = "▁"
 ROOT_MARKER = "^"
 STOP_MARKER = "$"

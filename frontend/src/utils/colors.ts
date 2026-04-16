@@ -45,6 +45,8 @@ const letterToColor: Record<string, ColorName> = {
 	' ': 'white',
 	$: 'red',
 	'.': 'red',
+	',': 'red',
+	"'": 'red',
 };
 
 function colorFromLetter(letter: string): RGB {

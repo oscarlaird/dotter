@@ -14,8 +14,8 @@ use super::core::XBayes;
 use super::core::XNode;
 
 /// Parse a filter string into a set of [`Symbol`] values.
-/// Bytes are interpreted like the trie alphabet: `a`–`z`, `_` → [`Symbol::Space`],
-/// `$` → [`Symbol::Stop`], `^` → [`Symbol::Start`].
+/// Bytes are interpreted like the trie alphabet: `a`–`z`, `,`, `.`, `'`,
+/// `_` → [`Symbol::Space`], `$` → [`Symbol::Stop`], `^` → [`Symbol::Start`].
 /// Whitespace in `filter` is ignored. Unknown characters panic.
 ///
 /// An **empty** filter (after trimming) means: show **every** node.
@@ -26,7 +26,7 @@ pub(crate) fn parse_symbol_filter(filter: &str) -> Option<HashSet<Symbol>> {
             continue;
         }
         let Some(sym) = Symbol::from_byte(ch as u8) else {
-            panic!("debug trie filter: unknown character {ch:?} (use a-z, _, $, ^)");
+            panic!("debug trie filter: unknown character {ch:?} (use a-z, ',', '.', ''', _, $, ^)");
         };
         set.insert(sym);
     }

@@ -1,10 +1,10 @@
 /// Number of symbols in the fixed trie alphabet, excluding the start marker.
-pub const RADIX: usize = 28;
+pub const RADIX: usize = 31;
 pub const N_SYMBOLS: usize = RADIX + 1;
 pub type RadixBitmap = u32;
 
-/// Default trie alphabet: `a`–`z`, `_` (word boundary), `$` (stop), `^` (start).
-pub const DEFAULT_ALPHABET: [u8; N_SYMBOLS] = *b"abcdefghijklmnopqrstuvwxyz_$^";
+/// Default trie alphabet: `a`–`z`, `,`, `.`, `'`, `_` (word boundary), `$` (stop), `^` (start).
+pub const DEFAULT_ALPHABET: [u8; N_SYMBOLS] = *b"abcdefghijklmnopqrstuvwxyz,.'_$^";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(u8)]
@@ -35,9 +35,12 @@ pub enum Symbol {
     X = 23,
     Y = 24,
     Z = 25,
-    Space = 26,
-    Stop = 27,
-    Start = 28,
+    Comma = 26,
+    Period = 27,
+    Apostrophe = 28,
+    Space = 29,
+    Stop = 30,
+    Start = 31,
 }
 
 impl Symbol {
@@ -68,6 +71,9 @@ impl Symbol {
         Self::X,
         Self::Y,
         Self::Z,
+        Self::Comma,
+        Self::Period,
+        Self::Apostrophe,
         Self::Space,
         Self::Stop,
         Self::Start,
@@ -101,6 +107,9 @@ impl Symbol {
             b'x' => Some(Self::X),
             b'y' => Some(Self::Y),
             b'z' => Some(Self::Z),
+            b',' => Some(Self::Comma),
+            b'.' => Some(Self::Period),
+            b'\'' => Some(Self::Apostrophe),
             b'_' => Some(Self::Space),
             b'$' => Some(Self::Stop),
             b'^' => Some(Self::Start),
@@ -136,6 +145,9 @@ impl Symbol {
             Self::X => b'x',
             Self::Y => b'y',
             Self::Z => b'z',
+            Self::Comma => b',',
+            Self::Period => b'.',
+            Self::Apostrophe => b'\'',
             Self::Space => b'_',
             Self::Stop => b'$',
             Self::Start => b'^',
@@ -170,9 +182,12 @@ impl Symbol {
             23 => Self::X,
             24 => Self::Y,
             25 => Self::Z,
-            26 => Self::Space,
-            27 => Self::Stop,
-            28 => Self::Start,
+            26 => Self::Comma,
+            27 => Self::Period,
+            28 => Self::Apostrophe,
+            29 => Self::Space,
+            30 => Self::Stop,
+            31 => Self::Start,
             _ => panic!("Symbol::from_slot: invalid slot"),
         }
     }
@@ -209,9 +224,12 @@ impl Symbol {
             23 => b'x',
             24 => b'y',
             25 => b'z',
-            26 => b'_',
-            27 => b'$',
-            28 => b'^',
+            26 => b',',
+            27 => b'.',
+            28 => b'\'',
+            29 => b'_',
+            30 => b'$',
+            31 => b'^',
             _ => panic!("invalid slot: {}", slot),
         }
     }
@@ -244,9 +262,12 @@ impl Symbol {
             b'x' => 23,
             b'y' => 24,
             b'z' => 25,
-            b'_' => 26,
-            b'$' => 27,
-            b'^' => 28,
+            b',' => 26,
+            b'.' => 27,
+            b'\'' => 28,
+            b'_' => 29,
+            b'$' => 30,
+            b'^' => 31,
             _ => panic!("invalid byte: {}", byte),
         }
     }
