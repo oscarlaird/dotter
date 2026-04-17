@@ -18,7 +18,7 @@ const BASE: u64 = 10000;
 #[cfg(any(test, debug_assertions))]
 const INV_BASE: u64 = 1_487_038_156_641_911_229;
 
-const MAX_APPEND_LENGTH: usize = 16; // TODO: this should come from the tokenizer
+const MAX_APPEND_LENGTH: usize = 32; // TODO: this should come from the tokenizer
 
 pub type Hash = u64;
 

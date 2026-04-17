@@ -23,6 +23,7 @@ import {
 import {
 	computeScrollLayoutState,
 	findTutorTargetKey,
+	ROOT_SYMBOL,
 	type ExpandedSnapshot,
 	type VisibleNodeTimerMap,
 } from '../domain/trieLayout';
@@ -106,7 +107,7 @@ function MainPage() {
 	const [practicePhrase, setPracticePhrase] = useState(() => randomPracticePhrase());
 
 	const [scrollOffset, setScrollOffset] = useState(0);
-	const [scrollRoot, setScrollRoot] = useState('^');
+	const [scrollRoot, setScrollRoot] = useState(ROOT_SYMBOL);
 	const [scrollAncestorKeys, setScrollAncestorKeys] = useState<string[]>([]);
 	const [firstForkDepth, setFirstForkDepth] = useState<number | null>(null);
 	const scrollOffsetRef = useRef(0);

@@ -1,5 +1,19 @@
 type RGB = [number, number, number];
-type ColorName = 'green' | 'red' | 'blue' | 'yellow' | 'purple' | 'orange' | 'tan' | 'gray' | 'white' | 'black' | 'undefined';
+type ColorName =
+	| 'green'
+	| 'red'
+	| 'blue'
+	| 'yellow'
+	| 'purple'
+	| 'orange'
+	| 'tan'
+	| 'gray'
+	| 'white'
+	| 'black'
+	| 'numpad'
+	| 'specialpad'
+	| 'shiftpad'
+	| 'undefined';
 
 const colorToRgb: Record<ColorName, RGB> = {
 	green: [34, 177, 76],
@@ -12,6 +26,10 @@ const colorToRgb: Record<ColorName, RGB> = {
 	gray: [160, 160, 160],
 	white: [255, 255, 255],
 	black: [0, 0, 0],
+	// Trie pad-mode sentinels (Rust `N` / `Q` / `U`): distinct from letter keys.
+	numpad: [0, 168, 150],
+	specialpad: [139, 92, 246],
+	shiftpad: [245, 158, 11],
 	undefined: [255, 255, 255],
 };
 
@@ -42,11 +60,15 @@ const letterToColor: Record<string, ColorName> = {
 	x: 'orange',
 	y: 'yellow',
 	z: 'green',
+	Z: 'red',
 	' ': 'white',
 	$: 'red',
 	'.': 'red',
 	',': 'red',
 	"'": 'red',
+	N: 'numpad',
+	Q: 'specialpad',
+	U: 'shiftpad',
 };
 
 function colorFromLetter(letter: string): RGB {

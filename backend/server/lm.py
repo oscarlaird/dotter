@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from . import token_mapping
+
 import atexit
 import asyncio
 import json
@@ -22,12 +24,9 @@ from fastapi import FastAPI, WebSocket
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_NAME = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-EXPECTED_FILTERED_TOKEN_COUNT = 17_268
-HF_SPACE_MARKER = "▁"
-ROOT_MARKER = "^"
-STOP_MARKER = "$"
+EXPECTED_FILTERED_TOKEN_COUNT = 25_471
 PIDFILE_PATH = Path("/tmp/dotter_new_lm.pid")
-CALIBRATION_DB_PATH = Path(__file__).with_name("calibration.sqlite3")
+CALIBRATION_DB_PATH = Path(__file__).parent.parent / "calibration.sqlite3"
 START_TS = time.monotonic()
 PRIORS_PER_LIKELIHOOD_CYCLE = 5
 VariationalParams = dict[str, float]
@@ -63,15 +62,12 @@ def _required_eos_token_id(tokenizer: AutoTokenizer) -> int:
     return int(tokenizer.eos_token_id)
 
 
-def _internal_token_to_hf_token(token: str) -> str:
-    return token.replace("_", HF_SPACE_MARKER)
-
-
 def _bayes_string_to_model_text(full_string: str) -> str:
-    if not full_string.startswith(ROOT_MARKER):
-        raise ValueError(f"expected requested prior to start with {ROOT_MARKER!r}: {full_string!r}")
-    surface = full_string.removeprefix(ROOT_MARKER)
-    return surface.replace("_", " ")
+    if not full_string.startswith(token_mapping.TRIE_START):
+        raise ValueError(f"expected requested prior to start with {token_mapping.TRIE_START!r}: {full_string!r}")
+    surface = full_string.removeprefix(token_mapping.TRIE_START)
+    assert token_mapping.TRIE_STOP not in surface, f"stop token {token_mapping.TRIE_STOP!r} found in surface: {surface!r}"
+    return token_mapping.trie_token_to_hf_token(surface)
 
 
 def _kill_process(pid: int) -> None:
@@ -215,19 +211,24 @@ class PriorModel:
 
         _log("building lex-index to tokenizer-id mapping")
         vocab = self.tokenizer.get_vocab()
-        self.clean_ids = np.array(
+        self.lex_id_to_orig_id = np.array(
             [
                 self.stop_token_id
-                if token == STOP_MARKER
-                else vocab[_internal_token_to_hf_token(token)]
+                if token == token_mapping.TRIE_STOP
+                else
+                (
+                    np.iinfo(np.int64).max
+                    if token in token_mapping.TRIE_CONTROL_CHARS
+                    else vocab[token_mapping.trie_token_to_hf_token(token)]
+                )
                 for token in lexicographic_tokens
             ],
             dtype=np.int64,
         )
         _log("lex-index mapping complete")
-        if len(self.clean_ids) != EXPECTED_FILTERED_TOKEN_COUNT:
+        if len(self.lex_id_to_orig_id) != EXPECTED_FILTERED_TOKEN_COUNT:
             raise ValueError(
-                f"filtered token count mismatch: expected {EXPECTED_FILTERED_TOKEN_COUNT}, got {len(self.clean_ids)}"
+                f"filtered token count mismatch: expected {EXPECTED_FILTERED_TOKEN_COUNT}, got {len(self.lex_id_to_orig_id)}"
             )
 
         _log("PriorModel init complete")
@@ -248,7 +249,14 @@ class PriorModel:
         with torch.no_grad():
             last_logits = self.cache.infer_next_logits(token_ids, self.model, self.device)
 
-        follower_logits = last_logits[self.clean_ids]
+        # The control character tokens "N", "U", "Q" are tokens/subtokens in the trie tokenizer
+        # but do not correspond to any HF token. We call them "auxiliary" tokens.
+        # aux tokens never appear in the canonical tokenization of a character sequence,
+        # hence we assign them very low logits.
+        aux_token_mask = self.lex_id_to_orig_id == np.iinfo(np.int64).max
+        follower_logits = np.empty_like(self.lex_id_to_orig_id, dtype=np.float64)
+        follower_logits[aux_token_mask] = -100
+        follower_logits[~aux_token_mask] = last_logits[self.lex_id_to_orig_id[~aux_token_mask]]
         payload = {
             "full_string": requested_prior.full_string,
             "final_token_lexindex": requested_prior.last_token_lexindex,

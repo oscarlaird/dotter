@@ -9,14 +9,16 @@ use std::time::Instant;
 use super::prepared_allpairs::{
     self, MergeRows, PreparedFirstAllPairs, PreparedSecondBuckets, PreparedSecondToken,
 };
-use super::tokenizer_config::NUM_TOKENS;
+use super::tokenizer_config::{NUM_MERGE_ROWS, NUM_TOKENS};
 use super::{
-    hf_token_to_internal, BpeMerges, HF_SPACE_MARKER, NO_PACKED_SPINE_INDEX,
+    hf_token_to_internal, BpeMerges, NO_PACKED_SPINE_INDEX,
     PackedSpine, PrefixLexIndex, SPACESYMBOL, SpineEntry, TokenLexIndex,
 };
+
+const HF_SPACE_MARKER: char = '\u{2581}';
 use crate::rolling_hash as rh;
 
-pub(crate) type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_TOKENS>;
+pub(crate) type TinyLlamaPreparedFirstAllPairs = PreparedFirstAllPairs<NUM_MERGE_ROWS>;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CanonicalFollowersTimingSnapshot {
@@ -498,7 +500,7 @@ impl TinyLlamaWordTokenizer {
         let (start, stop) = *self
             .token_lex_range_by_prefix_hash
             .get(prefix_hash)
-            .expect("prefix hash must be in tokenizer prefix map");
+            .unwrap_or_else(|| panic!("prefix hash {} must be in tokenizer prefix map", prefix_hash));
         (
             TokenLexIndex::from_usize(start),
             TokenLexIndex::from_usize(stop),
@@ -586,7 +588,7 @@ impl TinyLlamaWordTokenizer {
         first_lex_index: TokenLexIndex,
     ) -> TinyLlamaPreparedFirstAllPairs {
         let first_token_right_spine = self.right_packed_spine_for_lex_index(first_lex_index);
-        PreparedFirstAllPairs::<NUM_TOKENS>::build(
+        PreparedFirstAllPairs::<NUM_MERGE_ROWS>::build(
             first_token_right_spine,
             &self.prepared_merge_rows,
         )
@@ -614,7 +616,7 @@ impl TinyLlamaWordTokenizer {
             "canonical pair output len must match vocab len"
         );
         self.seed_space_prefixed_second_tokens(out);
-        let prepared_first = PreparedFirstAllPairs::<NUM_TOKENS>::build(
+        let prepared_first = PreparedFirstAllPairs::<NUM_MERGE_ROWS>::build(
             *first_token_right_spine,
             &self.prepared_merge_rows,
         );
@@ -623,7 +625,7 @@ impl TinyLlamaWordTokenizer {
             ($right_len:literal, $left_len:literal) => {
                 for entry in &self.prepared_second_buckets[$left_len] {
                     let is_canonical = prepared_allpairs::is_canonical_allpairs_small::<
-                        NUM_TOKENS,
+                        NUM_MERGE_ROWS,
                         $left_len,
                         $right_len,
                     >(&prepared_first, &entry.left_spine);

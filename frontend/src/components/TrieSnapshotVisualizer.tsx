@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+	ROOT_SYMBOL,
 	SCROLL_TARGET_X_PX,
+	SPACE_SYMBOL,
+	STOP_SYMBOL,
 	buildVisibleTree,
 	computeLaidOutNodes,
 	deepestVisibleNode,
@@ -53,6 +56,8 @@ const BOX_WIDTH = 37;
 const TIMER_RADIUS = 15;
 const TIMER_STROKE_WIDTH = 2;
 const TIMER_FONT_SIZE = 37;
+/** Pad-mode `N` / `Q` / `U` use emoji or wide glyphs; draw smaller than letter timers. */
+const PAD_MODE_GLYPH_FONT_SCALE = 0.52;
 const DEBUG_LEVEL_GUTTER = 56;
 
 function timerFraction(time: number, phase: number, period: number): number {
@@ -60,27 +65,102 @@ function timerFraction(time: number, phase: number, period: number): number {
 }
 
 function finalSymbol(fullString: string): string {
-	if (fullString === '^') {
-		return '^';
+	if (fullString === ROOT_SYMBOL) {
+		return ROOT_SYMBOL;
 	}
-	return fullString.at(-1) ?? '^';
+	return fullString.at(-1) ?? ROOT_SYMBOL;
 }
 
 function displaySymbol(symbol: string): string {
-	if (symbol === '_') {
+	if (symbol === SPACE_SYMBOL) {
 		return ' ';
 	}
-	if (symbol === '^') {
-		return '^';
+	// Trie pad-mode sentinels (match Rust `symbol.rs`): show pictographs in the canvas timer.
+	if (symbol === 'N') {
+		return '#️⃣';
+	}
+	if (symbol === 'Q') {
+		return '🔣';
+	}
+	if (symbol === 'U') {
+		return '⇧';
 	}
 	return symbol;
 }
 
+/** Trie wire sentinels — same letters as `backend/server/token_mapping.py` / Rust `symbol.rs`. */
+const TRIE_NUMPAD = 'N';
+const TRIE_SPECIAL_SHIFT = 'Q';
+const TRIE_SHIFT = 'U';
+
+function isAsciiDigit(c: string): boolean {
+	return c >= '0' && c <= '9';
+}
+
+function isLowercaseLetter(c: string): boolean {
+	return c >= 'a' && c <= 'z';
+}
+
+/**
+ * Human-readable text for a trie path after the root `A` (inverse of HF → trie encoding).
+ * - `S` → space
+ * - `N` before a digit → digit only (omit numpad marker)
+ * - `Q` before the next char → that char only (omit special-shift marker)
+ * - `U` before a lowercase letter → uppercase letter (omit shift marker)
+ * - `Z` (stop) omitted from the caption
+ */
+function trieWireToDisplayPrefix(s: string): string {
+	let i = 0;
+	let out = '';
+	while (i < s.length) {
+		const c = s[i];
+		if (c === STOP_SYMBOL) {
+			i += 1;
+			continue;
+		}
+		if (c === SPACE_SYMBOL) {
+			out += ' ';
+			i += 1;
+			continue;
+		}
+		if (c === TRIE_NUMPAD) {
+			if (i + 1 < s.length && isAsciiDigit(s[i + 1])) {
+				out += s[i + 1];
+				i += 2;
+			} else {
+				i += 1;
+			}
+			continue;
+		}
+		if (c === TRIE_SPECIAL_SHIFT) {
+			if (i + 1 < s.length) {
+				out += s[i + 1];
+				i += 2;
+			} else {
+				i += 1;
+			}
+			continue;
+		}
+		if (c === TRIE_SHIFT) {
+			if (i + 1 < s.length && isLowercaseLetter(s[i + 1])) {
+				out += s[i + 1].toUpperCase();
+				i += 2;
+			} else {
+				i += 1;
+			}
+			continue;
+		}
+		out += c;
+		i += 1;
+	}
+	return out;
+}
+
 function offscreenPrefixText(scrollRoot: string): string {
-	if (scrollRoot === '^') {
+	if (scrollRoot === ROOT_SYMBOL) {
 		return '';
 	}
-	return scrollRoot.slice(1).split('_').join(' ');
+	return trieWireToDisplayPrefix(scrollRoot.slice(1));
 }
 
 /** Timer circle center and radius — fixed CSS px, not scaled with fit-to-width. */
@@ -105,10 +185,10 @@ function timerCircleGeometry(
 }
 
 function timerColor(symbol: string): [number, number, number] {
-	if (symbol === '_') {
+	if (symbol === SPACE_SYMBOL) {
 		return colorFromLetter(' ');
 	}
-	if (symbol === '^') {
+	if (symbol === ROOT_SYMBOL) {
 		return [255, 255, 255];
 	}
 	return colorFromLetter(symbol);
@@ -272,14 +352,14 @@ function TrieSnapshotVisualizer({
 
 	/** Path key for the off-screen caption: through first fork, or full deepest path if no fork. Hidden until scroll leaves root. */
 	const offscreenPrefixDisplay = useMemo(() => {
-		if (scrollRoot === '^') {
+		if (scrollRoot === ROOT_SYMBOL) {
 			return '';
 		}
 		const fork = firstForkNode(visibleTree);
 		const pathKey = fork
 			? fork.fullString
-			: (deepestVisibleNode(visibleTree)?.fullString ?? '^');
-		if (pathKey === '^') {
+			: (deepestVisibleNode(visibleTree)?.fullString ?? ROOT_SYMBOL);
+		if (pathKey === ROOT_SYMBOL) {
 			return '';
 		}
 		return offscreenPrefixText(pathKey);
@@ -443,6 +523,9 @@ function TrieSnapshotVisualizer({
 			const timerFrac = timer ? timerFraction(time, timer.phase, period) : 0;
 			const isTutorTarget = tutorTargetKey === node.fullString;
 			const timerFontSize = isTutorTarget ? TIMER_FONT_SIZE * 1.8 : TIMER_FONT_SIZE;
+			const padModeGlyph =
+				node.symbol === 'N' || node.symbol === 'Q' || node.symbol === 'U';
+			const labelFontSize = padModeGlyph ? timerFontSize * PAD_MODE_GLYPH_FONT_SCALE : timerFontSize;
 			const { cx, cy, r: baseTimerRadius } = timerCircleGeometry(
 				node,
 				currentTime,
@@ -463,11 +546,11 @@ function TrieSnapshotVisualizer({
 
 			ctx.beginPath();
 			ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 1)`;
-			if (node.symbol === '$') {
+			if (node.symbol === STOP_SYMBOL) {
 				const squareSize = 17;
 				ctx.fillRect(cx - squareSize / 2, cy - squareSize / 2, squareSize, squareSize);
 			} else if (displayText) {
-				ctx.font = `${timerFontSize}px verdana, helvetica, sans-serif`;
+				ctx.font = `${labelFontSize}px verdana, helvetica, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
 				ctx.textAlign = 'center';
 				ctx.textBaseline = 'middle';
 				ctx.fillText(displayText, cx, cy);

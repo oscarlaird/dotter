@@ -15,7 +15,8 @@ pub(crate) struct MergeRows {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PreparedFirstAllPairs<const NUM_TOKENS: usize> {
+/// `NUM_MERGE_ROWS` is the BPE **piece-id** count (`BpeMerges.pieces.len()`), not vocab / lex size.
+pub(crate) struct PreparedFirstAllPairs<const NUM_MERGE_ROWS: usize> {
     right_len: u8,
     right_piece_formed_priority_score: [u16; MAX_PACKED_SPINE_LEN + 1],
     dense_matrix: Vec<u16>,
@@ -62,13 +63,13 @@ impl MergeRows {
     }
 }
 
-impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
+impl<const NUM_MERGE_ROWS: usize> PreparedFirstAllPairs<NUM_MERGE_ROWS> {
     pub(crate) fn new_reusable() -> Self {
         Self {
             right_len: 0,
             right_piece_formed_priority_score: [0u16; MAX_PACKED_SPINE_LEN + 1],
             dense_matrix: Vec::new(),
-            row_partner_bitmap: vec![0u8; NUM_TOKENS],
+            row_partner_bitmap: vec![0u8; NUM_MERGE_ROWS],
         }
     }
 
@@ -78,18 +79,18 @@ impl<const NUM_TOKENS: usize> PreparedFirstAllPairs<NUM_TOKENS> {
         merge_rows: &MergeRows,
     ) {
         assert!(
-            NUM_TOKENS <= MAX_PREPARED_DENSE_TOKEN_COUNT,
+            NUM_MERGE_ROWS <= MAX_PREPARED_DENSE_TOKEN_COUNT,
             "prepared dense table exceeds the maximum supported piece-id width"
         );
         assert!(
-            merge_rows.token_count <= NUM_TOKENS,
+            merge_rows.token_count <= NUM_MERGE_ROWS,
             "prepared dense fast path expects piece ids to fit within the configured table"
         );
         self.row_partner_bitmap.fill(0);
         self.right_piece_formed_priority_score = [0u16; MAX_PACKED_SPINE_LEN + 1];
 
         let right_len = first_token_right_spine.as_slice().len();
-        let needed = NUM_TOKENS * right_len;
+        let needed = NUM_MERGE_ROWS * right_len;
         if self.dense_matrix.len() < needed {
             self.dense_matrix.resize(needed, 0);
         }
@@ -177,11 +178,11 @@ pub(crate) fn bucket_prepared_second_tokens(entries: &[PreparedSecondToken]) -> 
 
 #[inline(always)]
 pub(crate) fn is_canonical_allpairs_small<
-    const NUM_TOKENS: usize,
+    const NUM_MERGE_ROWS: usize,
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstAllPairs<NUM_TOKENS>,
+    prepared_first: &PreparedFirstAllPairs<NUM_MERGE_ROWS>,
     left_spine: &LeftSpineAllPairs,
 ) -> bool {
     if prepared_first.right_len == 0 || LEFT_LEN == 0 {
@@ -255,16 +256,16 @@ pub(crate) fn is_canonical_allpairs_small<
 }
 
 pub(crate) fn scan_allpairs_small_bucket<
-    const NUM_TOKENS: usize,
+    const NUM_MERGE_ROWS: usize,
     const LEFT_LEN: usize,
     const RIGHT_LEN: usize,
 >(
-    prepared_first: &PreparedFirstAllPairs<NUM_TOKENS>,
+    prepared_first: &PreparedFirstAllPairs<NUM_MERGE_ROWS>,
     entries: &[PreparedSecondToken],
 ) -> u64 {
     let mut canonical = 0u64;
     for entry in entries {
-        canonical += is_canonical_allpairs_small::<NUM_TOKENS, LEFT_LEN, RIGHT_LEN>(
+        canonical += is_canonical_allpairs_small::<NUM_MERGE_ROWS, LEFT_LEN, RIGHT_LEN>(
             prepared_first,
             &entry.left_spine,
         ) as u64;

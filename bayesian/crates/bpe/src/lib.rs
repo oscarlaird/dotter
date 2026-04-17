@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 //! Byte-pair encoding: load merges and run the usual merge loop on a string.
 //!
-//! For **TinyLlama** (and similar HF SentencePiece+BPE models), `tokenizer.json` uses the
-//! SentencePiece whitespace marker **`▁`** (U+2581). We normalize that to ASCII **`_`** (U+005F)
-//! everywhere inside this crate so BPE strings match the trie alphabet. See [`TinyLlamaWordTokenizer`].
+//! For **TinyLlama** (and similar HF SentencePiece+BPE models), the upstream `tokenizer.json`
+//! uses SentencePiece whitespace marker **`▁`** (U+2581). The **filtered** tokenizer (produced by
+//! `scripts/filter_bpe_tokenizer.py`) replaces `▁` → `S` and appends a synthetic `Z` stop token
+//! so internal BPE strings match the trie alphabet (`S` word boundary, `Z` stop). See
+//! [`TinyLlamaWordTokenizer`].
 
 pub use ::rolling_hash as rolling_hash;
 
@@ -19,7 +21,7 @@ pub mod prepared_allpairs;
 mod tokenizer_config;
 mod word_tokenizer;
 
-pub use self::tokenizer_config::{NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_STR};
+pub use self::tokenizer_config::{NUM_MERGE_ROWS, NUM_PREFIXES, NUM_TOKENS, TOKENIZER_JSON_STR};
 pub use self::word_tokenizer::{
     CanonicalFollowersTimingSnapshot,
     TinyLlamaWordTokenizer,
@@ -65,26 +67,17 @@ impl PrefixLexIndex {
     }
 }
 
-/// Hugging Face / SentencePiece surface form in `tokenizer.json` only (not used after load).
-pub(crate) const HF_SPACE_MARKER: char = '\u{2581}';
+/// Word-boundary / "space" marker in all internally stored BPE strings (`lex_tokens`, merges, etc.).
+/// The filtered tokenizer already uses `S` (not HF `▁`), so this constant is only needed when
+/// normalizing user-supplied surface strings at runtime.
+pub(crate) const SPACESYMBOL: char = 'S';
 
-/// Word-boundary / “space” marker in all internally stored BPE strings (`lex_tokens`, merges, etc.).
-pub(crate) const SPACESYMBOL: char = '_';
-
-/// Map `tokenizer.json` token strings to internal form: every `HF_SPACE_MARKER` → `SPACESYMBOL`.
+/// The filtered tokenizer already stores payload tokens in the trie alphabet (`S` for word
+/// boundary, plus a synthetic `Z` stop entry), so `hf_token_to_internal` is a no-op identity. It
+/// is kept as a named pass-through so call sites remain self-documenting.
+#[inline]
 pub(crate) fn hf_token_to_internal(s: &str) -> String {
-    if !s.contains(HF_SPACE_MARKER) {
-        return s.to_string();
-    }
-    s.chars()
-        .map(|ch| {
-            if ch == HF_SPACE_MARKER {
-                SPACESYMBOL
-            } else {
-                ch
-            }
-        })
-        .collect()
+    s.to_string()
 }
 
 type PieceId = u32;
@@ -327,7 +320,7 @@ impl BpeMerges {
             rank,
         };
         let previous = self.merges.insert((left, right), entry);
-        debug_assert!(previous.is_none());
+        debug_assert!(previous.is_none(), "merge already exists: {left} {right} {merged} {rank}");
     }
 
     fn lookup_merge(&self, left: &PieceRef, right: &PieceRef) -> Option<MergeEntry> {
@@ -860,29 +853,30 @@ mod tests {
         let tok = TinyLlamaWordTokenizer::from_tokenizer_json(Path::new(
             tokenizer_config::TOKENIZER_JSON_PATH,
         ));
-        let hello = tok.lex_index("_hello").expect("expected tokenizer token");
-        let okay = tok.lex_index("_okay").expect("expected tokenizer token");
-        let abc = tok.lex_index("_abc").expect("expected tokenizer token");
+        // Bundled tokenizer.json uses trie-style leading `S` (word boundary), not HF `▁` / `_`.
+        let hello = tok.lex_index("Shello").expect("expected tokenizer token");
+        let okay = tok.lex_index("Sokay").expect("expected tokenizer token");
+        let abc = tok.lex_index("Sabc").expect("expected tokenizer token");
         let def = tok.lex_index("def").expect("expected tokenizer token");
-        let the = tok.lex_index("_the").expect("expected tokenizer token");
-        assert_eq!(tok.tokenize_string_to_lex_indices("_hello"), vec![hello]);
-        assert_eq!(tok.tokenize_string_to_lex_indices("_okay"), vec![okay]);
+        let the = tok.lex_index("Sthe").expect("expected tokenizer token");
+        assert_eq!(tok.tokenize_string_to_lex_indices("Shello"), vec![hello]);
+        assert_eq!(tok.tokenize_string_to_lex_indices("Sokay"), vec![okay]);
         assert_eq!(
-            tok.tokenize_string_to_lex_indices("_abcdef"),
+            tok.tokenize_string_to_lex_indices("Sabcdef"),
             vec![abc, def]
         );
-        assert_eq!(tok.tokenize_string_to_lex_indices("_the"), vec![the]);
+        assert_eq!(tok.tokenize_string_to_lex_indices("Sthe"), vec![the]);
         assert_eq!(tok.tokenize_string_to_lex_indices("def"), vec![def]);
         assert_eq!(
-            tok.tokenize_string_to_lex_indices("_abcdef"),
+            tok.tokenize_string_to_lex_indices("Sabcdef"),
             vec![abc, def]
         );
-        assert_eq!(tok.token_at(hello), "_hello");
-        assert!(tok.can_canonically_follow("_abc", "def"));
+        assert_eq!(tok.token_at(hello), "Shello");
+        assert!(tok.can_canonically_follow("Sabc", "def"));
         assert!(tok.lex_indices_with_left_spines().contains(&def.as_usize()));
         assert_eq!(
-            tok.tokenize_string_with_lex_indices("_abcdef"),
-            vec![("_abc".to_string(), abc), ("def".to_string(), def)]
+            tok.tokenize_string_with_lex_indices("Sabcdef"),
+            vec![("Sabc".to_string(), abc), ("def".to_string(), def)]
         );
         assert_eq!(
             tok.tokenize_string_with_lex_indices("def"),

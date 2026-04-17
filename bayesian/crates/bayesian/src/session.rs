@@ -6,7 +6,7 @@ use std::time::Instant;
 use bpe::TokenLexIndex;
 use calibration::VariationalParams;
 use trie::safe_float::{Float, into_f32};
-use trie::symbol::{Symbol, RADIX};
+use trie::symbol::{PadMode, START_SYMBOL, XSymbol};
 use trie::core::{XBayes, RecalcType, RecalcResult};
 use trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
 use trie::prediction::XPrediction;
@@ -53,14 +53,14 @@ fn elapsed_ms_since(start: TimingStart) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
 
-fn serialize_symbol<S>(symbol: &Symbol, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_symbol<S>(symbol: &XSymbol, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.serialize_char(symbol.to_byte() as char)
+    serializer.serialize_char(*symbol as char)
 }
 
-fn deserialize_optional_symbol<'de, D>(deserializer: D) -> Result<Option<Symbol>, D::Error>
+fn deserialize_optional_symbol<'de, D>(deserializer: D) -> Result<Option<XSymbol>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -77,8 +77,7 @@ where
         if code > 127 {
             return Err(serde::de::Error::custom("non-ASCII symbol"));
         }
-        Symbol::from_byte(code as u8)
-            .ok_or_else(|| serde::de::Error::custom("invalid trie symbol byte"))
+        Ok(code as XSymbol)
     })
     .transpose()
 }
@@ -108,9 +107,9 @@ struct NHash {
     // by default, serde will ignore extra fields
     #[serde(alias = "l")]
     likelihood: f32,
-    /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `_`, `$`, `^`).
+    /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `S`, `Z`, `A`).
     #[serde(default, deserialize_with = "deserialize_optional_symbol")]
-    symbol: Option<Symbol>,
+    symbol: Option<XSymbol>,
     phase: f64,
 }
 
@@ -226,7 +225,7 @@ impl BayesianSession {
                     likelihood: Float::from(nhash.likelihood),
                     symbol: nhash.symbol.unwrap_or_else(|| {
                         let b = *s.as_bytes().last().unwrap();
-                        Symbol::from_byte(b).unwrap()
+                        b as XSymbol
                     }),
                     is_leaf: false,
                 }))
@@ -316,35 +315,12 @@ impl BayesianSession {
     }
 
     pub fn certain_prefix_string(&mut self) -> String {
-        let start = timing_start();
         let certain_prefix_nodes = self.certain_prefix_nodes();
-        let target_hash = *certain_prefix_nodes
-            .last()
-            .expect("certain_prefix_string expected at least the root node");
-        let certain_set = certain_prefix_nodes.into_iter().collect::<std::collections::HashSet<_>>();
-        let mut current_hash = trie::ROOT_HASH;
-        let mut out = String::from(trie::ROOT_STRING);
+        let symbols = certain_prefix_nodes.iter()
+            .map(|hash| self.trie.nodes.get(hash).unwrap().symbol)
+            .collect::<Vec<_>>();
 
-        loop {
-            if current_hash == target_hash {
-                break;
-            }
-            let mut next_child = None;
-            for slot in 0..RADIX {
-                let byte = Symbol::slot_to_byte(slot);
-                let child_hash = rh::append_right(current_hash, byte);
-                if certain_set.contains(&child_hash) {
-                    assert!(next_child.is_none(), "certain_prefix_string expected a unique certain child");
-                    next_child = Some((child_hash, byte));
-                }
-            }
-            let (child_hash, byte) = next_child.expect("certain_prefix_string could not descend to deepest certain node");
-            out.push(byte as char);
-            current_hash = child_hash;
-        }
-
-        self.record_event("certain_prefix_string", start, None);
-        out
+        String::from_utf8(symbols).unwrap()
     }
 
     #[cfg(feature = "tokentrie")]
@@ -373,7 +349,17 @@ impl BayesianSession {
             final_token_lexindex: TokenLexIndex,
             follower_logits: Vec<f32>
         }
-        let payload= serde_json::from_str::<Payload>(&prior_json).unwrap();
+        let payload = serde_json::from_str::<Payload>(&prior_json)
+            .unwrap_or_else(|e| {
+                let truncated = if prior_json.len() > 200 {
+                    format!("{}...[truncated]", &prior_json[..200])
+                } else {
+                    prior_json.clone()
+                };
+                panic!("Deserialization of Payload failed: {} | Payload (truncated): {}", e, truncated)
+            });
+       
+   
         let json_payload_ix = self.push_json_payload(prior_json);
         let new_prediction = XPrediction::create_prediction(
             false,
@@ -426,7 +412,7 @@ impl BayesianSession {
             tp: Option<Float>,
             tp0: Option<Float>,
             a_tl0: Option<Float>,
-            symbol: Symbol,
+            symbol: XSymbol,
             upper_siblings_inclusive_cum_z: Option<Float>,
         }
         let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
@@ -437,30 +423,31 @@ impl BayesianSession {
             tp: None,
             tp0: None,
             a_tl0: None,
-            symbol: Symbol::Start,
+            symbol: START_SYMBOL,
             upper_siblings_inclusive_cum_z: None,
         });
 
         struct Frame {
             n_hash: Hash,
-            n_symbol: Symbol,
+            n_symbol: XSymbol,
             n_depth: u16,
         }
         // a frame is a node that *may* have children that should be added to the snapshot
         // by the time we see a frame, it should already be in the snapshot
         // the frame list is a visit list
         let mut full_string = String::new(); // character stack
-        let mut frames: Vec<Frame> = vec![Frame { n_hash: trie::ROOT_HASH, n_symbol: Symbol::Start, n_depth: 0 }];
+        let mut frames: Vec<Frame> = vec![Frame { n_hash: trie::ROOT_HASH, n_symbol: START_SYMBOL, n_depth: 0 }];
         while let Some(Frame { n_hash, n_symbol, n_depth }) = frames.pop() {
             full_string.truncate(n_depth as usize);
-            full_string.push(n_symbol.to_byte() as char);
+            full_string.push(n_symbol as char);
             debug_assert!(snapshot_by_hash.contains_key(&n_hash), "frame node not in snapshot");
-            let c_present = (0..RADIX).map(|slot| {
-                let c_byte = Symbol::slot_to_byte(slot);
+            let n_padmode = PadMode::for_xsymbol(n_symbol);
+            let c_present = (0..n_padmode.radix()).map(|slot| {
+                let c_byte = n_padmode.slot_to_xsymbol(slot);
                 let c_hash = rh::append_right(n_hash, c_byte);
                 nodes_set.contains(&c_hash)
             }).collect::<Vec<_>>();
-            let is_interior = c_present.iter().cloned().any(|p| p);
+            let is_interior = c_present.iter().any(|&p| p);
             if !is_interior {
                 continue;
             }
@@ -468,25 +455,23 @@ impl BayesianSession {
             let n_node = self.trie.nodes.get(&n_hash).unwrap();
             let c_z = n_node.c_z;
             // Compute the partial sums of c_z using logaddexp, i.e., log-sum-exp over upper siblings
-            let c_upper_siblings_inclusive_cum_z: [_; RADIX] = {
-                let mut accum = Float::NEG_INFINITY;
-                let mut arr = [Float::NEG_INFINITY; RADIX];
-                for i in 0..RADIX {
-                    accum = trie::logaddexp(accum, c_z[i]);
-                    arr[i] = accum;
-                }
-                arr
-            };
-            for slot in 0..RADIX {
+            let mut c_upper_siblings_inclusive_cum_z = vec![Float::NEG_INFINITY; n_padmode.radix()].into_boxed_slice();
+            let mut accum = Float::NEG_INFINITY;
+            for i in 0..n_padmode.radix() {
+                accum = trie::logaddexp(accum, c_z[i]);
+                c_upper_siblings_inclusive_cum_z[i] = accum;
+            }
+       
+            for slot in 0..n_padmode.radix() {
                 if !c_present[slot] {
                     continue;
                 }
-                let c_byte = Symbol::slot_to_byte(slot);
-                let c_symbol = Symbol::from_slot(slot);
+                let c_symbol = n_padmode.slot_to_xsymbol(slot);
+                let c_byte = c_symbol;
                 let c_hash = rh::append_right(n_hash, c_byte);
                 let mut c_string = full_string.clone();
-                c_string.push(c_symbol.to_byte() as char);
-                let (z, p, tp, tp0, a_tl0) = n_node.edge_snapshot_fields(c_symbol);
+                c_string.push(c_symbol as char);
+                let (z, p, tp, tp0, a_tl0) = n_node.edge_snapshot_fields(slot);
                 snapshot_by_hash.insert(c_hash, NString {
                     string: c_string,
                     z,
@@ -513,7 +498,7 @@ impl BayesianSession {
             tp0: Option<f32>,
             a_tl0: Option<f32>,
             #[serde(serialize_with = "serialize_symbol")]
-            symbol: Symbol,
+            symbol: XSymbol,
             upper_siblings_inclusive_cum_z: Option<f32>,
             hash: rh::Hash,
         }
@@ -549,22 +534,6 @@ impl BayesianSession {
         dump_json
     }
 
-    /// Print the trie to stderr (`tree`-style). `filter`: letters `a`–`z`, `_` (word boundary),
-    /// `$` (stop), `^` (start); empty shows all nodes (root is always shown when filtered).
-    #[cfg(not(feature = "wasm"))]
-    pub fn debug_eprint_trie(&self, filter: &str) {
-        let start = timing_start();
-        trie::debug::eprint_trie(&self.trie, filter, None);
-        self.record_event("debug_eprint_trie", start, None);
-    }
-
-    /// Print the trie to stderr, restricted to `hash_filter` after applying the symbol filter.
-    #[cfg(not(feature = "wasm"))]
-    pub fn debug_eprint_trie_hash_filter(&self, filter: &str, hash_filter: &rh::RHashSet) {
-        let start = timing_start();
-        trie::debug::eprint_trie(&self.trie, filter, Some(hash_filter));
-        self.record_event("debug_eprint_trie_hash_filter", start, None);
-    }
 }
 
 #[cfg(feature = "python")]

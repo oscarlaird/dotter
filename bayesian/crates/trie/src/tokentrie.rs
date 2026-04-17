@@ -4,11 +4,11 @@ use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 
 use crate::bpe::TokenLexIndex;
-use crate::symbol::{Symbol, RADIX};
+use crate::symbol::{PadMode, START_SYMBOL, TRIE_CONTROL_CHARS, XSymbol, NUMBERS, SPECIAL};
 use crate::safe_float::{Float, ZERO};
 use crate::core::XBayes;
 use crate::l_update::XLUpdate;
-use crate::ROOT_HASH;
+use crate::{ROOT_HASH, STOP_HASH};
 use crate::bpe::NUM_TOKENS;
 
 const MAX_CONTINUATIONS: usize = 100;
@@ -41,7 +41,7 @@ impl XBayes {
     fn traverse_and_count_l(
         l_update: &XLUpdate,
         b_hash: Hash,
-        suffix_chars: &[Symbol],
+        suffix_chars: &[XSymbol],
     ) -> (Float, bool) {
         // Returns:
         // - likelihood (Float): 
@@ -53,7 +53,7 @@ impl XBayes {
             if let Some(entry) = l_update.get(&cur_hash) {
                 return (entry.likelihood, on_or_beyond_edge);
             }
-            cur_hash = rh::pop_right(cur_hash, symbol.to_byte());
+            cur_hash = rh::pop_right(cur_hash, *symbol);
         }
         if let Some(entry) = l_update.get(&cur_hash) {
             return (entry.likelihood, on_or_beyond_edge);
@@ -64,7 +64,7 @@ impl XBayes {
             !a_on_or_beyond_edge
             }, 
             "traverse_and_count_l: should not be called when a_hash is on or beyond the edge\n  a_hash: {cur_hash:#x}\n  b_hash: {b_hash:#x}\n  suffix_chars: {:?}",
-            suffix_chars.iter().map(|s| s.to_byte()).collect::<Vec<_>>()
+            suffix_chars.iter().collect::<Vec<_>>()
         );
    
         panic!("traversed from b_hash to a_hash without hitting the l_update");
@@ -84,6 +84,7 @@ impl XBayes {
     // this will be exactly correct as long as we return fewer than 100 predictions
     // before the next likelihood update
     pub fn next_requested_prior(&mut self) -> RequestedPrior {
+        let stop_token_lexindex = self.tokenizer.lex_index_for_token_hash(&STOP_HASH);
         loop {
             let this_item = self.queue.peek().copied().expect("Queue should never be empty");
             let this_hash = match this_item.kind {
@@ -110,7 +111,7 @@ impl XBayes {
                     rev_str.push_str(&rev_token_str);
                     cur_hash = rh::truncate_right(cur_hash, token_hash, token_str.len());
                 }
-                rev_str.push(Symbol::Start.to_byte() as char);
+                rev_str.push(START_SYMBOL as char);
                 let full_string = rev_str.chars().rev().collect::<String>();
                 break RequestedPrior {
                     full_string,
@@ -136,7 +137,7 @@ impl XBayes {
                         (cuml_l, true)
                     } else {
                         let token_str = self.tokenizer.token_at(token_lexindex);
-                        let token_symbols = Symbol::string_to_vec(token_str);
+                        let token_symbols = token_str.as_bytes().to_vec();
                         XBayes::traverse_and_count_l(
                             &self.cum_likelihood,
                             this_hash,
@@ -146,7 +147,8 @@ impl XBayes {
                 }
             };
             // LIKELIHOOD (upper bound)
-            let mut tl_array = vec![Float::NAN; NUM_TOKENS].into_boxed_slice();
+            // TODO!!: this should be Float::NAN; -10_000.0 is a temp fix
+            let mut tl_array = vec![Float::from(-10_000.0f32); NUM_TOKENS].into_boxed_slice();
             if hit_cuml_edge {
                 tl_array.fill(cuml_l);
             } else {
@@ -167,8 +169,14 @@ impl XBayes {
                 cond_posterior_ub[j].total_cmp(&cond_posterior_ub[i])
             });
             // push to heap
+            let aux_token_lexindexes = TRIE_CONTROL_CHARS.iter()
+                .map(|&symbol| rh::append_right(0, symbol))
+                .map(|hash| self.tokenizer.lex_index_for_token_hash(&hash))
+                .collect::<Vec<_>>();
             for &ix in top_ix.iter().take(MAX_CONTINUATIONS) {
                 let token_lexindex = TokenLexIndex::from_usize(ix);
+                if token_lexindex == stop_token_lexindex { continue; }  // don't request stop terminated token sequences
+                if aux_token_lexindexes.contains(&token_lexindex) { continue; } // don't request final aux tokens
                 self.queue.push(QueueItem {
                     priority: this_item.p + cond_posterior_ub[ix],
                     p: this_item.p + this_pred.follower_prob(token_lexindex),
@@ -202,15 +210,33 @@ impl XBayes {
             suffix_hash: Hash,
             suffix_length: usize,
             n_cuml_l: Float,
+            n_padmode: PadMode
+
         }
-        let mut frames = vec![Frame {suffix_hash: 0u64, suffix_length: 0, n_cuml_l: node_cuml_l}];
+        let root_padmode = PadMode::for_xsymbol(nodes.get(&node_hash).unwrap().symbol);
+        assert!(matches!(root_padmode, PadMode::Default), "set_tl_array: root padmode is not Default");
+        // numbers and special_chars are illegal from the default pad
+        // let illegal_symbols = NUMBERS.iter().chain(SPECIAL.iter());
+        // for s in illegal_symbols {
+        //     let s_hash = rh::append_right(0, *s);
+        //     let s_range = self.tokenizer.token_lex_range_for_prefix_hash(&s_hash);
+        //     let s_subslice = &mut tl_array[s_range.0.as_usize()..s_range.1.as_usize()];
+        //     s_subslice.fill(Float::NEG_INFINITY);
+        // }
+        let mut frames = vec![Frame {
+            suffix_hash: 0u64,
+            suffix_length: 0,
+            n_cuml_l: node_cuml_l,
+            n_padmode: root_padmode,
+        }];
         let mut iters = 0;
-        while let Some(Frame { suffix_hash, suffix_length, n_cuml_l }) = frames.pop() {
+        while let Some(Frame { suffix_hash, suffix_length, n_cuml_l, n_padmode }) = frames.pop() {
             if iters < 1000 { iters += 1; } else { panic!("set_tl_array: too many iterations"); }
             let n_full_hash = rh::extend_right(node_hash, suffix_hash, suffix_length);
             // handle our children
-            for slot in 0..RADIX {
-                let c_suffix_hash = rh::append_right(suffix_hash, Symbol::slot_to_byte(slot));
+            for slot in 0..n_padmode.radix() {
+                let c_symbol = n_padmode.slot_to_xsymbol(slot);
+                let c_suffix_hash = rh::append_right(suffix_hash, c_symbol);
                 let c_suffix_length = suffix_length + 1;
                 let c_full_hash = rh::extend_right(node_hash, c_suffix_hash, c_suffix_length);
                 //
@@ -227,7 +253,39 @@ impl XBayes {
                     let node = nodes.get(&n_full_hash).unwrap();
                     // TODO: this is a little ugly
                     let l_delta_mtcdl = c_cuml_l - node.c_cuml_l_old_for_mtcdl[slot];
-                    let new_mtcdl0 = node.c_a_tl[slot][0] + l_delta_mtcdl;
+                    if false && !node.c_a_tl[slot][0].is_finite() {
+                        panic!(
+                            "set_tl_array: mtcdl0 at slot {slot} is not finite for node (hash={:#x}) with symbol {:?}. \
+                            Problem occurred while processing token hash {:#x} (lexindex={:?}), \
+                            suffix_length={suffix_length}, suffix_hash={:#x}, n_cuml_l={:?}, c_cuml_l={:?}, \
+                            node.c_cuml_l_old_for_mtcdl[slot]={:?}. \
+                            node.c_a_tl[slot][0]={:?}. \
+                            This usually indicates that the likelihood update propagated a non-finite value upstream, \
+                            or that the update ordering allowed an uninitialized mtcdl value to leak through."
+                            ,
+                            n_full_hash,
+                            node.symbol,
+                            c_suffix_hash,
+                            lexindex,
+                            suffix_length,
+                            suffix_hash,
+                            n_cuml_l,
+                            c_cuml_l,
+                            node.c_a_tl[slot][0]
+                        );
+                   
+                    }
+                    fn add_allow_neginf(a: Float, b: Float) -> Float {
+                        // TODO: this is an ugly temp fix
+                        if a == Float::NEG_INFINITY {
+                            return b;
+                        }
+                        if b == Float::NEG_INFINITY {
+                            return a;
+                        }
+                        a + b
+                    }
+                    let new_mtcdl0 = add_allow_neginf(node.c_a_tl[slot][0], l_delta_mtcdl);
                     tl_array[lexindex.as_usize()] = new_mtcdl0;
                     debug_assert!({
                         !c_cuml_hit_edge ||
@@ -243,7 +301,8 @@ impl XBayes {
                     subslice.fill(c_cuml_l);
                     continue;
                 }
-                frames.push(Frame { suffix_hash: c_suffix_hash, suffix_length: c_suffix_length, n_cuml_l: c_cuml_l});
+                let c_padmode = PadMode::for_xsymbol(c_symbol);
+                frames.push(Frame { suffix_hash: c_suffix_hash, suffix_length: c_suffix_length, n_cuml_l: c_cuml_l, n_padmode: c_padmode});
             }
         }
         debug_assert!(

@@ -1,0 +1,17 @@
+{
+  "period": 0.8,
+  "y": 0.4,
+  "nodes": {
+    "A": { "l": -80.0, "phase": 0.02 },
+    "AS": { "l": -80.0, "phase": 0.04 },
+    "ASi": { "l": -80.0, "phase": 0.06 },
+    "ASim": { "l": -80.0, "phase": 0.08 },
+    "ASimp": { "l": -80.0, "phase": 0.1 },
+    "ASimpl": { "l": -80.0, "phase": 0.12 },
+    "ASimple": { "l": -80.0, "phase": 0.14 },
+    "ASimplem": { "l": -80.0, "phase": 0.16 },
+    "ASimpleme": { "l": -80.0, "phase": 0.18 },
+    "ASimplemen": { "l": -80.0, "phase": 0.2 },
+    "ASimplement": { "l": 0.0, "phase": 0.22 }
+  }
+}

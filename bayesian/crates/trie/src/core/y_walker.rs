@@ -1,4 +1,4 @@
-use crate::symbol::Symbol;
+use crate::symbol::{XSymbol, START_SYMBOL};
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
 use crate::bpe::TokenLexIndex;
@@ -18,7 +18,8 @@ pub(super) struct YWalker {
     len: usize,
     a_hash: Vec<Hash>,
     a_final_token_lexindex: Vec<TokenLexIndex>,
-    a_symbol: Vec<Symbol>,
+    a_symbol: Vec<XSymbol>,
+    a_slot: Vec<usize>,
     a_tp: Vec<Float>,
     a_tp0: Vec<Float>,
 }
@@ -26,7 +27,8 @@ pub(super) struct YWalker {
 pub(super) struct YWalkerRow {
     hash: Hash,
     final_token_lexindex: TokenLexIndex,
-    symbol: Symbol,
+    symbol: XSymbol,
+    slot: usize,
     tp: Float,
     tp0: Float,
 }
@@ -35,7 +37,8 @@ impl YWalkerRow {
     pub(super) fn new(
         hash: Hash,
         final_token_lexindex: TokenLexIndex,
-        symbol: Symbol,
+        symbol: XSymbol,
+        slot: usize,
         tp: Float,
         tp0: Float,
     ) -> Self {
@@ -43,6 +46,7 @@ impl YWalkerRow {
             hash,
             final_token_lexindex,
             symbol,
+            slot,
             tp,
             tp0,
         }
@@ -54,7 +58,8 @@ impl YWalker {
         Self {
             len: 1,
             a_hash: vec![root_hash],
-            a_symbol: vec![Symbol::Start],
+            a_symbol: vec![START_SYMBOL],
+            a_slot: vec![usize::MAX],
             a_tp: vec![ZERO],
             a_tp0: vec![ZERO],
             a_final_token_lexindex: vec![TokenLexIndex::INVALID],
@@ -66,6 +71,7 @@ impl YWalker {
         self.a_hash.truncate(len);
         self.a_final_token_lexindex.truncate(len);
         self.a_symbol.truncate(len);
+        self.a_slot.truncate(len);
         self.a_tp.truncate(len);
         self.a_tp0.truncate(len);
     }
@@ -74,6 +80,7 @@ impl YWalker {
         self.a_hash.push(row.hash);
         self.a_final_token_lexindex.push(row.final_token_lexindex);
         self.a_symbol.push(row.symbol);
+        self.a_slot.push(row.slot);
         self.a_tp.push(row.tp);
         self.a_tp0.push(row.tp0);
         self.len += 1;
@@ -91,8 +98,12 @@ impl YWalker {
         &self.a_final_token_lexindex
     }
 
-    pub(super) fn a_symbol(&self) -> &[Symbol] {
+    pub(super) fn a_symbol(&self) -> &[XSymbol] {
         &self.a_symbol
+    }
+
+    pub(super) fn a_slot(&self) -> &[usize] {
+        &self.a_slot
     }
 
     pub(super) fn a_tp(&self) -> &[Float] {

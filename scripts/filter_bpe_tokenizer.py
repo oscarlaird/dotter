@@ -1,335 +1,184 @@
 #!/usr/bin/env python3
-"""Filter a Hugging Face BPE tokenizer.json down to a legal token subset.
+"""Filter the TinyLlama BPE tokenizer down to the dotter trie alphabet.
 
-It keeps only tokens whose full surface form matches a supplied regex
-(``[a-z]+`` by default). When requested, a designated source symbol such as
-SentencePiece ``▁`` can be treated as a literal space for matching while still
-being written back unchanged in the output tokenizer files.
+Reads the raw HF tokenizer.json (downloaded or cached), keeps only tokens whose
+surface form (after sentinel replacement) matches the trie alphabet, reindexes
+the vocabulary to a dense 0..n-1 range, and writes the filtered tokenizer.json
+that the Rust `bpe` crate embeds at compile time.
 
-The utility retains only merge rules that can still be built from the surviving
-single-character pieces, reindexes the filtered vocabulary to a dense ``0..n-1``
-range, and writes a filtered ``tokenizer.json``.
+Sentinel replacement (applied to every token string and merge piece):
+  - SentencePiece `▁` (U+2581) → `S`  (trie word-boundary)
+
+The trie stop symbol `Z` is **not** derived from the HF `$` token (that was the old wire convention).
+We append a synthetic `Z` entry to the filtered vocabulary so the Rust trie and backend can agree on
+`STOP_MARKER == "Z"` while leaving `$` free for future real punctuation in the payload alphabet.
+
+Run from the repo root:
+    python3 scripts/filter_bpe_tokenizer.py
 """
 
 from __future__ import annotations
 
-import argparse
 import copy
 import json
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
-@dataclass(frozen=True)
-class SourceTokenizer:
-    source_json: dict
-    vocab: dict[str, int]
-    merges: list[str]
+HF_SOURCE_TOKENIZER = Path("/tmp/tinyllama_tokenizer/tokenizer.json")
 
+OUTPUT_DIR = REPO_ROOT / "bayesian" / "tokenizers" / "tinyllamaalpha"
 
-@dataclass(frozen=True)
-class FilteredTokenizer:
-    vocab: dict[str, int]
-    merges: list[str]
-    kept_token_count: int
-    kept_merge_count: int
-    reachable_token_count: int
-    dropped_token_count: int
-    dropped_merge_count: int
+HF_SPACE = "\u2581"
+TRIE_SPACE = "S"
+TRIE_STOP = "Z"
+
+TOKEN_PATTERN = re.compile(r"[a-z,.' ]+")
+MAX_SPACES = 1
 
 
-def normalize_for_match(token: str, space_symbol: str | None) -> str:
-    if not space_symbol:
-        return token
-    return token.replace(space_symbol, " ")
+def sentinel_replace(s: str) -> str:
+    return s.replace(HF_SPACE, TRIE_SPACE)
 
 
-def count_spaces_for_filter(token: str, space_symbol: str | None) -> int:
-    return normalize_for_match(token, space_symbol).count(" ")
+def normalize_for_match(token: str) -> str:
+    return token.replace(TRIE_SPACE, " ")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Filter a Hugging Face BPE tokenizer.json to a regex-defined legal "
-            "token set and emit a new tokenizer.json."
-        )
-    )
-    parser.add_argument(
-        "--tokenizer-json",
-        type=Path,
-        required=True,
-        help="Input Hugging Face tokenizer.json path.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        required=True,
-        help="Directory to write tokenizer.json and optional summary.json.",
-    )
-    parser.add_argument(
-        "--token-pattern",
-        default=r"[a-z]+",
-        help="Regex that every retained token must match exactly. Default: [a-z]+",
-    )
-    parser.add_argument(
-        "--space-symbol",
-        default=None,
-        help=(
-            "Optional source token symbol to treat as a literal space for regex "
-            "matching, e.g. ▁ for SentencePiece-style tokenizers."
-        ),
-    )
-    parser.add_argument(
-        "--max-spaces",
-        type=int,
-        default=None,
-        help=(
-            "Optional maximum number of spaces allowed in any retained token "
-            "surface after space-symbol normalization."
-        ),
-    )
-    parser.add_argument(
-        "--summary-json",
-        action="store_true",
-        help="Also write a summary.json file with filtering statistics.",
-    )
-    return parser.parse_args()
+def count_spaces(token: str) -> int:
+    return normalize_for_match(token).count(" ")
 
 
-def load_json(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+def load_source(path: Path) -> tuple[dict, dict[str, int], list[tuple[str, str]]]:
+    source_json = json.loads(path.read_text(encoding="utf-8"))
+    model = source_json["model"]
+    vocab: dict[str, int] = {str(k): int(v) for k, v in model["vocab"].items()}
+    raw_merges = model["merges"]
+    merges: list[tuple[str, str]] = []
+    for entry in raw_merges:
+        if isinstance(entry, list):
+            merges.append((str(entry[0]), str(entry[1])))
+        elif isinstance(entry, str):
+            i = entry.index(" ")
+            merges.append((entry[:i], entry[i + 1 :]))
+        else:
+            raise ValueError(f"unexpected merge entry type: {type(entry)}")
+    return source_json, vocab, merges
 
 
-def load_tokenizer_source(args: argparse.Namespace) -> SourceTokenizer:
-    source_json = load_json(args.tokenizer_json)
-    model = source_json.get("model")
-    if not isinstance(model, dict):
-        raise ValueError("tokenizer.json is missing a model object")
-    vocab = model.get("vocab")
-    merges = model.get("merges")
-    if not isinstance(vocab, dict):
-        raise ValueError("tokenizer.json is missing model.vocab")
-    if not isinstance(merges, list):
-        raise ValueError("tokenizer.json is missing model.merges")
-    return SourceTokenizer(
-        source_json=source_json,
-        vocab=coerce_vocab(vocab),
-        merges=coerce_merges(merges),
-    )
-
-
-def coerce_vocab(raw_vocab: dict) -> dict[str, int]:
-    vocab: dict[str, int] = {}
-    for token, token_id in raw_vocab.items():
-        if not isinstance(token, str):
-            raise ValueError("vocab contains a non-string token")
-        if not isinstance(token_id, int):
-            raise ValueError(f"vocab id for {token!r} is not an integer")
-        vocab[token] = token_id
-    if len(set(vocab.values())) != len(vocab):
-        raise ValueError("vocab ids must be unique")
-    return vocab
-
-
-def coerce_merges(raw_merges: list) -> list[str]:
-    merges: list[str] = []
-    for merge in raw_merges:
-        if not isinstance(merge, str):
-            raise ValueError("merges array contains a non-string entry")
-        merges.append(merge)
-    return merges
-
-
-def parse_merge_line(line: str) -> tuple[str, str]:
-    separator = line.find(" ")
-    if separator <= 0 or separator == len(line) - 1:
-        raise ValueError(
-            f"invalid merge line {line!r}: expected two pieces separated by one space"
-        )
-    return line[:separator], line[separator + 1 :]
-
-
-def sorted_tokens_by_original_id(vocab: dict[str, int]) -> list[str]:
-    return [token for token, _ in sorted(vocab.items(), key=lambda item: item[1])]
-
-
-def filter_tokenizer(
-    source: SourceTokenizer,
-    token_pattern: str,
-    space_symbol: str | None,
-    max_spaces: int | None,
-) -> FilteredTokenizer:
-    matcher = re.compile(token_pattern)
-    legal_tokens = {
-        token
-        for token in source.vocab
-        if matcher.fullmatch(normalize_for_match(token, space_symbol)) is not None
-        and (max_spaces is None or count_spaces_for_filter(token, space_symbol) <= max_spaces)
-    }
-
-    reachable_tokens = {
-        token for token in legal_tokens if len(token) == 1
-    }
-    kept_merges: list[str] = []
-
-    for merge_line in source.merges:
-        left, right = parse_merge_line(merge_line)
-        merged = left + right
-        if left not in reachable_tokens:
-            continue
-        if right not in reachable_tokens:
-            continue
-        if merged not in legal_tokens:
-            continue
-        kept_merges.append(merge_line)
-        reachable_tokens.add(merged)
-
-    final_tokens_in_id_order = [
-        token
-        for token in sorted_tokens_by_original_id(source.vocab)
-        if token in reachable_tokens
-    ]
-    final_vocab = {
-        token: new_id for new_id, token in enumerate(final_tokens_in_id_order)
-    }
-
-    return FilteredTokenizer(
-        vocab=final_vocab,
-        merges=kept_merges,
-        kept_token_count=len(legal_tokens),
-        kept_merge_count=len(kept_merges),
-        reachable_token_count=len(reachable_tokens),
-        dropped_token_count=len(source.vocab) - len(final_vocab),
-        dropped_merge_count=len(source.merges) - len(kept_merges),
-    )
-
-
-def build_tokenizer_json(
-    source_json: dict,
+def filter_and_reindex(
     vocab: dict[str, int],
-    merges: list[str],
-) -> dict:
-    version = source_json.get("version", "1.0") if isinstance(source_json, dict) else "1.0"
-    truncation = copy.deepcopy(source_json.get("truncation")) if isinstance(source_json, dict) else None
-    padding = copy.deepcopy(source_json.get("padding")) if isinstance(source_json, dict) else None
-    normalizer = copy.deepcopy(source_json.get("normalizer")) if isinstance(source_json, dict) else None
-    pre_tokenizer = copy.deepcopy(source_json.get("pre_tokenizer")) if isinstance(source_json, dict) else None
-    decoder = copy.deepcopy(source_json.get("decoder")) if isinstance(source_json, dict) else None
-    model = source_json.get("model") if isinstance(source_json, dict) else None
-    model_type = model.get("type", "BPE") if isinstance(model, dict) else "BPE"
-    dropout = copy.deepcopy(model.get("dropout")) if isinstance(model, dict) else None
-    continuing_subword_prefix = (
-        copy.deepcopy(model.get("continuing_subword_prefix")) if isinstance(model, dict) else None
-    )
-    end_of_word_suffix = (
-        copy.deepcopy(model.get("end_of_word_suffix")) if isinstance(model, dict) else None
-    )
-    fuse_unk = bool(model.get("fuse_unk")) if isinstance(model, dict) else False
-    byte_fallback = bool(model.get("byte_fallback")) if isinstance(model, dict) else False
+    merges: list[tuple[str, str]],
+) -> tuple[dict[str, int], list[str]]:
+    mapped_vocab = {sentinel_replace(tok): orig_id for tok, orig_id in vocab.items()}
+    mapped_merges = [(sentinel_replace(l), sentinel_replace(r)) for l, r in merges]
+
+    legal = {
+        tok
+        for tok in mapped_vocab
+        if TOKEN_PATTERN.fullmatch(normalize_for_match(tok)) is not None
+        and count_spaces(tok) <= MAX_SPACES
+    }
+
+    reachable = {tok for tok in legal if len(tok) == 1}
+    kept_merges: list[str] = []
+    seen_merge_pairs: set[tuple[str, str]] = set()
+    for left, right in mapped_merges:
+        merged = left + right
+        if (left, right) in seen_merge_pairs:
+            continue
+        if left in reachable and right in reachable and merged in legal:
+            kept_merges.append(f"{left} {right}")
+            seen_merge_pairs.add((left, right))
+            reachable.add(merged)
+
+    id_ordered = [
+        tok
+        for tok, _ in sorted(mapped_vocab.items(), key=lambda kv: kv[1])
+        if tok in reachable
+    ]
+    final_vocab = {tok: idx for idx, tok in enumerate(id_ordered)}
+    if TRIE_STOP in final_vocab:
+        raise SystemExit(
+            f"synthetic trie stop {TRIE_STOP!r} already present in filtered vocab "
+            "(unexpected collision with HF-derived tokens)"
+        )
+    final_vocab[TRIE_STOP] = len(final_vocab)
+    return final_vocab, kept_merges
+
+
+def build_output_json(source_json: dict, vocab: dict[str, int], merges: list[str]) -> dict:
+    model = source_json.get("model", {})
     return {
-        "version": version,
-        "truncation": truncation,
-        "padding": padding,
+        "version": source_json.get("version", "1.0"),
+        "truncation": copy.deepcopy(source_json.get("truncation")),
+        "padding": copy.deepcopy(source_json.get("padding")),
         "added_tokens": [],
-        "normalizer": normalizer,
-        "pre_tokenizer": pre_tokenizer,
+        "normalizer": copy.deepcopy(source_json.get("normalizer")),
+        "pre_tokenizer": copy.deepcopy(source_json.get("pre_tokenizer")),
         "post_processor": None,
-        "decoder": decoder,
+        "decoder": copy.deepcopy(source_json.get("decoder")),
         "model": {
-            "type": model_type,
-            "dropout": dropout,
+            "type": model.get("type", "BPE"),
+            "dropout": copy.deepcopy(model.get("dropout")),
             "unk_token": None,
-            "continuing_subword_prefix": continuing_subword_prefix,
-            "end_of_word_suffix": end_of_word_suffix,
-            "fuse_unk": fuse_unk,
-            "byte_fallback": byte_fallback,
+            "continuing_subword_prefix": copy.deepcopy(model.get("continuing_subword_prefix")),
+            "end_of_word_suffix": copy.deepcopy(model.get("end_of_word_suffix")),
+            "fuse_unk": bool(model.get("fuse_unk")),
+            "byte_fallback": bool(model.get("byte_fallback")),
             "vocab": vocab,
             "merges": merges,
         },
     }
 
 
-def write_tokenizer_json(path: Path, tokenizer_json: dict) -> None:
-    with path.open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(tokenizer_json, f, ensure_ascii=False, indent=2)
+def main() -> None:
+    if not HF_SOURCE_TOKENIZER.exists():
+        raise SystemExit(
+            f"Source tokenizer not found at {HF_SOURCE_TOKENIZER}\n"
+            "Download it first:\n"
+            "  python3 -c \"\n"
+            "from transformers import AutoTokenizer\n"
+            "t = AutoTokenizer.from_pretrained('TinyLlama/TinyLlama-1.1B-Chat-v1.0')\n"
+            "t.save_pretrained('/tmp/tinyllama_tokenizer')\n"
+            "\""
+        )
+
+    source_json, vocab, merges = load_source(HF_SOURCE_TOKENIZER)
+    final_vocab, final_merges = filter_and_reindex(vocab, merges)
+
+    if not final_vocab:
+        raise SystemExit("filter removed every token")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    out_json = build_output_json(source_json, final_vocab, final_merges)
+    tokenizer_path = OUTPUT_DIR / "tokenizer.json"
+    with tokenizer_path.open("w", encoding="utf-8", newline="\n") as f:
+        json.dump(out_json, f, ensure_ascii=False, indent=2)
         f.write("\n")
 
-
-def write_summary_json(
-    path: Path,
-    *,
-    source: SourceTokenizer,
-    filtered: FilteredTokenizer,
-    token_pattern: str,
-    space_symbol: str | None,
-    max_spaces: int | None,
-) -> None:
     summary = {
-        "token_pattern": token_pattern,
-        "space_symbol": space_symbol,
-        "max_spaces": max_spaces,
-        "source_vocab_size": len(source.vocab),
-        "source_merge_count": len(source.merges),
-        "pattern_matched_vocab_size": filtered.kept_token_count,
-        "reachable_vocab_size": filtered.reachable_token_count,
-        "final_vocab_size": len(filtered.vocab),
-        "final_merge_count": len(filtered.merges),
-        "dropped_vocab_size": filtered.dropped_token_count,
-        "dropped_merge_count": filtered.dropped_merge_count,
+        "token_pattern": TOKEN_PATTERN.pattern,
+        "sentinel_replace": {HF_SPACE: TRIE_SPACE},
+        "synthetic_stop_token": TRIE_STOP,
+        "max_spaces": MAX_SPACES,
+        "source_vocab_size": len(vocab),
+        "source_merge_count": len(merges),
+        "final_vocab_size": len(final_vocab),
+        "final_merge_count": len(final_merges),
     }
-    with path.open("w", encoding="utf-8", newline="\n") as f:
+    summary_path = OUTPUT_DIR / "summary.json"
+    with summary_path.open("w", encoding="utf-8", newline="\n") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
         f.write("\n")
 
-
-def main() -> None:
-    args = parse_args()
-    if args.max_spaces is not None and args.max_spaces < 0:
-        raise SystemExit("--max-spaces must be nonnegative")
-
-    source = load_tokenizer_source(args)
-    filtered = filter_tokenizer(
-        source,
-        args.token_pattern,
-        args.space_symbol,
-        args.max_spaces,
-    )
-    if not filtered.vocab:
-        raise SystemExit("filter removed every vocab token")
-
-    output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    tokenizer_path = output_dir / "tokenizer.json"
-
-    tokenizer_json = build_tokenizer_json(
-        source.source_json,
-        filtered.vocab,
-        filtered.merges,
-    )
-
-    write_tokenizer_json(tokenizer_path, tokenizer_json)
-
-    if args.summary_json:
-        write_summary_json(
-            output_dir / "summary.json",
-            source=source,
-            filtered=filtered,
-            token_pattern=args.token_pattern,
-            space_symbol=args.space_symbol,
-            max_spaces=args.max_spaces,
-        )
-
-    print(f"source_vocab_size={len(source.vocab)}")
-    print(f"source_merge_count={len(source.merges)}")
-    print(f"pattern_matched_vocab_size={filtered.kept_token_count}")
-    print(f"reachable_vocab_size={filtered.reachable_token_count}")
-    print(f"final_vocab_size={len(filtered.vocab)}")
-    print(f"final_merge_count={len(filtered.merges)}")
-    print(f"output_dir={output_dir}")
+    print(f"source_vocab_size={len(vocab)}")
+    print(f"source_merge_count={len(merges)}")
+    print(f"final_vocab_size={len(final_vocab)}")
+    print(f"final_merge_count={len(final_merges)}")
+    print(f"output_dir={OUTPUT_DIR}")
 
 
 if __name__ == "__main__":

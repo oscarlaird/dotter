@@ -1,13 +1,8 @@
 {
-  "token_pattern": "([a-z,.' ]+|\\$)",
-  "space_symbol": "▁",
-  "max_spaces": 1,
+  "trie_stop_token": "Z",
+  "trie_start_token": "A",
   "source_vocab_size": 32000,
   "source_merge_count": 61249,
-  "pattern_matched_vocab_size": 17268,
-  "reachable_vocab_size": 17268,
-  "final_vocab_size": 17268,
-  "final_merge_count": 32241,
-  "dropped_vocab_size": 14732,
-  "dropped_merge_count": 29008
+  "final_vocab_size": 25471,
+  "final_merge_count": 54625
 }

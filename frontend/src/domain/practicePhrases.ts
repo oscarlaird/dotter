@@ -3,7 +3,7 @@ import practicePhrasesText from '../pages/practice-phrases.txt?raw';
 const N_SKIP_PRACTICE_PHRASES = 6;
 
 function formatPracticePhrase(phrase: string): string {
-	return ` ${phrase}$`;
+	return ` ${phrase}Z`;
 }
 
 export const PRACTICE_PHRASES = practicePhrasesText

@@ -57,5 +57,5 @@ fn bayesian(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;

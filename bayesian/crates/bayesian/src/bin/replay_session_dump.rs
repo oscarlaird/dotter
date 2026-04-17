@@ -53,6 +53,14 @@ fn main() {
 
             match event.kind.as_str() {
                 "reset" => session.reset(),
+                "set_current_prior_json" => {
+                    // Older dumps do not record the JSON payload for this call; replay is only
+                    // faithful if the session prior was already the intended value (often default).
+                    if event.json_payload_ix.is_some() {
+                        let payload_ix = event.json_payload_ix.unwrap();
+                        session.set_current_prior_json(dump.json_payloads[payload_ix].clone());
+                    }
+                }
                 "receive_prior_update" => {
                     let payload_ix = event.json_payload_ix.unwrap();
                     session.receive_prior_update(dump.json_payloads[payload_ix].clone());
@@ -64,6 +72,11 @@ fn main() {
                 "apply_updates" => session.apply_updates(),
                 "expand_to_threshold" => {
                     let _ = session.expand_to_threshold();
+                }
+                "recalibrate" => {
+                    // Same wire shape as the frontend: recalibrate(JSON.stringify(viBefore), true).
+                    let initial = session.current_prior_json();
+                    let _ = session.recalibrate(initial, true);
                 }
                 other => panic!("unsupported event kind in replay: {other}"),
             }

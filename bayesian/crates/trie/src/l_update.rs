@@ -2,12 +2,12 @@ use crate::ROOT_HASH;
 use crate::rolling_hash as rh;
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
-use crate::symbol::{Symbol, RADIX};
+use crate::symbol::{PadMode, START_SYMBOL, XSymbol};
 
 #[derive(Clone)]
 pub struct XLUpdateEntry {
     pub likelihood: Float,
-    pub symbol: Symbol,
+    pub symbol: XSymbol,
     pub is_leaf: bool,
 }
 
@@ -17,7 +17,7 @@ pub fn new_xlupdate() -> XLUpdate {
     let mut xlupdate = XLUpdate::default();
     xlupdate.insert(ROOT_HASH, XLUpdateEntry {
         likelihood: ZERO,
-        symbol: Symbol::Start,
+        symbol: START_SYMBOL,
         is_leaf: true,
     });
     xlupdate
@@ -27,7 +27,7 @@ pub fn new_xlupdate() -> XLUpdate {
 fn check_connected(l_update: &XLUpdate) -> bool {
     l_update.iter().all(|(&hash, entry)| {
         hash == ROOT_HASH || {
-            let parent_hash = rh::pop_right(hash, entry.symbol.to_byte());
+            let parent_hash = rh::pop_right(hash, entry.symbol);
             l_update.contains_key(&parent_hash)
         }
     })
@@ -37,7 +37,7 @@ fn leaf_indicators_correct(l_update: &XLUpdate) -> bool {
     let mut interior_nodes = rh::RHashSet::default();
     for (&hash, entry) in l_update.iter() {
         if hash != ROOT_HASH {
-            let parent_hash = rh::pop_right(hash, entry.symbol.to_byte());
+            let parent_hash = rh::pop_right(hash, entry.symbol);
             interior_nodes.insert(parent_hash);
         }
     }
@@ -50,7 +50,7 @@ pub fn set_leaf_indicators(l_update: &mut XLUpdate) {
     let mut interior_nodes = rh::RHashSet::default();
     for (&hash, entry) in l_update.iter() {
         if hash != ROOT_HASH {
-            let parent_hash = rh::pop_right(hash, entry.symbol.to_byte());
+            let parent_hash = rh::pop_right(hash, entry.symbol);
             interior_nodes.insert(parent_hash);
         }
     }
@@ -91,12 +91,12 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
     );
     let mut result = XLUpdate::default();
     struct Frame {
-        n_symbol: Symbol,
+        n_symbol: XSymbol,
         p_hash: Hash,
         p_proper_truncated_l: Float,
     }
     let root_frame = Frame {
-        n_symbol: Symbol::Start,
+        n_symbol: START_SYMBOL,
         p_hash: 0,
         p_proper_truncated_l: ZERO,
     };
@@ -108,7 +108,7 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
             iters += 1;
             iters < 500_000
         }, "merge_many: too many iterations");
-        let n_hash = rh::append_right(p_hash, n_symbol.to_byte());
+        let n_hash = rh::append_right(p_hash, n_symbol);
         let (n_edge_hit_count, n_proper_truncated_l, n_direct_l, any_n_exists) = l_updates
             .iter()
             .fold((0, p_proper_truncated_l, ZERO, false), |(hits, sum, direct_l, any_n), &l_update| {
@@ -138,8 +138,9 @@ fn merge_many(l_updates: &[&XLUpdate]) -> XLUpdate {
         if is_edge {
             continue;
         }
-        for slot in 0..RADIX {
-            let child_symbol = Symbol::from_slot(slot);
+        let n_padmode = PadMode::for_xsymbol(n_symbol);
+        for slot in 0..n_padmode.radix() {
+            let child_symbol = n_padmode.slot_to_xsymbol(slot);
             frames.push(Frame {
                 n_symbol: child_symbol,
                 p_hash: n_hash,

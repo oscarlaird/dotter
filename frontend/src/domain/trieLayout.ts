@@ -40,6 +40,9 @@ export interface VisualNode {
 const BOX_WIDTH = 37;
 const BOX_WIDTH_CHILDREN_MULTIPLIER = 1.0;
 const ROOT_NODE_WIDTH = BOX_WIDTH * 1.5;
+export const ROOT_SYMBOL = 'A';
+export const SPACE_SYMBOL = 'S';
+export const STOP_SYMBOL = 'Z';
 
 export const SCROLL_CENTERING_WEIGHT = 1;
 export const SCROLL_STABILITY_WEIGHT = 4;
@@ -47,18 +50,18 @@ export const SINGLE_PARENT_NODE_WIDTH_PX = BOX_WIDTH;
 export const SCROLL_TARGET_X_PX = 400;
 
 function finalSymbol(fullString: string): string {
-	if (fullString === '^') {
-		return '^';
+	if (fullString === ROOT_SYMBOL) {
+		return ROOT_SYMBOL;
 	}
-	return fullString.at(-1) ?? '^';
+	return fullString.at(-1) ?? ROOT_SYMBOL;
 }
 
 export function phraseToTrieString(targetPhrase: string): string {
-	return `^${targetPhrase.split(' ').join('_')}`;
+	return `${ROOT_SYMBOL}${targetPhrase.split(' ').join(SPACE_SYMBOL)}`;
 }
 
 function nodeDepth(fullString: string): number {
-	if (fullString === '^') {
+	if (fullString === ROOT_SYMBOL) {
 		return 0;
 	}
 	return Math.max(0, fullString.length - 1);
@@ -79,7 +82,7 @@ function buildTree(snapshot: ExpandedSnapshot): Record<string, VisualNode> {
 			fullString,
 			node,
 			symbol: finalSymbol(fullString),
-			parentKey: fullString === '^' ? null : fullString.slice(0, -1),
+			parentKey: fullString === ROOT_SYMBOL ? null : fullString.slice(0, -1),
 			children: [],
 			x: 0,
 			y: 0,
@@ -99,14 +102,14 @@ function buildTree(snapshot: ExpandedSnapshot): Record<string, VisualNode> {
 }
 
 function rootZOf(snapshot: ExpandedSnapshot): number {
-	return snapshot['^']?.z ?? 0;
+	return snapshot[ROOT_SYMBOL]?.z ?? 0;
 }
 
 function ancestorKeysThroughRoot(fullString: string): string[] {
-	if (fullString === '^') {
-		return ['^'];
+	if (fullString === ROOT_SYMBOL) {
+		return [ROOT_SYMBOL];
 	}
-	const keys = ['^'];
+	const keys = [ROOT_SYMBOL];
 	for (let depth = 1; depth <= nodeDepth(fullString); depth += 1) {
 		keys.push(fullString.slice(0, depth + 1));
 	}
@@ -137,7 +140,7 @@ export function buildVisibleTree(
 ): Record<string, VisualNode> {
 	const nodes = buildTree(snapshot);
 	const rootZ = rootZOf(snapshot);
-	const visibleKeys = new Set<string>(['^']);
+	const visibleKeys = new Set<string>([ROOT_SYMBOL]);
 	for (const [fullString, node] of Object.entries(snapshot)) {
 		if (!snapshotNodePassesThreshold(node, rootZ, expansionThreshold)) {
 			continue;
@@ -223,20 +226,20 @@ export function deepestVisibleNode(nodes: Record<string, VisualNode>): VisualNod
 
 function ancestorAtDepth(fullString: string, depth: number): string {
 	if (depth <= 0) {
-		return '^';
+		return ROOT_SYMBOL;
 	}
 	return fullString.slice(0, depth + 1);
 }
 
 function scrollAncestorKeys(scrollRoot: string): string[] {
-	if (scrollRoot === '^') {
+	if (scrollRoot === ROOT_SYMBOL) {
 		return [];
 	}
 	return ancestorKeysThroughRoot(scrollRoot).slice(0, -1);
 }
 
 function rootWidthFor(fullString: string): number {
-	return fullString === '^' ? ROOT_NODE_WIDTH : BOX_WIDTH;
+	return fullString === ROOT_SYMBOL ? ROOT_NODE_WIDTH : BOX_WIDTH;
 }
 
 export function relativeDepth(fullString: string, scrollRoot: string): number {
@@ -257,9 +260,9 @@ export function computeScrollLayoutState(
 				firstForkDepth: null,
 				firstForkFullString: null,
 				scrollOffset: 0,
-				scrollRoot: '^',
+				scrollRoot: ROOT_SYMBOL,
 				scrollAncestorKeys: [],
-				renderedNodeKeys: Array.from(subtreeKeys(visibleTree, '^')),
+				renderedNodeKeys: Array.from(subtreeKeys(visibleTree, ROOT_SYMBOL)),
 			};
 		}
 		const anchorDepth = nodeDepth(anchor.fullString);
@@ -268,9 +271,9 @@ export function computeScrollLayoutState(
 				firstForkDepth: null,
 				firstForkFullString: null,
 				scrollOffset: 0,
-				scrollRoot: '^',
+				scrollRoot: ROOT_SYMBOL,
 				scrollAncestorKeys: [],
-				renderedNodeKeys: Array.from(subtreeKeys(visibleTree, '^')),
+				renderedNodeKeys: Array.from(subtreeKeys(visibleTree, ROOT_SYMBOL)),
 			};
 		}
 		const scrollOffset = Math.max(0, Math.min(previousScrollOffset, anchorDepth - 1));

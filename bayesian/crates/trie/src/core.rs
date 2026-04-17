@@ -3,15 +3,14 @@ use std::collections::BinaryHeap;
 use crate::bpe::{TinyLlamaWordTokenizer, TOKENIZER_JSON_STR, TokenLexIndex};
 use crate::rolling_hash::Hash;
 use crate::safe_float::{Float, ZERO};
-use crate::symbol::{Symbol, RADIX};
+use crate::symbol::{PadMode, XSymbol, MAX_RADIX, START_SYMBOL, SPACE_SYMBOL, STOP_SYMBOL};
 use crate::MAX_TRUNCATION_POSSIBLE;
 use crate::rolling_hash as rh;
 use crate::prediction::XPrediction;
 use crate::bpe::NUM_TOKENS;
 
-mod sparse16;
+mod sparse32;
 mod y_walker;
-pub mod debug;
 
 use super::{
     MAX_TOKEN_LENGTH, ROOT_HASH, logaddexp,
@@ -20,31 +19,33 @@ use super::l_update::{merge_xl_pair, new_xlupdate, XLUpdate};
 use super::p_update::PUpdate;
 #[cfg(feature = "tokentrie")]
 use super::tokentrie::{QueueItem};
-use sparse16::{dense_to_sparse16, sparse16_to_dense};
+use sparse32::{dense32_to_sparse, sparse_to_dense32};
 use y_walker::{FromEnd as _, YWalker, YWalkerRow};
 
 #[derive(Clone, Debug)]
 pub struct XNode {
-    pub symbol: Symbol,
+    pub symbol: XSymbol,
+    pub slot: usize,  // a node is responsible for knowing its slot in its parent's children arrays
+    pub depth: u16,
     // we don't store a node's hash, because there is no way to reach the node without knowing it
     // for all matrices, children are arrayed on the major axis
-    c_can_trunc: [u16; RADIX],
-    c_final_token_length: [u8; RADIX],
-    c_final_token_lexindex: [TokenLexIndex; RADIX],
-    c_p: [Float; RADIX],
-    c_p_old: [Float; RADIX],
-    c_fp: [[Float; MAX_TRUNCATION_POSSIBLE]; RADIX],
-    c_tp: [Float; RADIX],
-    c_tp0: [Float; RADIX],
-    c_final_token_prob: [Float; RADIX],
+    c_can_trunc: [AncestorsBitmap; MAX_RADIX],
+    c_final_token_length: [u8; MAX_RADIX],
+    c_final_token_lexindex: [TokenLexIndex; MAX_RADIX],
+    c_p: [Float; MAX_RADIX],
+    c_p_old: [Float; MAX_RADIX],
+    c_fp: [[Float; MAX_TRUNCATION_POSSIBLE]; MAX_RADIX],
+    c_tp: [Float; MAX_RADIX],
+    c_tp0: [Float; MAX_RADIX],
+    c_final_token_prob: [Float; MAX_RADIX],
     // TODO: #[cfg(feature = "tokentrie")]
-    pub c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; RADIX],
-    c_cuml_l_old: [Float; RADIX],
-    pub c_cuml_l_old_for_mtcdl: [Float; RADIX],
-    pub c_z: [Float; RADIX],
+    pub c_a_tl: [[Float; MAX_TRUNCATION_POSSIBLE+1]; MAX_RADIX],
+    c_cuml_l_old: [Float; MAX_RADIX],
+    pub c_cuml_l_old_for_mtcdl: [Float; MAX_RADIX],
+    pub c_z: [Float; MAX_RADIX],
     //
-    c_a_pred_changed: [AncestorsBitmap; RADIX], // ancestor predictions which have changed since we visited this child
-    c_a_tp_changed: [AncestorsBitmap; RADIX], // ancestor tps which have changed since we visited this child
+    c_a_pred_changed: [AncestorsBitmap; MAX_RADIX], // ancestor predictions which have changed since we visited this child
+    c_a_tp_changed: [AncestorsBitmap; MAX_RADIX], // ancestor tps which have changed since we visited this child
     // ROOT
     pub if_root_then_z: Float,
 }
@@ -67,11 +68,10 @@ pub struct XBayes {
 
 
 type ContextWindowSize = u8;
-type AncestorsBitmap = u16;
+type AncestorsBitmap = u32;
 
 impl XNode {
-    pub fn edge_snapshot_fields(&self, symbol: Symbol) -> (Float, Float, Float, Float, Float) {
-        let slot = symbol.to_slot();
+    pub fn edge_snapshot_fields(&self, slot: usize) -> (Float, Float, Float, Float, Float) {
         (
             self.c_z[slot],
             self.c_p[slot],
@@ -132,17 +132,17 @@ impl XBayes {
         YWalker::root(ROOT_HASH)
     }
 
-    fn descend(nodes: &rh::RHashMap<XNode>, walker: &mut YWalker, symbol: Symbol) {
+    fn descend(nodes: &rh::RHashMap<XNode>, walker: &mut YWalker, slot: usize, symbol: XSymbol) {
         // requires looking up the node of the input walker,
         // but does not need to look up the child node
         let p_hash = *walker.a_hash().from_end(0);
         let p_node = nodes.get(&p_hash).unwrap();
-        let slot = symbol.to_slot();
-        let n_hash = rh::append_right(p_hash, symbol.to_byte());
+        let n_hash = rh::append_right(p_hash, symbol);
         walker.push(YWalkerRow::new(
             n_hash,
             p_node.c_final_token_lexindex[slot],
             symbol,
+            slot,
             p_node.c_tp[slot],
             p_node.c_tp0[slot],
         ));
@@ -181,7 +181,7 @@ impl XBayes {
                 res.insert(hash);
                 if hash == ROOT_HASH { continue; }
                 let symbol = self.cum_likelihood.get(&hash).unwrap().symbol;
-                let parent_hash = rh::pop_right(hash, symbol.to_byte());
+                let parent_hash = rh::pop_right(hash, symbol);
                 frames.push(parent_hash);
             }
             res
@@ -202,7 +202,8 @@ impl XBayes {
         }
         //
         struct Frame {
-            symbol: Symbol,
+            slot: usize,
+            symbol: XSymbol,
             depth: u16,
             target_hash: Hash,
             // n_hit_l_update_edge: bool,  // (inclusive of n)
@@ -227,7 +228,8 @@ impl XBayes {
         // let root_lupdate = pending_likelihood.get(&ROOT_HASH).unwrap();
         let root_cuml = cum_likelihood.get(&ROOT_HASH).unwrap();
         let root_frame = Frame {
-            symbol: Symbol::Start,
+            slot: usize::MAX,
+            symbol: START_SYMBOL,
             depth: 0,
             target_hash: ROOT_HASH,
             // n_lupdate_hit_edge: root_lupdate.is_leaf,
@@ -235,7 +237,7 @@ impl XBayes {
             // n_lupdate_l: root_lupdate.likelihood,
             n_cuml_l: root_cuml.likelihood,
             n_hit_prior_update: root_pred_changed,
-            n_a_pred_changed: if root_pred_changed { 1u16 } else { 0u16 },
+            n_a_pred_changed: if root_pred_changed { 1 as AncestorsBitmap } else { 0 as AncestorsBitmap },
             n_a_tp_changed: 0,
         };
         let mut frames: Vec<Frame> = vec![root_frame];
@@ -245,6 +247,7 @@ impl XBayes {
         let mut iters = 0;
         // 1. descend to valid frontier
         while let Some(Frame {
+            slot, 
             symbol,
             depth,
             target_hash,  // TODO: this can be removed since for now it is just for verification
@@ -260,7 +263,8 @@ impl XBayes {
             let n_hash;
             if depth > 0 {
                 n_walker.truncate(depth as usize);
-                Self::descend(nodes, &mut n_walker, symbol);
+                assert!(slot < MAX_RADIX, "slot {} is out of bounds for depth {}. n_symbol={}", slot, depth, symbol as char);
+                Self::descend(nodes, &mut n_walker, slot, symbol);
                 n_hash = *n_walker.a_hash().from_end(0);
                 assert!(n_hash == target_hash, "hash mismatch");
             } else {
@@ -283,9 +287,10 @@ impl XBayes {
             let node = nodes.get_mut(&n_hash).unwrap();
             // let n_lupdate = pending_likelihood.get(&n_hash);
             // let n_cuml = cum_likelihood.get(&n_hash);
-            for slot in 0..RADIX {
-                let child_symbol = Symbol::from_slot(slot);
-                let child_byte = Symbol::slot_to_byte(slot);
+            let n_padmode = PadMode::for_xsymbol(node.symbol);
+            for slot in 0..n_padmode.radix() {
+                let child_symbol = n_padmode.slot_to_xsymbol(slot);
+                let child_byte = child_symbol;
                 let child_hash = rh::append_right(n_hash, child_byte);
                 //
                 let c_lupdate = pending_likelihood.get(&child_hash);
@@ -311,7 +316,7 @@ impl XBayes {
                     c_hit_p_update = true;
                     // N.B. A prediction at a node, c, doesn't change c.p or c.tp, it only affects descendants
                 }
-                if child_symbol == Symbol::Space {
+                if child_symbol == SPACE_SYMBOL {
                     // TODO: consider a better heuristic than space
                     c_hit_p_update = false; // hit_p_update is cleansed by space
                 }
@@ -383,7 +388,7 @@ impl XBayes {
                             dense_idx += 1;
                         }
                         // token_a_hash = rh::pop_right(token_a_hash, n_walker.a_symbol().from_end(i-1).to_byte()); // leave in case we decide to revert later
-                        final_prefix_hash = rh::extend_right(n_walker.a_symbol().from_end(i-1).to_byte() as u64, final_prefix_hash, i);
+                        final_prefix_hash = rh::extend_right(*n_walker.a_symbol().from_end(i-1) as u64, final_prefix_hash, i);
                     }
                 }
                 let p_changed = fp_changed || tp_changed;
@@ -454,12 +459,13 @@ impl XBayes {
                         if met_threshold {
                             nodes_over_threshold.push(child_hash);
                         }
-                        !met_threshold || child_symbol == Symbol::Stop
+                        !met_threshold || child_symbol == STOP_SYMBOL
                     }
                 };
                 if !stop {
-                    debug_assert!(child_symbol != Symbol::Stop, "We should not descend from the stop symbol");
+                    debug_assert!(child_symbol != STOP_SYMBOL, "We should not descend from the stop symbol");
                     frames.push(Frame {
+                        slot,
                         symbol: child_symbol,
                         depth: depth + 1,
                         target_hash: child_hash,
@@ -488,13 +494,16 @@ impl XBayes {
             // hence we are guaranteed that our invalid children have already been
             // up-propagated and therefore our c_z array is correct
             let mut z = Float::NEG_INFINITY;
-            let symbol;
+            let n_symbol;
+            let n_slot;
             {
                 let node = nodes.get(&n_hash).unwrap();
-                for slot in 0..RADIX {
-                    z = logaddexp(z, node.c_z[slot]);
+                let node_padmode = PadMode::for_xsymbol(node.symbol);
+                for c_slot in 0..node_padmode.radix() {
+                    z = logaddexp(z, node.c_z[c_slot]);
                 }
-                symbol = node.symbol;
+                n_symbol = node.symbol;
+                n_slot = node.slot;
             }
             // since only child values are stored, 
             // we must store our own value on our parent
@@ -504,9 +513,9 @@ impl XBayes {
                     node.if_root_then_z = z;
                 }
             } else {
-                let parent_hash = rh::pop_right(n_hash, symbol.to_byte());
+                let parent_hash = rh::pop_right(n_hash, n_symbol);
                 let parent_node = nodes.get_mut(&parent_hash).unwrap();
-                parent_node.c_z[symbol.to_slot()] = z;
+                parent_node.c_z[n_slot] = z;
             }
 
         }
@@ -514,8 +523,9 @@ impl XBayes {
         while let Some(n_hash) = invalid_mtcdl_hashes.pop() {
             // upprop mtcdl
             // TODO: #[cfg(feature = "tokentrie")]
-            let mut mtcdl = [Float::NEG_INFINITY; MAX_TOKEN_LENGTH];
-            let symbol;
+            let mut mtcdl32 = [Float::NEG_INFINITY; 32];
+            let n_symbol;
+            let n_slot;
             {
                 fn safe_max(a: Float, b: Float) -> Float {
                     if a == Float::NEG_INFINITY {
@@ -527,31 +537,33 @@ impl XBayes {
                     return a.max(b);
                 }
                 let node = nodes.get(&n_hash).unwrap();
-                symbol = node.symbol;
-                for slot in 0..RADIX {
-                    let c_mtcdl = node.c_a_tl[slot];
-                    let c_can_trunc = node.c_can_trunc[slot];
+                let node_padmode = PadMode::for_xsymbol(node.symbol);
+                for c_slot in 0..node_padmode.radix() {
+                    let c_mtcdl = node.c_a_tl[c_slot];
+                    let c_can_trunc = node.c_can_trunc[c_slot];
                     let nz = c_can_trunc | 1;
-                    let expanded_c_mtcdl = dense_to_sparse16( &c_mtcdl, nz, Float::NEG_INFINITY);
+                    let expanded_c_mtcdl = sparse_to_dense32( &c_mtcdl, nz, Float::NEG_INFINITY);
                     for i in 0..(MAX_TOKEN_LENGTH-1) {
-                        mtcdl[i] = safe_max(mtcdl[i], expanded_c_mtcdl[i+1]);
+                        mtcdl32[i] = safe_max(mtcdl32[i], expanded_c_mtcdl[i+1]);
                     }
-                    let c_ftl = node.c_final_token_length[slot] as usize;
-                    mtcdl[c_ftl - 1] = safe_max(mtcdl[c_ftl - 1], expanded_c_mtcdl[0]);
+                    let c_ftl = node.c_final_token_length[c_slot] as usize;
+                    mtcdl32[c_ftl - 1] = safe_max(mtcdl32[c_ftl - 1], expanded_c_mtcdl[0]);
                 }
+                n_symbol = node.symbol;
+                n_slot = node.slot;
             }
             // since only child values are stored, we must store our own value on our parent
             if n_hash == ROOT_HASH {
                 // Don't do anything because root.mtcdl is unnecessary since the root is always queried first
             } else {
-                let parent_hash = rh::pop_right(n_hash, symbol.to_byte());
+                let parent_hash = rh::pop_right(n_hash, n_symbol);
                 let parent_node = nodes.get_mut(&parent_hash).unwrap();
                 let mut mtcdl_dense = [Float::NAN; MAX_TRUNCATION_POSSIBLE+1];
-                let nz = parent_node.c_can_trunc[symbol.to_slot()] | 1;
-                for (i, v) in sparse16_to_dense(&mtcdl, nz).iter().enumerate() {
+                let nz = parent_node.c_can_trunc[n_slot] | 1;
+                for (i, v) in dense32_to_sparse(&mtcdl32, nz).iter().enumerate() {
                     mtcdl_dense[i] = *v;
                 }
-                parent_node.c_a_tl[symbol.to_slot()] = mtcdl_dense;
+                parent_node.c_a_tl[n_slot] = mtcdl_dense;
             }
         }
         match recalc_type {
@@ -595,33 +607,38 @@ impl XBayes {
         tokenizer: &TinyLlamaWordTokenizer,
         walker: &YWalker,
     ) {
-        let n_hash = *walker.a_hash().last().unwrap();
+        let n_hash = *walker.a_hash().from_end(0);
+        let n_symbol = *walker.a_symbol().from_end(0);
+        let n_slot = *walker.a_slot().from_end(0);
         if nodes.contains_key(&n_hash) {
             return;
         }
         let mut node = XNode {
-            symbol: *walker.a_symbol().from_end(0),
-            c_can_trunc: [0; RADIX], // ok
-            c_final_token_length: [0; RADIX], // ok
-            c_final_token_lexindex: [TokenLexIndex::INVALID; RADIX], // ok
-            c_p: [Float::NAN; RADIX], // ok
-            c_p_old: [Float::NAN; RADIX], // ok
-            c_fp: [[Float::NAN; MAX_TRUNCATION_POSSIBLE]; RADIX], // ok
-            c_tp0: [Float::NAN; RADIX], // ok
-            c_tp: [Float::NAN; RADIX], // ok
-            c_final_token_prob: [Float::NAN; RADIX], // ok
-            c_a_tl: [[Float::NAN; MAX_TRUNCATION_POSSIBLE+1]; RADIX], // ok
-            c_cuml_l_old: [ZERO; RADIX], // ok
-            c_cuml_l_old_for_mtcdl: [ZERO; RADIX], // ok
-            c_z: [Float::NAN; RADIX], // ok
-            c_a_pred_changed: [0; RADIX], // ok
-            c_a_tp_changed: [0; RADIX], // ok
+            slot: n_slot,
+            symbol: n_symbol,
+            depth: walker.len() as u16,
+            c_can_trunc: [0; MAX_RADIX], // ok
+            c_final_token_length: [0; MAX_RADIX], // ok
+            c_final_token_lexindex: [TokenLexIndex::INVALID; MAX_RADIX], // ok
+            c_p: [Float::NAN; MAX_RADIX], // ok
+            c_p_old: [Float::NAN; MAX_RADIX], // ok
+            c_fp: [[Float::NAN; MAX_TRUNCATION_POSSIBLE]; MAX_RADIX], // ok
+            c_tp0: [Float::NAN; MAX_RADIX], // ok
+            c_tp: [Float::NAN; MAX_RADIX], // ok
+            c_final_token_prob: [Float::NAN; MAX_RADIX], // ok
+            c_a_tl: [[Float::NAN; MAX_TRUNCATION_POSSIBLE+1]; MAX_RADIX], // ok
+            c_cuml_l_old: [ZERO; MAX_RADIX], // ok
+            c_cuml_l_old_for_mtcdl: [ZERO; MAX_RADIX], // ok
+            c_z: [Float::NAN; MAX_RADIX], // ok
+            c_a_pred_changed: [0; MAX_RADIX], // ok
+            c_a_tp_changed: [0; MAX_RADIX], // ok
             if_root_then_z: if n_hash == ROOT_HASH { ZERO } else { Float::NAN }, // ok
         };
         //
         let available_prediction_depth = usize::min(MAX_TOKEN_LENGTH, walker.len() + 1);
-        for slot in 0..RADIX {
-            let child_byte = Symbol::slot_to_byte(slot);
+        let n_padmode = PadMode::for_xsymbol(n_symbol);
+        for slot in 0..n_padmode.radix() {
+            let child_byte = n_padmode.slot_to_xsymbol(slot);
             let mut final_chars_hash = child_byte as u64;
             let mut can_trunc_count = 0;
             let mut p = Float::NEG_INFINITY;
@@ -664,9 +681,12 @@ impl XBayes {
                         can_trunc_count += 1;
                     }
                 }
-                final_chars_hash = rh::extend_right(walker.a_symbol().from_end(i-1).to_byte() as u64, final_chars_hash, i);
+                final_chars_hash = rh::extend_right(*walker.a_symbol().from_end(i-1) as u64, final_chars_hash, i);
             }
-            assert!(found_canonical_ancestor);
+            if !found_canonical_ancestor {
+                let n_string = walker.a_symbol().iter().map(|&s| s as char).collect::<String>();
+                panic!("No canonical ancestor found for a node with parent string {} and child_byte {}", n_string, child_byte as char);
+            }
             assert!(p.is_finite());
             node.c_a_tl[slot][0] = ZERO;
             node.c_p[slot] = p;

@@ -1,7 +1,7 @@
 import { optimizeTimerPhases } from '../wasm_pkg/bayesian';
 import type { LikelihoodModel } from './likelihoodModel';
 import { timerLikelihood } from './likelihoodModel';
-import type { ExpandedSnapshot, VisibleNodeTimerMap } from './trieLayout';
+import { ROOT_SYMBOL, type ExpandedSnapshot, type VisibleNodeTimerMap } from './trieLayout';
 
 interface LikelihoodPayloadNode {
 	l: number;
@@ -9,7 +9,7 @@ interface LikelihoodPayloadNode {
 }
 
 function selectionMasses(snapshot: ExpandedSnapshot, keys: readonly string[]): number[] {
-	const rootZ = snapshot['^']?.z ?? 0;
+	const rootZ = snapshot[ROOT_SYMBOL]?.z ?? 0;
 	const expZ: Record<string, number> = {};
 	for (const key of keys) {
 		expZ[key] = Math.exp(snapshot[key].z - rootZ);
@@ -60,7 +60,7 @@ export function phaseOrderedKeys(snapshot: ExpandedSnapshot, keys: readonly stri
 		return [...keys];
 	}
 
-	const rootZ = snapshot['^']?.z ?? 0;
+	const rootZ = snapshot[ROOT_SYMBOL]?.z ?? 0;
 	const childrenByParent: Record<string, string[]> = {};
 	const rootKeys: string[] = [];
 	for (const key of keys) {

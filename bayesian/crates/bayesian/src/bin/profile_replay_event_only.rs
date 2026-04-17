@@ -21,6 +21,11 @@ struct SessionEvent {
 fn apply_event(session: &mut BayesianSession, event: &SessionEvent, json_payloads: &[String]) {
     match event.kind.as_str() {
         "reset" => session.reset(),
+        "set_current_prior_json" => {
+            if let Some(payload_ix) = event.json_payload_ix {
+                session.set_current_prior_json(json_payloads[payload_ix].clone());
+            }
+        }
         "receive_prior_update" => {
             let payload_ix = event.json_payload_ix.unwrap();
             session.receive_prior_update(json_payloads[payload_ix].clone());
@@ -32,6 +37,10 @@ fn apply_event(session: &mut BayesianSession, event: &SessionEvent, json_payload
         "apply_updates" => session.apply_updates(),
         "expand_to_threshold" => {
             let _ = session.expand_to_threshold();
+        }
+        "recalibrate" => {
+            let initial = session.current_prior_json();
+            let _ = session.recalibrate(initial, true);
         }
         other => panic!("unsupported event kind in replay: {other}"),
     }

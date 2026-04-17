@@ -9,11 +9,14 @@ pub mod symbol;
 
 use crate::rolling_hash as rh;
 use crate::safe_float::Float;
-use crate::symbol::Symbol;
+use crate::symbol::{START_SYMBOL, STOP_SYMBOL};
 
-/// Rolling hash of the trie root context (only the start symbol `^`).
-pub const ROOT_HASH: rh::Hash = rh::append_right(0, Symbol::Start.to_byte());
-pub const ROOT_STRING: &str = "^";
+/// Surface string for the trie root (must match [`Symbol::Start`]).
+pub const ROOT_STRING: &str = "A";
+
+/// Rolling hash of the trie root context (only the start symbol `A`).
+pub const ROOT_HASH: rh::Hash = rh::append_right(0, START_SYMBOL);
+pub const STOP_HASH: rh::Hash = rh::append_right(0, STOP_SYMBOL);
 
 /// `ln(4/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
 pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
@@ -21,13 +24,12 @@ pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
 /// Maximum node visits per `recalc_to_frontier_and_back` traversal.
 pub const TRIE_MAX_VISITS: i32 = 200;
 
-pub(crate) const MAX_TOKEN_LENGTH: usize = 16;
+pub(crate) const MAX_TOKEN_LENGTH: usize = 20;
 pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 
 pub mod l_update;
 mod p_update;
 pub mod core;
-pub mod debug;
 pub mod prediction;
 pub use prediction::{
     ZeroOrderPredictionTimingSnapshot,
