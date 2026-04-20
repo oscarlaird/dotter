@@ -5,14 +5,15 @@ use std::time::Instant;
 
 use bpe::TokenLexIndex;
 use calibration::VariationalParams;
-use trie::safe_float::{Float, into_f32};
-use trie::symbol::{PadMode, START_SYMBOL, XSymbol};
+use trie::safe_float::{Float};
+use trie::symbol::{XSymbol};
 use trie::core::{XBayes, RecalcType, RecalcResult};
 use trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
 use trie::prediction::XPrediction;
 use rolling_hash as rh;
 use rolling_hash::Hash;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
+use render_utils::{snapshot_by_string};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -51,13 +52,6 @@ fn elapsed_ms_since(start: TimingStart) -> f64 {
 #[cfg(not(target_arch = "wasm32"))]
 fn elapsed_ms_since(start: TimingStart) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
-}
-
-fn serialize_symbol<S>(symbol: &XSymbol, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_char(*symbol as char)
 }
 
 fn deserialize_optional_symbol<'de, D>(deserializer: D) -> Result<Option<XSymbol>, D::Error>
@@ -137,7 +131,7 @@ pub struct BayesianSession {
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
-    fn certain_prefix_nodes(&mut self) -> Vec<Hash> {
+    fn certain_prefix_nodes(&mut self) -> Vec<(Hash, XSymbol)> {
         let threshold = (-0.0100503f32).into(); // ln(0.99)
         match self.trie.recalc_to_frontier(trie::core::RecalcType::Expand { threshold }) {
             trie::core::RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
@@ -245,6 +239,7 @@ impl BayesianSession {
         );
 
         let certain_prefix_nodes = self.certain_prefix_nodes();
+        let certain_prefix_hashes = certain_prefix_nodes.iter().map(|(hash, _)| *hash).collect::<Vec<_>>();
         assert!(!certain_prefix_nodes.is_empty(), "recalibrate expected at least the root node in certain_prefix_nodes");
 
         let mut prior: VariationalParams =
@@ -252,7 +247,7 @@ impl BayesianSession {
         let mut used_likelihood_updates = 0usize;
         let mut recent_pairs: Vec<CalibrationSample> = Vec::new();
         
-        if let Some(&last_certain) = certain_prefix_nodes.last() {
+        if let Some(&last_certain) = certain_prefix_hashes.last() {
             for payload in &self.likelihood_history {
                 let mut payload_hashes = HashMap::new();
                 for (s, nhash) in &payload.nodes {
@@ -264,7 +259,7 @@ impl BayesianSession {
                 }
                 
                 let mut target_node = None;
-                for hash in certain_prefix_nodes.iter().rev() {
+                for hash in certain_prefix_hashes.iter().rev() {
                     if let Some(&nhash) = payload_hashes.get(hash) {
                         target_node = Some(nhash);
                         break;
@@ -316,11 +311,8 @@ impl BayesianSession {
 
     pub fn certain_prefix_string(&mut self) -> String {
         let certain_prefix_nodes = self.certain_prefix_nodes();
-        let symbols = certain_prefix_nodes.iter()
-            .map(|hash| self.trie.nodes.get(hash).unwrap().symbol)
-            .collect::<Vec<_>>();
-
-        String::from_utf8(symbols).unwrap()
+        let certain_prefix_symbols = certain_prefix_nodes.iter().map(|(_, symbol)| *symbol).collect::<Vec<_>>();
+        String::from_utf8(certain_prefix_symbols).unwrap()
     }
 
     #[cfg(feature = "tokentrie")]
@@ -402,119 +394,8 @@ impl BayesianSession {
             }
             RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
         };
-        // add all siblings to that the frontend knows how to space things
-        let nodes_set = nodes_list.into_iter().collect::<rh::RHashSet>();
-        // node list is in topological order
-        struct NString {
-            string: String,
-            z: Float,
-            p: Option<Float>,
-            tp: Option<Float>,
-            tp0: Option<Float>,
-            a_tl0: Option<Float>,
-            symbol: XSymbol,
-            upper_siblings_inclusive_cum_z: Option<Float>,
-        }
-        let mut snapshot_by_hash: rh::RHashMap<NString> = rh::RHashMap::default();
-        snapshot_by_hash.insert(trie::ROOT_HASH, NString {
-            string: String::from(trie::ROOT_STRING),
-            z: self.trie.nodes.get(&trie::ROOT_HASH).unwrap().if_root_then_z,
-            p: None,
-            tp: None,
-            tp0: None,
-            a_tl0: None,
-            symbol: START_SYMBOL,
-            upper_siblings_inclusive_cum_z: None,
-        });
 
-        struct Frame {
-            n_hash: Hash,
-            n_symbol: XSymbol,
-            n_depth: u16,
-        }
-        // a frame is a node that *may* have children that should be added to the snapshot
-        // by the time we see a frame, it should already be in the snapshot
-        // the frame list is a visit list
-        let mut full_string = String::new(); // character stack
-        let mut frames: Vec<Frame> = vec![Frame { n_hash: trie::ROOT_HASH, n_symbol: START_SYMBOL, n_depth: 0 }];
-        while let Some(Frame { n_hash, n_symbol, n_depth }) = frames.pop() {
-            full_string.truncate(n_depth as usize);
-            full_string.push(n_symbol as char);
-            debug_assert!(snapshot_by_hash.contains_key(&n_hash), "frame node not in snapshot");
-            let n_padmode = PadMode::for_xsymbol(n_symbol);
-            let c_present = (0..n_padmode.radix()).map(|slot| {
-                let c_byte = n_padmode.slot_to_xsymbol(slot);
-                let c_hash = rh::append_right(n_hash, c_byte);
-                nodes_set.contains(&c_hash)
-            }).collect::<Vec<_>>();
-            let is_interior = c_present.iter().any(|&p| p);
-            if !is_interior {
-                continue;
-            }
-            debug_assert!(self.trie.nodes.contains_key(&n_hash), "frame node not in trie");
-            let n_node = self.trie.nodes.get(&n_hash).unwrap();
-            let c_z = n_node.c_z;
-            // Compute the partial sums of c_z using logaddexp, i.e., log-sum-exp over upper siblings
-            let mut c_upper_siblings_inclusive_cum_z = vec![Float::NEG_INFINITY; n_padmode.radix()].into_boxed_slice();
-            let mut accum = Float::NEG_INFINITY;
-            for i in 0..n_padmode.radix() {
-                accum = trie::logaddexp(accum, c_z[i]);
-                c_upper_siblings_inclusive_cum_z[i] = accum;
-            }
-       
-            for slot in 0..n_padmode.radix() {
-                if !c_present[slot] {
-                    continue;
-                }
-                let c_symbol = n_padmode.slot_to_xsymbol(slot);
-                let c_byte = c_symbol;
-                let c_hash = rh::append_right(n_hash, c_byte);
-                let mut c_string = full_string.clone();
-                c_string.push(c_symbol as char);
-                let (z, p, tp, tp0, a_tl0) = n_node.edge_snapshot_fields(slot);
-                snapshot_by_hash.insert(c_hash, NString {
-                    string: c_string,
-                    z,
-                    p: Some(p),
-                    tp: Some(tp),
-                    tp0: Some(tp0),
-                    a_tl0: Some(a_tl0),
-                    symbol: c_symbol,
-                    upper_siblings_inclusive_cum_z: Some(c_upper_siblings_inclusive_cum_z[slot]),
-                });
-                frames.push(Frame {
-                    n_hash: c_hash,
-                    n_symbol: c_symbol,
-                    n_depth: n_depth + 1,
-                })
-            }
-        }
-        // swap out the string for the hash as the primary key
-        #[derive(Serialize)]
-        struct NHash {
-            z: f32,
-            p: Option<f32>,
-            tp: Option<f32>,
-            tp0: Option<f32>,
-            a_tl0: Option<f32>,
-            #[serde(serialize_with = "serialize_symbol")]
-            symbol: XSymbol,
-            upper_siblings_inclusive_cum_z: Option<f32>,
-            hash: rh::Hash,
-        }
-        let snapshot_by_string = snapshot_by_hash.into_iter()
-            .map(|(hash, n_string)| (n_string.string,
-                NHash {
-                    z: into_f32(n_string.z),
-                    p: n_string.p.map(into_f32),
-                    tp: n_string.tp.map(into_f32),
-                    tp0: n_string.tp0.map(into_f32),
-                    a_tl0: n_string.a_tl0.map(into_f32),
-                    symbol: n_string.symbol,
-                    upper_siblings_inclusive_cum_z: n_string.upper_siblings_inclusive_cum_z.map(into_f32),
-                    hash
-                }))
-            .collect::<HashMap<String, NHash>>();
+        let snapshot_by_string = snapshot_by_string(&self.trie, nodes_list);
         let snapshot_json = serde_json::to_string(&snapshot_by_string).unwrap();
         self.record_event("expand_to_threshold", start, None);
         snapshot_json

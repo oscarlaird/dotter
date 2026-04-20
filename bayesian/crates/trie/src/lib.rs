@@ -29,6 +29,7 @@ pub(crate) const MAX_TRUNCATION_POSSIBLE: usize = 5;
 
 pub mod l_update;
 mod p_update;
+pub mod dfs;
 pub mod core;
 pub mod prediction;
 pub use prediction::{
@@ -39,7 +40,6 @@ pub use prediction::{
 
 #[cfg(feature = "tokentrie")]
 mod tokentrie;
-
 
 pub fn logaddexp(a: Float, b: Float) -> Float {
     if a == Float::NEG_INFINITY {

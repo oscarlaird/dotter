@@ -20,6 +20,8 @@ interface MainPageHeaderProps {
 	onShowDebugStatsChange: (value: boolean) => void;
 	showBoxes: boolean;
 	onShowBoxesChange: (value: boolean) => void;
+	showSpaceConnectors: boolean;
+	onShowSpaceConnectorsChange: (value: boolean) => void;
 	useVisualTutor: boolean;
 	onUseVisualTutorChange: (value: boolean) => void;
 	useAudioTutor: boolean;
@@ -54,6 +56,8 @@ function MainPageHeader({
 	onShowDebugStatsChange,
 	showBoxes,
 	onShowBoxesChange,
+	showSpaceConnectors,
+	onShowSpaceConnectorsChange,
 	useVisualTutor,
 	onUseVisualTutorChange,
 	useAudioTutor,
@@ -162,14 +166,29 @@ function MainPageHeader({
 					/>
 					Debug
 				</label>
-				<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
+				<label
+					className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300"
+					title="Semi-transparent rectangles behind each trie timer"
+				>
 					<input
 						type="checkbox"
 						checked={showBoxes}
 						onChange={(event) => onShowBoxesChange(event.target.checked)}
 						className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
 					/>
-					Boxes
+					Node boxes
+				</label>
+				<label
+					className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300"
+					title="Lines from a space (word-boundary) node to its children"
+				>
+					<input
+						type="checkbox"
+						checked={showSpaceConnectors}
+						onChange={(event) => onShowSpaceConnectorsChange(event.target.checked)}
+						className="h-3.5 w-3.5 accent-blue-600 dark:accent-blue-500"
+					/>
+					Space→child lines
 				</label>
 				<label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-600 dark:text-gray-300">
 					<input

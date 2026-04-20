@@ -1,0 +1,12 @@
+[package]
+name = "render_utils"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+trie = { path = "../trie", default-features = false }
+rolling_hash = { path = "../rolling_hash" }
+serde = { version = "1", features = ["derive"] }

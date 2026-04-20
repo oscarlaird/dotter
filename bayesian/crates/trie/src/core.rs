@@ -91,7 +91,7 @@ pub enum RecalcType {
 
 pub enum RecalcResult {
     Updated,
-    Expanded { nodes_over_threshold: Vec<Hash> }
+    Expanded { nodes_over_threshold: Vec<(Hash, XSymbol)> }
 }
 
 impl XBayes {
@@ -241,7 +241,7 @@ impl XBayes {
             n_a_tp_changed: 0,
         };
         let mut frames: Vec<Frame> = vec![root_frame];
-        let mut nodes_over_threshold: Vec<Hash> = vec![];
+        let mut nodes_over_threshold: Vec<(Hash, XSymbol)> = vec![];
         let mut invalid_z_hashes: Vec<Hash> = vec![];
         let mut invalid_mtcdl_hashes: Vec<Hash> = vec![];
         let mut iters = 0;
@@ -269,7 +269,7 @@ impl XBayes {
                 assert!(n_hash == target_hash, "hash mismatch");
             } else {
                 n_hash = ROOT_HASH;
-                nodes_over_threshold.push(n_hash);
+                nodes_over_threshold.push((n_hash, START_SYMBOL));
                 invalid_z_hashes.push(n_hash);
                 invalid_mtcdl_hashes.push(n_hash);
             }
@@ -457,7 +457,7 @@ impl XBayes {
                     RecalcType::Expand { threshold } => {
                         let met_threshold = node.c_z[slot] - root_z.unwrap() >= threshold;
                         if met_threshold {
-                            nodes_over_threshold.push(child_hash);
+                            nodes_over_threshold.push((child_hash, child_symbol));
                         }
                         !met_threshold || child_symbol == STOP_SYMBOL
                     }

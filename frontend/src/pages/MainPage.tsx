@@ -98,6 +98,7 @@ function MainPage() {
 	const [showCalibrationDebugPanel, setShowCalibrationDebugPanel] = useState(false);
 	const [colorMode, setColorMode] = useState<'light' | 'dark'>(readStoredColorMode);
 	const [showBoxes, setShowBoxes] = useState(true);
+	const [showSpaceConnectors, setShowSpaceConnectors] = useState(true);
 	const [showDebugStats, setShowDebugStats] = useState(false);
 	const [showAll, setShowAll] = useState(false);
 	const [blinkToClick, setBlinkToClick] = useState(readStoredBlinkToClick);
@@ -533,6 +534,8 @@ function MainPage() {
 						onShowDebugStatsChange={setShowDebugStats}
 						showBoxes={showBoxes}
 						onShowBoxesChange={setShowBoxes}
+						showSpaceConnectors={showSpaceConnectors}
+						onShowSpaceConnectorsChange={setShowSpaceConnectors}
 						useVisualTutor={useVisualTutor}
 						onUseVisualTutorChange={setUseVisualTutor}
 						useAudioTutor={useAudioTutor}
@@ -598,6 +601,7 @@ function MainPage() {
 									showAll={showAll}
 									lightBackground={colorMode === 'light'}
 									showBoxes={showBoxes}
+									showSpaceConnectors={showSpaceConnectors}
 									showDebugStats={showDebugStats}
 								/>
 								{blinkToClick && wasmReady && (

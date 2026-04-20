@@ -5,6 +5,7 @@
 pub use ::bpe;
 pub use ::rolling_hash;
 pub use ::trie;
+pub use ::render_utils;
 
 mod session;
 pub use session::BayesianSession;

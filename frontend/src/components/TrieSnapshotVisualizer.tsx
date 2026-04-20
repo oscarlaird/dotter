@@ -49,6 +49,8 @@ interface TrieSnapshotVisualizerProps {
 	lightBackground?: boolean;
 	/** Semi-transparent node background rectangles (default on). */
 	showBoxes?: boolean;
+	/** Bézier edges from parent to child; when false, edges whose parent is a space (`S`) node are skipped. */
+	showSpaceConnectors?: boolean;
 	showDebugStats?: boolean;
 }
 
@@ -269,6 +271,7 @@ function TrieSnapshotVisualizer({
 	targetPhrase = '',
 	lightBackground = false,
 	showBoxes = true,
+	showSpaceConnectors = true,
 	showDebugStats = false,
 }: TrieSnapshotVisualizerProps) {
 	const [time, setTime] = useState(() => performance.now() / 1000);
@@ -497,6 +500,9 @@ function TrieSnapshotVisualizer({
 			if (!parent) {
 				continue;
 			}
+			if (!showSpaceConnectors && parent.symbol === SPACE_SYMBOL) {
+				continue;
+			}
 			const [r, g, b] = timerRgbOnSurface(node.symbol, lightBackground);
 			const stroke = connectorStrokeStyle(r, g, b, lightBackground);
 			const childGeom = timerCircleGeometry(node, currentTime, getTweenedValue, scaleX);
@@ -606,6 +612,7 @@ function TrieSnapshotVisualizer({
 		scrollRoot,
 		showAll,
 		showBoxes,
+		showSpaceConnectors,
 		showDebugStats,
 		targetPhrase,
 		tutorTargetKey,

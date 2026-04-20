@@ -146,7 +146,24 @@ impl Hasher for IdentityHasher {
         self.0 = i;
     }
 }
+
+pub type HashSymbolPair = (Hash, u8);
+#[derive(Default)]
+pub struct HashSymbolPairIdentityHasher(HashSymbolPair);
+impl Hasher for HashSymbolPairIdentityHasher {
+    fn finish(&self) -> u64 {
+        self.0.0
+    }
+
+    fn write(&mut self, _: &[u8]) {
+        panic!("HashSymbolPairIdentityHasher: key type must hash only via write_u64 (use u64 keys)");
+    }
+
+    fn write_u64(&mut self, i: u64) {
+        self.0.0 = i;
+    }
+}
 // Generic type definitions for rolling hash collections
 
-pub type RHashMap<V> = HashMap<Hash, V, BuildHasherDefault<IdentityHasher>>;
 pub type RHashSet = HashSet<Hash, BuildHasherDefault<IdentityHasher>>;
+pub type RHashMap<V> = HashMap<Hash, V, BuildHasherDefault<IdentityHasher>>;
