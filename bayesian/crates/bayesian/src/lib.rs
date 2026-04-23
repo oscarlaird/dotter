@@ -3,17 +3,12 @@
 #![allow(dead_code)]
 
 pub use ::bpe;
-pub use ::calibration;
-pub use ::render_utils;
 pub use ::rolling_hash;
-pub use ::timer_spacing;
 pub use ::trie;
+pub use ::render_utils;
 
 mod session;
-pub use session::{
-    BayesianSession, CalibrationSample, LikelihoodNodeInput, LikelihoodUpdatePayload,
-    PriorUpdatePayload, RecalibrationResult, RequestedPrior, SessionEvent, SessionObservability,
-};
+pub use session::BayesianSession;
 
 /// Install [`console_error_panic_hook`] so panics in the wasm32 build print to `console.error`
 /// with source location (and a useful traceback when debug symbols are present). Call once
@@ -42,8 +37,7 @@ pub fn debug_panic_test() {
 #[cfg(feature = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = optimizeTimerPhases)]
 pub fn optimize_timer_phases(weights_json: &str, sigma: f64, period: f64) -> String {
-    let weights: Vec<f64> =
-        serde_json::from_str(weights_json).expect("weights_json must be a JSON array of numbers");
+    let weights: Vec<f64> = serde_json::from_str(weights_json).expect("weights_json must be a JSON array of numbers");
     if weights.is_empty() {
         return "[]".to_string();
     }

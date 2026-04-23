@@ -5,15 +5,15 @@ use std::time::Instant;
 
 use bpe::TokenLexIndex;
 use calibration::VariationalParams;
-use render_utils::{ExpandedSnapshot, snapshot_by_string};
+use trie::safe_float::{Float};
+use trie::symbol::{XSymbol};
+use trie::core::{XBayes, RecalcType, RecalcResult};
+use trie::l_update::{merge_xl_pair, set_leaf_indicators, XLUpdate, XLUpdateEntry};
+use trie::prediction::XPrediction;
 use rolling_hash as rh;
 use rolling_hash::Hash;
 use serde::{Deserialize, Deserializer, Serialize};
-use trie::core::{RecalcResult, RecalcType, XBayes};
-use trie::l_update::{XLUpdate, XLUpdateEntry, merge_xl_pair, set_leaf_indicators};
-use trie::prediction::XPrediction;
-use trie::safe_float::Float;
-use trie::symbol::XSymbol;
+use render_utils::{snapshot_by_string};
 
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
@@ -27,7 +27,11 @@ type TimingStart = Instant;
 
 #[cfg(target_arch = "wasm32")]
 fn timing_start() -> TimingStart {
-    web_sys::window().unwrap().performance().unwrap().now()
+    web_sys::window()
+        .unwrap()
+        .performance()
+        .unwrap()
+        .now()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,7 +41,12 @@ fn timing_start() -> TimingStart {
 
 #[cfg(target_arch = "wasm32")]
 fn elapsed_ms_since(start: TimingStart) -> f64 {
-    web_sys::window().unwrap().performance().unwrap().now() - start
+    web_sys::window()
+        .unwrap()
+        .performance()
+        .unwrap()
+        .now()
+        - start
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,9 +65,7 @@ where
             .next()
             .ok_or_else(|| serde::de::Error::custom("empty symbol string"))?;
         if it.next().is_some() {
-            return Err(serde::de::Error::custom(
-                "symbol string must be exactly one character",
-            ));
+            return Err(serde::de::Error::custom("symbol string must be exactly one character"));
         }
         let code = u32::from(c);
         if code > 127 {
@@ -69,60 +76,48 @@ where
     .transpose()
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SessionEvent {
-    pub kind: String,
+#[derive(Clone, Serialize)]
+struct SessionEvent {
+    kind: &'static str,
     duration_ms: f64,
     json_payload_ix: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SessionObservability {
-    pub json_payloads: Vec<String>,
-    pub event_log: Vec<SessionEvent>,
+#[derive(Clone, Default, Serialize)]
+struct SessionObservability {
+    json_payloads: Vec<String>,
+    event_log: Vec<SessionEvent>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct LikelihoodNodeInput {
+#[derive(Deserialize, Clone)]
+struct LikelihoodUpdatePayload {
+    period: f64,
+    y: f64,
+    nodes: HashMap<String, NHash>,
+}
+
+#[derive(Deserialize, Clone)]
+struct NHash {
+    // by default, serde will ignore extra fields
     #[serde(alias = "l")]
-    pub likelihood: f32,
+    likelihood: f32,
     /// Omitted in wire JSON: taken as the last character of the map key (`a`–`z`, `S`, `Z`, `A`).
     #[serde(default, deserialize_with = "deserialize_optional_symbol")]
-    pub symbol: Option<XSymbol>,
-    pub phase: f64,
+    symbol: Option<XSymbol>,
+    phase: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct LikelihoodUpdatePayload {
-    pub period: f64,
-    pub y: f64,
-    pub nodes: HashMap<String, LikelihoodNodeInput>,
+#[derive(Serialize)]
+struct CalibrationSample {
+    x: f64,
+    period: f64,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct CalibrationSample {
-    pub x: f64,
-    pub period: f64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RecalibrationResult {
-    pub prior_params: VariationalParams,
-    pub used_likelihood_updates: usize,
-    pub recent_pairs: Vec<CalibrationSample>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct PriorUpdatePayload {
-    pub full_string: String,
-    pub final_token_lexindex: TokenLexIndex,
-    pub follower_logits: Vec<f32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RequestedPrior {
-    pub full_string: String,
-    pub last_token_lexindex: TokenLexIndex,
+#[derive(Serialize)]
+struct RecalibrationResult {
+    prior_params: VariationalParams,
+    used_likelihood_updates: usize,
+    recent_pairs: Vec<CalibrationSample>,
 }
 
 #[cfg_attr(feature = "python", pyclass)]
@@ -136,25 +131,10 @@ pub struct BayesianSession {
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 impl BayesianSession {
-    fn symbol_for_payload_node(node_key: &str, symbol: Option<XSymbol>) -> XSymbol {
-        symbol.unwrap_or_else(|| {
-            let b = *node_key
-                .as_bytes()
-                .last()
-                .expect("likelihood update contained an empty node string");
-            b as XSymbol
-        })
-    }
-
     fn certain_prefix_nodes(&mut self) -> Vec<(Hash, XSymbol)> {
         let threshold = (-0.0100503f32).into(); // ln(0.99)
-        match self
-            .trie
-            .recalc_to_frontier(trie::core::RecalcType::Expand { threshold })
-        {
-            trie::core::RecalcResult::Expanded {
-                nodes_over_threshold,
-            } => nodes_over_threshold,
+        match self.trie.recalc_to_frontier(trie::core::RecalcType::Expand { threshold }) {
+            trie::core::RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
             _ => panic!("Expected Expanded"),
         }
     }
@@ -167,15 +147,11 @@ impl BayesianSession {
     }
 
     fn record_event(&self, kind: &'static str, start: TimingStart, json_payload_ix: Option<usize>) {
-        self.observability
-            .lock()
-            .unwrap()
-            .event_log
-            .push(SessionEvent {
-                kind: kind.to_string(),
-                duration_ms: elapsed_ms_since(start),
-                json_payload_ix,
-            });
+        self.observability.lock().unwrap().event_log.push(SessionEvent {
+            kind,
+            duration_ms: elapsed_ms_since(start),
+            json_payload_ix,
+        });
     }
 
     #[cfg_attr(feature = "wasm", wasm_bindgen(constructor))]
@@ -200,7 +176,7 @@ impl BayesianSession {
         observability.json_payloads.clear();
         observability.event_log.clear();
         observability.event_log.push(SessionEvent {
-            kind: "reset".to_string(),
+            kind: "reset",
             duration_ms: elapsed_ms_since(start),
             json_payload_ix: None,
         });
@@ -213,32 +189,18 @@ impl BayesianSession {
         threshold
     }
 
-    pub fn receive_likelihood_update_typed(&mut self, payload: LikelihoodUpdatePayload) {
+    pub fn receive_likelihood_update(&mut self, likelihood_json: String) {
         let start = timing_start();
-        assert!(
-            payload.period.is_finite() && payload.period > 0.0,
-            "likelihood period must be finite and positive"
-        );
+        
+        let payload =
+            serde_json::from_str::<LikelihoodUpdatePayload>(&likelihood_json).unwrap();
+        assert!(payload.period.is_finite() && payload.period > 0.0, "likelihood period must be finite and positive");
         assert!(payload.y.is_finite(), "likelihood y must be finite");
-        assert!(
-            !payload.nodes.is_empty(),
-            "likelihood update contained no nodes"
-        );
+        assert!(!payload.nodes.is_empty(), "likelihood update contained no nodes");
         for (s, nhash) in &payload.nodes {
-            assert!(
-                !s.is_empty(),
-                "likelihood update contained an empty node string"
-            );
-            assert!(
-                nhash.likelihood.is_finite(),
-                "likelihood for node {:?} must be finite",
-                s
-            );
-            assert!(
-                nhash.phase.is_finite(),
-                "phase for node {:?} must be finite",
-                s
-            );
+            assert!(!s.is_empty(), "likelihood update contained an empty node string");
+            assert!(nhash.likelihood.is_finite(), "likelihood for node {:?} must be finite", s);
+            assert!(nhash.phase.is_finite(), "phase for node {:?} must be finite", s);
             assert!(
                 nhash.phase >= 0.0 && nhash.phase < payload.period,
                 "phase for node {:?} must lie in [0, period); got {} with period {}",
@@ -247,42 +209,29 @@ impl BayesianSession {
                 payload.period,
             );
         }
-
+        
         self.likelihood_history.push(payload.clone());
-        let json_payload_ix = self.push_json_payload(
-            serde_json::to_string(&payload).expect("likelihood serialization failed"),
-        );
-
-        let mut new_l_update = payload
-            .nodes
-            .iter()
-            .map(|(s, nhash)| {
-                (
-                    rh::hash_string(&s),
-                    XLUpdateEntry {
-                        likelihood: Float::from(nhash.likelihood),
-                        symbol: Self::symbol_for_payload_node(s, nhash.symbol),
-                        is_leaf: false,
-                    },
-                )
-            })
+        let json_payload_ix = self.push_json_payload(likelihood_json);
+        
+        let mut new_l_update = payload.nodes.iter()
+            .map(|(s, nhash)| (rh::hash_string(&s), 
+                XLUpdateEntry {
+                    likelihood: Float::from(nhash.likelihood),
+                    symbol: nhash.symbol.unwrap_or_else(|| {
+                        let b = *s.as_bytes().last().unwrap();
+                        b as XSymbol
+                    }),
+                    is_leaf: false,
+                }))
             .collect::<XLUpdate>();
         set_leaf_indicators(&mut new_l_update);
         //
-        self.trie.pending_likelihood = merge_xl_pair(&self.trie.pending_likelihood, &new_l_update);
+        self.trie.pending_likelihood =
+            merge_xl_pair(&self.trie.pending_likelihood, &new_l_update);
         self.record_event("receive_likelihood_update", start, Some(json_payload_ix));
     }
 
-    pub fn receive_likelihood_update(&mut self, likelihood_json: String) {
-        let payload = serde_json::from_str::<LikelihoodUpdatePayload>(&likelihood_json).unwrap();
-        self.receive_likelihood_update_typed(payload);
-    }
-
-    pub fn recalibrate_typed(
-        &mut self,
-        initial_prior: VariationalParams,
-        use_cross_entropy_discount: bool,
-    ) -> RecalibrationResult {
+    pub fn recalibrate(&mut self, initial_prior_json: String, use_cross_entropy_discount: bool) -> String {
         let start = timing_start();
         assert!(
             self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1,
@@ -290,30 +239,25 @@ impl BayesianSession {
         );
 
         let certain_prefix_nodes = self.certain_prefix_nodes();
-        let certain_prefix_hashes = certain_prefix_nodes
-            .iter()
-            .map(|(hash, _)| *hash)
-            .collect::<Vec<_>>();
-        assert!(
-            !certain_prefix_nodes.is_empty(),
-            "recalibrate expected at least the root node in certain_prefix_nodes"
-        );
+        let certain_prefix_hashes = certain_prefix_nodes.iter().map(|(hash, _)| *hash).collect::<Vec<_>>();
+        assert!(!certain_prefix_nodes.is_empty(), "recalibrate expected at least the root node in certain_prefix_nodes");
 
-        let mut prior = initial_prior;
+        let mut prior: VariationalParams =
+            serde_json::from_str(&initial_prior_json).expect("Invalid initial prior JSON");
         let mut used_likelihood_updates = 0usize;
         let mut recent_pairs: Vec<CalibrationSample> = Vec::new();
-
+        
         if let Some(&last_certain) = certain_prefix_hashes.last() {
             for payload in &self.likelihood_history {
                 let mut payload_hashes = HashMap::new();
                 for (s, nhash) in &payload.nodes {
                     payload_hashes.insert(rh::hash_string(s), nhash);
                 }
-
+                
                 if payload_hashes.contains_key(&last_certain) {
                     continue;
                 }
-
+                
                 let mut target_node = None;
                 for hash in certain_prefix_hashes.iter().rev() {
                     if let Some(&nhash) = payload_hashes.get(hash) {
@@ -321,7 +265,7 @@ impl BayesianSession {
                         break;
                     }
                 }
-
+                
                 if let Some(target) = target_node {
                     let phase = target.phase;
                     let mut x = payload.y - phase;
@@ -333,10 +277,7 @@ impl BayesianSession {
                         use_cross_entropy_discount,
                     );
                     used_likelihood_updates += 1;
-                    recent_pairs.push(CalibrationSample {
-                        x,
-                        period: payload.period,
-                    });
+                    recent_pairs.push(CalibrationSample { x, period: payload.period });
                     if recent_pairs.len() > 5 {
                         recent_pairs.remove(0);
                     }
@@ -346,81 +287,72 @@ impl BayesianSession {
 
         self.current_prior = prior;
 
-        let metrics = RecalibrationResult {
+        let metrics_json = serde_json::to_string(&RecalibrationResult {
             prior_params: self.current_prior,
             used_likelihood_updates,
             recent_pairs,
-        };
+        }).unwrap();
         self.record_event("recalibrate", start, None);
-        metrics
-    }
-
-    pub fn recalibrate(
-        &mut self,
-        initial_prior_json: String,
-        use_cross_entropy_discount: bool,
-    ) -> String {
-        let initial_prior =
-            serde_json::from_str(&initial_prior_json).expect("Invalid initial prior JSON");
-        serde_json::to_string(&self.recalibrate_typed(initial_prior, use_cross_entropy_discount))
-            .unwrap()
-    }
-
-    pub fn current_prior(&self) -> VariationalParams {
-        let start = timing_start();
-        let prior = self.current_prior;
-        self.record_event("current_prior", start, None);
-        prior
+        metrics_json
     }
 
     pub fn current_prior_json(&self) -> String {
-        serde_json::to_string(&self.current_prior()).unwrap()
-    }
-
-    pub fn set_current_prior(&mut self, prior: VariationalParams) {
         let start = timing_start();
-        self.current_prior = prior;
-        self.record_event("set_current_prior", start, None);
+        let json = serde_json::to_string(&self.current_prior).unwrap();
+        self.record_event("current_prior_json", start, None);
+        json
     }
 
     pub fn set_current_prior_json(&mut self, prior_json: String) {
-        let prior = serde_json::from_str(&prior_json).expect("Invalid variational prior JSON");
-        self.set_current_prior(prior);
+        let start = timing_start();
+        self.current_prior = serde_json::from_str(&prior_json).expect("Invalid variational prior JSON");
+        self.record_event("set_current_prior_json", start, None);
     }
 
     pub fn certain_prefix_string(&mut self) -> String {
         let certain_prefix_nodes = self.certain_prefix_nodes();
-        let certain_prefix_symbols = certain_prefix_nodes
-            .iter()
-            .map(|(_, symbol)| *symbol)
-            .collect::<Vec<_>>();
+        let certain_prefix_symbols = certain_prefix_nodes.iter().map(|(_, symbol)| *symbol).collect::<Vec<_>>();
         String::from_utf8(certain_prefix_symbols).unwrap()
     }
 
     #[cfg(feature = "tokentrie")]
-    pub fn next_requested_prior_typed(&mut self) -> RequestedPrior {
+    pub fn next_requested_prior(&mut self) -> String {
         let start = timing_start();
         let requested_prior = self.trie.next_requested_prior();
+        #[derive(Serialize)]
+        struct RequestedPrior {
+            full_string: String,
+            last_token_lexindex: TokenLexIndex,
+        }
         let requested_prior = RequestedPrior {
             full_string: requested_prior.full_string,
             last_token_lexindex: requested_prior.last_token_lexindex,
         };
+        let requested_prior_json = serde_json::to_string(&requested_prior).unwrap();
         self.record_event("next_requested_prior", start, None);
-        requested_prior
+        requested_prior_json
     }
 
-    #[cfg(feature = "tokentrie")]
-    pub fn next_requested_prior(&mut self) -> String {
-        serde_json::to_string(&self.next_requested_prior_typed()).unwrap()
-    }
-
-    pub fn receive_prior_update_typed(&mut self, payload: PriorUpdatePayload) {
+    pub fn receive_prior_update(&mut self, prior_json: String) {
         let start = timing_start();
-        let payload_json =
-            serde_json::to_string(&payload).expect("prior update serialization failed");
-        let payload = payload;
-
-        let json_payload_ix = self.push_json_payload(payload_json);
+        #[derive(Deserialize)]
+        struct Payload {
+            full_string: String,
+            final_token_lexindex: TokenLexIndex,
+            follower_logits: Vec<f32>
+        }
+        let payload = serde_json::from_str::<Payload>(&prior_json)
+            .unwrap_or_else(|e| {
+                let truncated = if prior_json.len() > 200 {
+                    format!("{}...[truncated]", &prior_json[..200])
+                } else {
+                    prior_json.clone()
+                };
+                panic!("Deserialization of Payload failed: {} | Payload (truncated): {}", e, truncated)
+            });
+       
+   
+        let json_payload_ix = self.push_json_payload(prior_json);
         let new_prediction = XPrediction::create_prediction(
             false,
             payload.final_token_lexindex,
@@ -432,29 +364,17 @@ impl BayesianSession {
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
             ),
-            &self.trie.tokenizer,
+            &self.trie.tokenizer
         );
         // insert prediction into the registry
         // hash the full string
         let full_hash = rh::hash_string(&payload.full_string);
-        self.trie.full_predictions.insert(full_hash, new_prediction);
+        self.trie.full_predictions.insert(
+            full_hash,
+            new_prediction
+        );
         self.trie.pending_prior.insert(full_hash);
         self.record_event("receive_prior_update", start, Some(json_payload_ix));
-    }
-
-    pub fn receive_prior_update(&mut self, prior_json: String) {
-        let payload = serde_json::from_str::<PriorUpdatePayload>(&prior_json).unwrap_or_else(|e| {
-            let truncated = if prior_json.len() > 200 {
-                format!("{}...[truncated]", &prior_json[..200])
-            } else {
-                prior_json.clone()
-            };
-            panic!(
-                "Deserialization of Payload failed: {} | Payload (truncated): {}",
-                e, truncated
-            )
-        });
-        self.receive_prior_update_typed(payload);
     }
 
     pub fn apply_updates(&mut self) {
@@ -463,32 +383,22 @@ impl BayesianSession {
         self.record_event("apply_updates", start, None);
     }
 
-    pub fn expand_to_threshold_snapshot(&mut self) -> ExpandedSnapshot {
+    pub fn expand_to_threshold(&mut self) -> String {
         let start = timing_start();
-        assert!(
-            self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1,
-            "Tried to expand with unprocessed updates"
-        );
-        let nodes_list = match self.trie.recalc_to_frontier(RecalcType::Expand {
-            threshold: Float::from(trie::TRIE_EXPANSION_THRESHOLD as f32),
-        }) {
+        assert!(self.trie.pending_prior.is_empty() && self.trie.pending_likelihood.len() == 1, "Tried to expand with unprocessed updates");
+        let nodes_list = match self.trie.recalc_to_frontier(
+            RecalcType::Expand { threshold: Float::from(trie::TRIE_EXPANSION_THRESHOLD as f32) },
+        ) {
             RecalcResult::Updated => {
-                panic!(
-                    "expand_to_threshold unexpectedly returned Updated after applying pending updates"
-                )
+                panic!("expand_to_threshold unexpectedly returned Updated after applying pending updates")
             }
-            RecalcResult::Expanded {
-                nodes_over_threshold,
-            } => nodes_over_threshold,
+            RecalcResult::Expanded { nodes_over_threshold } => nodes_over_threshold,
         };
 
         let snapshot_by_string = snapshot_by_string(&self.trie, nodes_list);
+        let snapshot_json = serde_json::to_string(&snapshot_by_string).unwrap();
         self.record_event("expand_to_threshold", start, None);
-        snapshot_by_string
-    }
-
-    pub fn expand_to_threshold(&mut self) -> String {
-        serde_json::to_string(&self.expand_to_threshold_snapshot()).unwrap()
+        snapshot_json
     }
 
     pub fn lexicographic_tokens_json(&self) -> String {
@@ -498,16 +408,13 @@ impl BayesianSession {
         tokens_json
     }
 
-    pub fn debug_dump(&self) -> SessionObservability {
+    pub fn debug_dump_json(&self) -> String {
         let start = timing_start();
-        let dump = self.observability.lock().unwrap().clone();
-        self.record_event("debug_dump", start, None);
-        dump
+        let dump_json = serde_json::to_string(&*self.observability.lock().unwrap()).unwrap();
+        self.record_event("debug_dump_json", start, None);
+        dump_json
     }
 
-    pub fn debug_dump_json(&self) -> String {
-        serde_json::to_string(&self.debug_dump()).unwrap()
-    }
 }
 
 #[cfg(feature = "python")]
@@ -550,11 +457,7 @@ impl BayesianSession {
     }
 
     #[pyo3(name = "recalibrate")]
-    fn py_recalibrate(
-        &mut self,
-        initial_prior_json: String,
-        use_cross_entropy_discount: bool,
-    ) -> String {
+    fn py_recalibrate(&mut self, initial_prior_json: String, use_cross_entropy_discount: bool) -> String {
         BayesianSession::recalibrate(self, initial_prior_json, use_cross_entropy_discount)
     }
 
