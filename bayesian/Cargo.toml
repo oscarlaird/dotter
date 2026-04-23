@@ -1,3 +1,12 @@
 [workspace]
-members = ["crates/bayesian", "crates/rolling_hash", "crates/bpe", "crates/trie", "crates/calibration", "crates/timer_spacing", "crates/layout", "crates/frontend", "crates/ftest"]
+members = ["crates/bayesian", "crates/rolling_hash", "crates/bpe", "crates/trie", "crates/calibration", "crates/timer_spacing", "crates/layout", "crates/frontend", "crates/ftest", "crates/macroquad_bayesian"]
 resolver = "2"
+
+
+[profile.release-lto]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+# codegen-units = 1
+panic = "abort"
+strip = "symbols"

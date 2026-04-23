@@ -6,8 +6,8 @@
   "latex-workshop.latex.watch.files.include": ["**/*.tex", "**/*.bib"],
   "latex-workshop.latex.outDir": "%DIR%",
   "rust-analyzer.linkedProjects": [
-    "demos/macroquad_tutor/Cargo.toml",
-    "demos/doxy/Cargo.toml",
-    "demos/icy/Cargo.toml"
+    // "demos/macroquad_tutor/Cargo.toml",
+    // "demos/doxy/Cargo.toml",
+    // "demos/icy/Cargo.toml"
   ]
 }

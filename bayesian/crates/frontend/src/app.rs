@@ -69,7 +69,6 @@ pub fn App() -> Element {
     let mut first_fork_depth = use_signal(|| None::<usize>);
     let mut expansion_threshold = use_signal(|| f32::NEG_INFINITY);
     let mut ws_status = use_signal(|| "Connecting…".to_string());
-    let mut now_seconds = use_signal(current_time_seconds);
 
     let mut apply_vi_before_to_ui = move |vi_before: bayesian::calibration::VariationalParams| {
         current_vi_before.set(Some(vi_before));
@@ -173,15 +172,6 @@ pub fn App() -> Element {
                 Err(err) => {
                     error.set(Some(format!("head asset injection failed: {err}")));
                 }
-            }
-        });
-    });
-
-    use_effect(move || {
-        spawn(async move {
-            loop {
-                now_seconds.set(current_time_seconds());
-                tokio::time::sleep(Duration::from_millis(33)).await;
             }
         });
     });
@@ -642,7 +632,6 @@ pub fn App() -> Element {
                             show_space_connectors: show_space_connectors(),
                             show_debug_stats: show_debug_stats(),
                             viewport_height: VIEWPORT_HEIGHT,
-                            now_seconds: now_seconds(),
                         }
                     } else {
                         div { class: "trie-empty", "Waiting for the first visible nodes." }

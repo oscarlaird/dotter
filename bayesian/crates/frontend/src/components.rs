@@ -292,7 +292,6 @@ pub fn TrieSvgVisualizer(
     show_space_connectors: bool,
     show_debug_stats: bool,
     viewport_height: f64,
-    now_seconds: f64,
 ) -> Element {
     let visible_tree = build_visible_tree(&snapshot, expansion_threshold);
     let offscreen_prefix_display = if scroll_root == "A" {
@@ -410,12 +409,12 @@ pub fn TrieSvgVisualizer(
                         let (r, g, b) = timer_rgb_on_surface(node.symbol, light_background);
                         let timer = timers.get(&node.full_string);
                         let timer_frac = timer
-                            .map(|timer| timer_fraction(now_seconds, timer.phase, period))
+                            .map(|timer| timer_fraction(current_time_seconds(), timer.phase, period))
                             .unwrap_or(0.0);
                         let is_tutor_target = tutor_target_key.as_ref() == Some(&node.full_string);
                         let (cx, cy, base_radius) = timer_circle_geometry(node, &scroll_root, level_gutter);
                         let timer_radius = if is_tutor_target { base_radius * 1.8 } else { base_radius };
-                        let timer_arc = timer_arc_path(cx, cy, timer_radius, timer_frac);
+                        let animation_delay = format!("-{:.6}s", timer_frac * period);
                         let debug_lines = vec![
                             format!("scroll:{scroll_offset}"),
                             format!("fork:{}", first_fork_depth.map(|depth| depth.to_string()).unwrap_or_else(|| "-".to_string())),
@@ -460,13 +459,18 @@ pub fn TrieSvgVisualizer(
                                     "{display_text}"
                                 }
                             }
-                            if let Some(timer_arc) = timer_arc {
-                                path {
-                                    class: "timer-arc",
-                                    d: "{timer_arc}",
+                            if timer.is_some() {
+                                circle {
+                                    class: "timer-arc timer-arc-animated",
+                                    cx: "{cx}",
+                                    cy: "{cy}",
+                                    r: "{timer_radius}",
                                     fill: "none",
-                                    stroke: "rgba({r}, {g}, {b}, {timer_frac * 0.9 + 0.1})",
+                                    stroke: "rgba({r}, {g}, {b}, 1)",
                                     stroke_width: if is_tutor_target { "4" } else { "2" },
+                                    "pathLength": "1",
+                                    "stroke-dasharray": "0 1",
+                                    style: "animation-duration: {period}s; animation-delay: {animation_delay};",
                                 }
                             }
                             if show_debug_stats {
@@ -567,30 +571,11 @@ fn format_stat(label: &str, value: Option<f64>) -> String {
     }
 }
 
-fn timer_arc_path(cx: f64, cy: f64, radius: f64, fraction: f64) -> Option<String> {
-    if fraction <= 0.0 {
-        return None;
-    }
+fn current_time_seconds() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    let tau = std::f64::consts::PI * 2.0;
-    if fraction >= 0.999_999 {
-        let start_x = cx + radius;
-        let start_y = cy;
-        let left_x = cx - radius;
-        let left_y = cy;
-        return Some(format!(
-            "M {start_x:.4} {start_y:.4} A {radius:.4} {radius:.4} 0 1 1 {left_x:.4} {left_y:.4} A {radius:.4} {radius:.4} 0 1 1 {start_x:.4} {start_y:.4}"
-        ));
-    }
-
-    let end_angle = tau * fraction;
-    let start_x = cx + radius;
-    let start_y = cy;
-    let end_x = cx + radius * end_angle.cos();
-    let end_y = cy + radius * end_angle.sin();
-    let large_arc_flag = if fraction > 0.5 { 1 } else { 0 };
-
-    Some(format!(
-        "M {start_x:.4} {start_y:.4} A {radius:.4} {radius:.4} 0 {large_arc_flag} 1 {end_x:.4} {end_y:.4}"
-    ))
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("current time after epoch")
+        .as_secs_f64()
 }

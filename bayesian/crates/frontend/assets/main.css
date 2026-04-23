@@ -422,6 +422,22 @@ code {
     transition: none;
 }
 
+.timer-arc-animated {
+    animation-name: timer-arc-progress;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    animation-fill-mode: both;
+}
+
+@keyframes timer-arc-progress {
+    from {
+        stroke-dasharray: 0 1;
+    }
+    to {
+        stroke-dasharray: 1 1;
+    }
+}
+
 .scroll-guide {
     stroke: rgba(255, 255, 255, 0.75);
     stroke-width: 4;
