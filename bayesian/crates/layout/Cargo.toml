@@ -1,0 +1,14 @@
+[package]
+name = "layout"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+trie = { path = "../trie", default-features = false }
+rolling_hash = { path = "../rolling_hash" }
+render_utils = { path = "../render_utils" }
+timer_spacing = { path = "../timer_spacing", default-features = false }
+serde = { version = "1", features = ["derive"] }
