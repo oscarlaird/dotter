@@ -1,13 +1,13 @@
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "safefloat")]
 pub type Float = SafeFloat;
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "safefloat"))]
 pub type Float = f32;
-#[cfg(debug_assertions)]
+#[cfg(feature = "safefloat")]
 pub(crate) const ZERO: Float = SafeFloat(0.0);
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "safefloat"))]
 pub(crate) const ZERO: Float = 0.0;
 
 #[derive(Copy, Clone, Default, PartialEq, PartialOrd)]
@@ -58,7 +58,7 @@ impl SafeFloat {
     }
 
     #[inline]
-    pub(crate) fn exp(self) -> Self {
+    pub fn exp(self) -> Self {
         self.assert_valid_input("exp");
         Self::from_op(self.0.exp(), "exp")
     }
@@ -187,13 +187,13 @@ impl Neg for SafeFloat {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(feature = "safefloat")]
 #[inline]
 pub fn into_f32(value: Float) -> f32 {
     value.to_f32()
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(feature = "safefloat"))]
 #[inline]
 pub fn into_f32(value: Float) -> f32 {
     value

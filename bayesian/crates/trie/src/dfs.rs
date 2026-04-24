@@ -12,7 +12,6 @@ where
 {
     nodes: &'a RHashMap<Data>,
     hash_stack: Vec<Hash>, // includes n, when n is returned
-    symbol_stack: Vec<XSymbol>, // includes n, when n is returned
     data_stack: Vec<&'a Data>, // includes n, when n is returned
     unvisited_stack: Vec<(Hash, usize)>, // (hash, depth)
 }
@@ -26,7 +25,6 @@ where
         Self {
             nodes,
             hash_stack: vec![],
-            symbol_stack: vec![],
             data_stack: vec![],
             unvisited_stack: vec![(ROOT_HASH, 0)],
         }
@@ -37,7 +35,7 @@ where
     }
 
     pub fn symbol_from_end(&self, i: usize) -> XSymbol {
-        self.symbol_stack[self.symbol_stack.len() - i - 1]
+        self.data_from_end(i).symbol()
     }
 
     pub fn data_from_end(&self, i: usize) -> &'a Data {
@@ -56,13 +54,11 @@ where
         let (n_hash, n_depth) = self.unvisited_stack.pop()?;
         // truncate stacks
         self.hash_stack.truncate(n_depth);
-        self.symbol_stack.truncate(n_depth);
         self.data_stack.truncate(n_depth);
         // push n to stacks
         let n_data = self.nodes.get(&n_hash).expect("child hash verified before push");
         let n_symbol = n_data.symbol();
         self.hash_stack.push(n_hash);
-        self.symbol_stack.push(n_symbol);
         self.data_stack.push(n_data);
         // visit children before returning n
         let n_padmode = PadMode::for_xsymbol(n_symbol);
@@ -78,12 +74,3 @@ where
         Some(((n_hash, n_symbol), n_data))
     }
 }
-
-// TODO: AUDIT
-// pub(crate) fn topo_sort<'a, Data>(nodes: &'a RHashMap<Data>) -> Vec<((Hash, XSymbol), &'a Data)>
-// where
-//     Data: HasSymbol,
-// {
-//     let walker = SimpleDataWalker::from(nodes);
-//     walker.collect()
-// }

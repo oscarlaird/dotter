@@ -1695,6 +1695,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ewebsock"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "679247b4a005c82218a5f13b713239b0b6d484ec25347a719f5b7066152a748a"
+dependencies = [
+ "document-features",
+ "js-sys",
+ "log",
+ "tungstenite 0.24.0",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "exr"
 version = "1.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3194,7 +3209,11 @@ dependencies = [
 name = "macroquad_bayesian"
 version = "0.1.0"
 dependencies = [
+ "bayesian",
+ "ewebsock",
+ "fontdue",
  "macroquad",
+ "timer_spacing",
 ]
 
 [[package]]
@@ -6054,6 +6073,24 @@ name = "ttf-parser"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
+
+[[package]]
+name = "tungstenite"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18e5b8366ee7a95b16d32197d0b2604b43a0be89dc5fac9f8e96ccafbaedda8a"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.8.5",
+ "sha1",
+ "thiserror 1.0.69",
+ "utf-8",
+]
 
 [[package]]
 name = "tungstenite"

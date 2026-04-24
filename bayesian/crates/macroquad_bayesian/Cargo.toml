@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 macroquad = "0.4.14"
+bayesian = { version = "0.1.0", path = "../bayesian" }
+timer_spacing = { version = "0.1.0", path = "../timer_spacing"}
+fontdue = "0.9.3"
+ewebsock = "0.8.0"

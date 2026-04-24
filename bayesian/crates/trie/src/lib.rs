@@ -19,7 +19,8 @@ pub const ROOT_HASH: rh::Hash = rh::append_right(0, START_SYMBOL);
 pub const STOP_HASH: rh::Hash = rh::append_right(0, STOP_SYMBOL);
 
 /// `ln(4/100)` — expansion stop rule and snapshot child cutoff for the Bayesian trie.
-pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
+// pub const TRIE_EXPANSION_THRESHOLD: f64 = -3.2188758248682006;
+pub const TRIE_EXPANSION_THRESHOLD: f32 = -3.6188758248682006;
 
 /// Maximum node visits per `recalc_to_frontier_and_back` traversal.
 pub const TRIE_MAX_VISITS: i32 = 200;

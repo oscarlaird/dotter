@@ -8,6 +8,7 @@ default = ["tokentrie", "proof"]
 trie-trace = []
 tokentrie = []
 proof = []
+safefloat = []
 
 [dependencies]
 bpe = { path = "../bpe" }

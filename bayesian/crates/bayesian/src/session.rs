@@ -123,7 +123,7 @@ struct RecalibrationResult {
 #[cfg_attr(feature = "python", pyclass)]
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct BayesianSession {
-    pub(crate) trie: XBayes,
+    pub trie: XBayes,
     observability: Mutex<SessionObservability>,
     likelihood_history: Vec<LikelihoodUpdatePayload>,
     current_prior: VariationalParams,

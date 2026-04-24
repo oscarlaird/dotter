@@ -46,13 +46,6 @@ pub struct VisualNode {
     pub height: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LikelihoodModel {
-    pub mu_delay: f64,
-    pub stddev_delay: f64,
-    pub outliers: f64,
-    pub period: f64,
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LikelihoodPayloadNode {
@@ -669,46 +662,6 @@ pub fn timers_for_snapshot(
     }
     next_timers
 }
-
-fn logaddexp(a: f64, b: f64) -> f64 {
-    if a == f64::NEG_INFINITY {
-        return b;
-    }
-    if b == f64::NEG_INFINITY {
-        return a;
-    }
-    if a > b {
-        a + (1.0 + (b - a).exp()).ln()
-    } else {
-        b + (1.0 + (a - b).exp()).ln()
-    }
-}
-
-fn normal_logpdf(x: f64, mean: f64, stddev: f64) -> f64 {
-    -0.5 * ((x - mean) / stddev).powi(2) - (stddev * (2.0 * std::f64::consts::PI).sqrt()).ln()
-}
-
-pub fn modulo_delay(time_seconds: f64, phase: f64, period: f64) -> f64 {
-    let mut x = time_seconds - phase;
-    x = ((x % period) + period) % period;
-    x
-}
-
-pub fn timer_likelihood(time: f64, phase: f64, model: &LikelihoodModel) -> f64 {
-    let x = modulo_delay(time, phase, model.period);
-    let outlier_prob = model.outliers.ln() - model.period.ln();
-    let not_outlier_prob = (1.0 - model.outliers).ln();
-    let normal_modes = [-1.0, 0.0, 1.0]
-        .into_iter()
-        .map(|k| normal_logpdf(x, model.mu_delay + k * model.period, model.stddev_delay))
-        .collect::<Vec<_>>();
-    let mut sum_normal_modes = normal_modes[0];
-    for value in normal_modes.into_iter().skip(1) {
-        sum_normal_modes = logaddexp(sum_normal_modes, value);
-    }
-    logaddexp(outlier_prob, not_outlier_prob + sum_normal_modes)
-}
-
 pub fn build_likelihood_payload_nodes(
     snapshot: &ExpandedSnapshot,
     timers: &VisibleNodeTimerMap,
