@@ -1,0 +1,8 @@
+[package]
+name = "expback"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mistralrs = "0.8.1"
+tokio = "1.52.1"

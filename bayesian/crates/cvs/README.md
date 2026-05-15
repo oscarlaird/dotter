@@ -1,0 +1,1 @@
+Demo of how to use a canvas in dioxus as well as OPFS in dioxus.

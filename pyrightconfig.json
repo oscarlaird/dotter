@@ -1,0 +1,5 @@
+{
+  "venvPath": "vl",
+  "venv": ".venv",
+  "extraPaths": ["vl/vllm-src"]
+}

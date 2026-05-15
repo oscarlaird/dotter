@@ -1,0 +1,22 @@
+[package]
+name = "cvs"
+version = "0.1.0"
+authors = ["Oscar <olaird25@gmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dioxus = { version = "0.7.1", features = [] }
+futures-channel = "0.3.32"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+wasm-bindgen = "0.2.121"
+wasm-bindgen-futures = "0.4.71"
+web-sys = { version = "0.3.98", features = ["Blob", "CanvasRenderingContext2d", "Element", "File", "FileSystemDirectoryHandle", "FileSystemFileHandle", "FileSystemGetFileOptions", "FileSystemHandle", "FileSystemWritableFileStream", "HtmlCanvasElement", "Navigator", "StorageManager", "Window", "WritableStream"] }
+
+[features]
+default = ["web"]
+web = ["dioxus/web"]
+desktop = ["dioxus/desktop"]
+mobile = ["dioxus/mobile"]

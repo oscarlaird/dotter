@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/bayesian", "crates/rolling_hash", "crates/bpe", "crates/trie", "crates/calibration", "crates/timer_spacing", "crates/layout", "crates/frontend", "crates/ftest", "crates/macroquad_bayesian"]
+members = ["crates/bayesian", "crates/rolling_hash", "crates/bpe", "crates/trie", "crates/calibration", "crates/timer_spacing", "crates/layout", "crates/frontend", "crates/ftest", "crates/macroquad_bayesian", "crates/expback", "crates/cvs"]
 resolver = "2"
 
 
